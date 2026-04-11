@@ -79,13 +79,33 @@ impl FileServer {
         stream: &mut tokio::net::TcpStream,
         files: Arc<RwLock<HashMap<Uuid, PathBuf>>>,
     ) -> Result<()> {
-        let mut buffer = vec![0u8; 8192];
-        let n = stream.read(&mut buffer).await?;
-        if n == 0 {
+        // 动态读取请求，支持大请求头和长URL
+        // 使用 64KB 初始缓冲区，按需自动扩展
+        let mut buffer = vec![0u8; 65536];
+        let mut total_read = 0;
+        let max_request_size = 10 * 1024 * 1024; // 10MB 最大请求大小
+
+        loop {
+            if total_read >= max_request_size {
+                anyhow::bail!("请求过大，超过 10MB 限制");
+            }
+            let n = stream.read(&mut buffer[total_read..]).await?;
+            if n == 0 {
+                break;
+            }
+            total_read += n;
+            // 如果缓冲区不够用，扩展它
+            if total_read >= buffer.len() && buffer.len() < max_request_size {
+                let new_size = (buffer.len() * 2).min(max_request_size);
+                buffer.resize(new_size, 0);
+            }
+        }
+
+        if total_read == 0 {
             return Ok(());
         }
 
-        let request = String::from_utf8_lossy(&buffer[..n]);
+        let request = String::from_utf8_lossy(&buffer[..total_read]);
         let lines: Vec<&str> = request.lines().collect();
         let first_line = lines.first().unwrap_or(&"");
 

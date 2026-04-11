@@ -1,12 +1,28 @@
 //! SQLite 数据库层
 
 use crate::collaboration::types::{Device, Task, TaskStatus, Team};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use uuid::Uuid;
+
+/// 验证 IP 地址格式
+fn validate_ip(ip: &str) -> Result<()> {
+    ip.parse::<IpAddr>()
+        .map(|_| ())
+        .map_err(|_| anyhow!("Invalid IP address: {}", ip))
+}
+
+/// 验证端口号 (1-65535)
+fn validate_port(port: u16) -> Result<()> {
+    if port == 0 {
+        return Err(anyhow!("Port must be between 1 and 65535"));
+    }
+    Ok(())
+}
 
 /// 数据库封装
 #[allow(dead_code)]
@@ -128,6 +144,14 @@ impl Database {
 
     /// 注册设备
     pub fn register_device(&self, device: &Device) -> Result<()> {
+        // 验证 IP 地址格式
+        if let Some(ref ip) = device.public_ip {
+            validate_ip(ip)?;
+        }
+        // 验证端口号
+        if let Some(port) = device.public_port {
+            validate_port(port)?;
+        }
         let conn = self.conn.lock().unwrap();
         conn.execute(
             r#"INSERT INTO devices (id, team_id, name, public_ip, public_port, last_seen, is_online)
