@@ -43,7 +43,7 @@ impl RateLimiter {
         let timestamps = self.requests.entry(ip).or_default();
 
         // 移除过期的请求记录
-        timestamps.retain(|&t| now.duration_since(t) < window);
+        timestamps.retain(|t| now.duration_since(*t) < window);
 
         if timestamps.len() >= self.max_requests as usize {
             return false;
@@ -59,9 +59,104 @@ impl RateLimiter {
         let now = Instant::now();
         let window = std::time::Duration::from_secs(self.window_secs);
         self.requests.retain(|_, timestamps| {
-            timestamps.retain(|&t| now.duration_since(t) < window);
+            timestamps.retain(|t| now.duration_since(*t) < window);
             !timestamps.is_empty()
         });
+    }
+}
+
+/// CORS 白名单
+#[derive(Clone)]
+struct CorsAllowList {
+    /// 允许的源列表（包含协议和端口，如 "http://localhost:8080"）
+    origins: Vec<String>,
+    /// 允许的域名/IP（仅主机部分）
+    allowed_hosts: Vec<String>,
+}
+
+impl CorsAllowList {
+    fn new() -> Self {
+        Self {
+            origins: Vec::new(),
+            allowed_hosts: vec![
+                "localhost".to_string(),
+                "127.0.0.1".to_string(),
+                "::1".to_string(),
+                "0.0.0.0".to_string(),
+            ],
+        }
+    }
+
+    /// 添加额外的允许 origin (预留 API)
+    #[allow(unknown_lints, dead_code)]
+    fn with_extra_origins(mut self, origins: Vec<String>) -> Self {
+        for origin in &origins {
+            if let Ok(parsed) = origin.parse::<url::Url>() {
+                if let Some(host) = parsed.host_str() {
+                    if !self.allowed_hosts.contains(&host.to_string()) {
+                        self.allowed_hosts.push(host.to_string());
+                    }
+                }
+            }
+            self.origins.push(origin.clone());
+        }
+        self
+    }
+
+    /// 检查 Origin 是否被允许
+    fn is_allowed(&self, origin: &str) -> bool {
+        if origin.is_empty() {
+            return true; // 没有 Origin 头视为同源请求
+        }
+
+        // 解析 Origin（格式: scheme://host:port）
+        if let Ok(parsed) = origin.parse::<url::Url>() {
+            let host = parsed.host_str().unwrap_or("");
+
+            // 检查是否是 localhost
+            if Self::is_localhost(host) {
+                return true;
+            }
+
+            // 检查是否在允许的 origin 列表中（精确匹配）
+            if self.origins.contains(&origin.to_string()) {
+                return true;
+            }
+
+            // 检查 host 是否在允许列表中
+            if self.allowed_hosts.contains(&host.to_string()) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// 检查是否是 localhost
+    fn is_localhost(host: &str) -> bool {
+        matches!(host, "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
+    }
+
+    /// 从请求中解析 Origin 头
+    fn get_origin_from_request(lines: &[&str]) -> Option<String> {
+        for line in lines {
+            if line.to_lowercase().starts_with("origin:") {
+                let origin = line.split(':').nth(1)?.trim();
+                return Some(origin.to_string());
+            }
+        }
+        None
+    }
+
+    /// 生成 CORS 响应头
+    fn build_cors_headers(&self, origin: &str) -> String {
+        if origin.is_empty() {
+            return String::new();
+        }
+        format!(
+            "Access-Control-Allow-Origin: {}\r\nAccess-Control-Allow-Credentials: true",
+            origin
+        )
     }
 }
 
@@ -71,6 +166,7 @@ pub struct FileServer {
     port: u16,
     files: Arc<RwLock<HashMap<Uuid, PathBuf>>>, // task_id -> path
     rate_limiter: Arc<RwLock<RateLimiter>>,
+    cors_allow_list: CorsAllowList,
 }
 
 #[allow(dead_code)]
@@ -82,6 +178,7 @@ impl FileServer {
             files: Arc::new(RwLock::new(HashMap::new())),
             // 速率限制：每 60 秒最多 100 个请求（每个 IP）
             rate_limiter: Arc::new(RwLock::new(RateLimiter::new(60, 100))),
+            cors_allow_list: CorsAllowList::new(),
         }
     }
 
@@ -121,9 +218,13 @@ impl FileServer {
             let (mut stream, remote_addr) = listener.accept().await?;
             let files = self.files.clone();
             let rate_limiter = self.rate_limiter.clone();
+            let cors_allow_list = self.cors_allow_list.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_request(&mut stream, files, rate_limiter, remote_addr).await {
+                if let Err(e) =
+                    Self::handle_request(&mut stream, files, rate_limiter, cors_allow_list, remote_addr)
+                        .await
+                {
                     eprintln!("请求处理错误 ({}): {}", remote_addr, e);
                 }
             });
@@ -134,6 +235,7 @@ impl FileServer {
         stream: &mut tokio::net::TcpStream,
         files: Arc<RwLock<HashMap<Uuid, PathBuf>>>,
         rate_limiter: Arc<RwLock<RateLimiter>>,
+        cors_allow_list: CorsAllowList,
         remote_addr: std::net::SocketAddr,
     ) -> Result<()> {
         // 速率限制检查
@@ -174,6 +276,16 @@ impl FileServer {
 
         let request = String::from_utf8_lossy(&buffer[..total_read]);
         let lines: Vec<&str> = request.lines().collect();
+
+        // CORS Origin 验证
+        let origin = CorsAllowList::get_origin_from_request(&lines).unwrap_or_default();
+
+        if !cors_allow_list.is_allowed(&origin) {
+            let response = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+            stream.write_all(response.as_bytes()).await?;
+            return Ok(());
+        }
+
         let first_line = lines.first().unwrap_or(&"");
 
         // 解析请求行: GET /file/{task_id} HTTP/1.1
@@ -186,7 +298,7 @@ impl FileServer {
                     if let Some(path) = files_guard.get(&task_id) {
                         // 检查 Range 请求头
                         let range = Self::parse_range(&lines);
-                        Self::serve_file(stream, path, range).await?;
+                        Self::serve_file(stream, path, range, &origin, &cors_allow_list).await?;
                         return Ok(());
                     }
                 }
@@ -194,7 +306,12 @@ impl FileServer {
         }
 
         // 404 Not Found
-        let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+        let cors_headers = cors_allow_list.build_cors_headers(&origin);
+        let response = if cors_headers.is_empty() {
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string()
+        } else {
+            format!("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n{}\r\n", cors_headers)
+        };
         stream.write_all(response.as_bytes()).await?;
         Ok(())
     }
@@ -212,7 +329,11 @@ impl FileServer {
             .map_err(|e| anyhow::anyhow!("基准目录不存在: {}", e))?;
 
         if !canonical_path.starts_with(&canonical_base) {
-            anyhow::bail!("路径遍历攻击尝试: {:?} 不在允许目录 {:?} 内", canonical_path, canonical_base);
+            anyhow::bail!(
+                "路径遍历攻击尝试: {:?} 不在允许目录 {:?} 内",
+                canonical_path,
+                canonical_base
+            );
         }
 
         Ok(())
@@ -249,6 +370,8 @@ impl FileServer {
         stream: &mut tokio::net::TcpStream,
         path: &PathBuf,
         range: Option<(u64, Option<u64>)>,
+        origin: &str,
+        cors_allow_list: &CorsAllowList,
     ) -> Result<()> {
         // 路径安全验证
         Self::validate_path(path)?;
@@ -256,15 +379,21 @@ impl FileServer {
         let metadata = tokio::fs::metadata(path).await?;
         let file_size = metadata.len();
 
+        let cors_headers = cors_allow_list.build_cors_headers(origin);
+
         match range {
             Some((start, end)) => {
                 // ========== Range 验证增强 ==========
 
                 // 1. 防止 start >= file_size（请求范围超过文件大小）
                 if start >= file_size {
-                    let response = "HTTP/1.1 416 Range Not Satisfiable\r\n\
-                                   Content-Range: */\r\n\
-                                   Content-Length: 0\r\n\r\n";
+                    let response = format!(
+                        "HTTP/1.1 416 Range Not Satisfiable\r\n\
+                         Content-Range: */\r\n\
+                         Content-Length: 0\r\n\
+                         {}\r\n",
+                        cors_headers
+                    );
                     stream.write_all(response.as_bytes()).await?;
                     return Ok(());
                 }
@@ -274,9 +403,13 @@ impl FileServer {
 
                 // 3. 防止 start > end
                 if start > end {
-                    let response = "HTTP/1.1 416 Range Not Satisfiable\r\n\
-                                   Content-Range: */\r\n\
-                                   Content-Length: 0\r\n\r\n";
+                    let response = format!(
+                        "HTTP/1.1 416 Range Not Satisfiable\r\n\
+                         Content-Range: */\r\n\
+                         Content-Length: 0\r\n\
+                         {}\r\n",
+                        cors_headers
+                    );
                     stream.write_all(response.as_bytes()).await?;
                     return Ok(());
                 }
@@ -284,9 +417,13 @@ impl FileServer {
                 // 4. 计算请求范围大小，防止大范围读取
                 let range_size = end - start + 1;
                 if range_size > MAX_RANGE_SIZE {
-                    let response = "HTTP/1.1 416 Range Not Satisfiable\r\n\
-                                   Content-Range: */\r\n\
-                                   Content-Length: 0\r\n\r\n";
+                    let response = format!(
+                        "HTTP/1.1 416 Range Not Satisfiable\r\n\
+                         Content-Range: */\r\n\
+                         Content-Length: 0\r\n\
+                         {}\r\n",
+                        cors_headers
+                    );
                     stream.write_all(response.as_bytes()).await?;
                     return Ok(());
                 }
@@ -300,8 +437,9 @@ impl FileServer {
                      Content-Type: application/octet-stream\r\n\
                      Content-Length: {}\r\n\
                      Content-Range: bytes {}-{}/{}\r\n\
-                     Accept-Ranges: bytes\r\n\r\n",
-                    content_length, start, end, file_size
+                     Accept-Ranges: bytes\r\n\
+                     {}\r\n",
+                    content_length, start, end, file_size, cors_headers
                 );
                 stream.write_all(response.as_bytes()).await?;
 
@@ -315,8 +453,9 @@ impl FileServer {
                     "HTTP/1.1 200 OK\r\n\
                      Content-Type: application/octet-stream\r\n\
                      Content-Length: {}\r\n\
-                     Accept-Ranges: bytes\r\n\r\n",
-                    file_size
+                     Accept-Ranges: bytes\r\n\
+                     {}\r\n",
+                    file_size, cors_headers
                 );
                 stream.write_all(response.as_bytes()).await?;
 
