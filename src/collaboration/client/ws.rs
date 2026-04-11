@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
+use tracing::warn;
 
 /// WebSocket 客户端
 #[allow(dead_code)]
@@ -312,8 +313,11 @@ impl CollaborationClientWithFileHandler {
     /// 以便其他对等设备可以请求此文件
     pub async fn register_completed_file(&self, task_id: Uuid, local_path: PathBuf) -> Result<()> {
         if let Some(ref server) = self.file_server {
-            server.register_file(task_id, local_path).await;
-            println!("文件已注册到服务器: task_id={}", task_id);
+            if let Err(e) = server.register_file(task_id, local_path).await {
+                warn!("文件注册失败: {:?}", e);
+            } else {
+                println!("文件已注册到服务器: task_id={}", task_id);
+            }
         }
         Ok(())
     }

@@ -1,53 +1,4 @@
-# x_videos-dowloads
-
-Rust x.com 视频下载器，使用 yt-dlp 后端，支持 CLI 和 GUI。
-
-## 功能特性
-
-- **CLI 模式**: 直接通过命令行下载视频
-- **GUI 模式**: 友好的图形界面 (iced)
-- **协作下载**: 多设备实时协作下载 (WebSocket + P2P)
-
-## 快速开始
-
-```bash
-# CLI 模式
-cargo run -- "https://x.com/user/status/123456"
-
-# GUI 模式
-cargo run -- --gui
-
-# 发行版构建
-cargo build --release
-```
-
-## 项目结构
-
-```
-x_videos-dowloads/
-├── src/
-│   ├── main.rs              # CLI 入口
-│   ├── lib.rs               # 库入口
-│   ├── config.rs            # 配置管理
-│   ├── types.rs             # 类型定义
-│   ├── downloader.rs        # 直接下载器
-│   ├── yt_dlp.rs            # yt-dlp 集成
-│   ├── gui.rs               # GUI (iced)
-│   ├── history.rs           # 下载历史/书签
-│   ├── theme.rs             # 主题
-│   └── collaboration/       # 分布式协作模块
-│       ├── client/          # WebSocket 客户端
-│       ├── server/          # WebSocket 服务端
-│       ├── crypto/          # 一致性哈希
-│       ├── transfer/        # P2P 文件传输
-│       └── types.rs         # 共享类型
-├── Cargo.toml
-└── README.md
-```
-
----
-
-# 协作模块 (Collaboration)
+# 协作下载模块 (Collaboration)
 
 多设备实时协作下载模块，支持团队创建、任务分发、点对点文件传输。
 
@@ -79,21 +30,21 @@ x_videos-dowloads/
 │  collaboration/                                                  │
 │  ├── client/          WebSocket 客户端                           │
 │  │   ├── ws.rs        CollaborationClient, CollaborationClient   │
-│  │   │                 WithFileHandler                             │
+│  │   │                 WithFileHandler                           │
 │  │   ├── queue.rs     LocalQueue (本地队列管理)                   │
 │  │   └── discovery.rs 设备发现                                    │
 │  │                                                             │
-│  ├── server/          WebSocket 服务端                           │
+│  ├── server/          WebSocket 服务端                          │
 │  │   ├── ws.rs        WsServer                                  │
 │  │   ├── handler.rs   MessageHandler                            │
 │  │   └── db.rs        SQLite 数据库封装                          │
 │  │                                                             │
-│  ├── crypto/           加密模块                                  │
+│  ├── crypto/           加密模块                                   │
 │  │   └── hashring.rs  一致性哈希环 (节点发现)                    │
 │  │                                                             │
 │  ├── transfer/        文件传输模块                               │
 │  │   ├── http_server.rs  HTTP 范围请求服务器                     │
-│  │   └── downloader.rs   分块下载器                             │
+│  │   └── downloader.rs   分块下载器                              │
 │  │                                                             │
 │  ├── discovery/        NAT 穿透模块                              │
 │  │   └── stun.rs      STUN 协议实现                             │
@@ -104,7 +55,7 @@ x_videos-dowloads/
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## 核心类型
+## 核心类型 (types.rs)
 
 ### 数据结构
 
@@ -149,7 +100,7 @@ x_videos-dowloads/
 
 ## 公共 API
 
-### 客户端 (collaboration/client/ws.rs)
+### 客户端 (client/ws.rs)
 
 ```rust
 // 基础协作客户端
@@ -178,37 +129,43 @@ pub struct CollaborationClientWithFileHandler {
 }
 ```
 
-### 服务端 (collaboration/server/mod.rs)
+### 服务端 (server/mod.rs)
 
 ```rust
 pub struct WsServer
 pub struct MessageHandler
 pub struct Database
 
-// 服务器启动函数
+// 服务器启动
 pub async fn start_server(addr, db_path) -> Result<()>
 ```
 
-### 一致性哈希 (collaboration/crypto/hashring.rs)
+### 本地队列 (client/queue.rs)
+
+```rust
+pub struct LocalQueue
+```
+
+### 一致性哈希 (crypto/hashring.rs)
 
 ```rust
 pub struct HashRing
 pub fn get_owner(url) -> Uuid           // 获取 URL 对应的设备
-pub fn add_device(node_id, url)          // 添加设备到哈希环
-pub fn remove_device(node_id)            // 从哈希环移除设备
+pub fn add_device(node_id, url)         // 添加设备到哈希环
+pub fn remove_device(node_id)           // 从哈希环移除设备
 ```
 
-### 文件传输 (collaboration/transfer/)
+### 文件传输 (transfer/)
 
 ```rust
-// HTTP 服务器
+// HTTP 服务器 (http_server.rs)
 pub struct FileServer {
     pub async fn new(port) -> Self
-    pub async fn start()                              // 启动服务器
-    pub async fn register_file(task_id, path) -> ()  // 注册可分享文件
+    pub async fn start()               // 启动服务器
+    pub async fn register_file(task_id, path)  // 注册可分享文件
 }
 
-// 分块下载器
+// 分块下载器 (downloader.rs)
 pub struct ChunkedDownloader {
     pub async fn new(chunk_size) -> Self
     pub async fn download_from_peer(ip, port, task_id, output_path, progress_cb) -> Result<u64>

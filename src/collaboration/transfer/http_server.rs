@@ -28,9 +28,25 @@ impl FileServer {
         }
     }
 
-    /// 注册文件
-    pub async fn register_file(&self, task_id: Uuid, path: PathBuf) {
-        self.files.write().await.insert(task_id, path);
+    /// 注册文件（路径验证）
+    pub async fn register_file(&self, task_id: Uuid, path: PathBuf) -> Result<()> {
+        // 验证路径安全性
+        let canonical = std::fs::canonicalize(&path)
+            .map_err(|_| anyhow::anyhow!("无法获取规范路径"))?;
+
+        let base = std::env::current_dir()
+            .map_err(|_| anyhow::anyhow!("无法获取当前目录"))?
+            .join("files");
+
+        let canonical_base = std::fs::canonicalize(&base)
+            .map_err(|_| anyhow::anyhow!("files 目录不存在"))?;
+
+        if !canonical.starts_with(&canonical_base) {
+            anyhow::bail!("路径遍历攻击尝试被阻止");
+        }
+
+        self.files.write().await.insert(task_id, canonical);
+        Ok(())
     }
 
     /// 注销文件
