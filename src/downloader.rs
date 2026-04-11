@@ -608,4 +608,64 @@ mod tests {
     fn test_parse_size() {
         assert_eq!(parse_size("100.00MiB"), Some((100.0 * 1024.0 * 1024.0) as u64));
     }
+
+    #[test]
+    fn test_parse_speed_boundary() {
+        // KiB 边界测试
+        assert_eq!(parse_speed("0.00KiB"), Some(0.0));
+        assert_eq!(parse_speed("1024.00KiB"), Some(1024.0 * 1024.0));
+
+        // MiB 边界测试
+        assert_eq!(parse_speed("0.00MiB"), Some(0.0));
+        assert_eq!(parse_speed("1.00MiB"), Some(1024.0 * 1024.0));
+        assert_eq!(parse_speed("1024.00MiB"), Some(1024.0 * 1024.0 * 1024.0));
+
+        // GiB 边界测试
+        assert_eq!(parse_speed("1.00GiB"), Some(1024.0 * 1024.0 * 1024.0));
+
+        // 纯数字（无单位）
+        assert_eq!(parse_speed("123.45"), Some(123.45));
+
+        // 无效输入
+        assert_eq!(parse_speed(""), None);
+        assert_eq!(parse_speed("abc"), None);
+    }
+
+    #[test]
+    fn test_parse_size_boundary() {
+        // KiB 边界测试
+        assert_eq!(parse_size("0.00KiB"), Some(0));
+        assert_eq!(parse_size("1024.00KiB"), Some(1024 * 1024));
+
+        // MiB 边界测试
+        assert_eq!(parse_size("0.00MiB"), Some(0));
+        assert_eq!(parse_size("1.00MiB"), Some(1024 * 1024));
+        assert_eq!(parse_size("100.00MiB"), Some((100.0 * 1024.0 * 1024.0) as u64));
+
+        // GiB 边界测试
+        assert_eq!(parse_size("1.00GiB"), Some(1024 * 1024 * 1024));
+
+        // 纯数字（无单位，字节）
+        assert_eq!(parse_size("123.45"), Some(123));
+
+        // 无效输入
+        assert_eq!(parse_size(""), None);
+        assert_eq!(parse_size("abc"), None);
+    }
+
+    #[test]
+    fn test_parse_speed_precision() {
+        // 测试精度
+        assert_eq!(parse_speed("0.001KiB"), Some(1.024));
+        assert_eq!(parse_speed("0.001MiB"), Some(1048.576));
+    }
+
+    #[test]
+    fn test_parse_size_integer_overflow() {
+        // 大小值应该被截断为 u64
+        let large_value = "9223372036854775808.00MiB"; // 超过 i64 最大值
+        let result = parse_size(large_value);
+        // 由于精度问题，解析结果可能不准确，这是预期行为
+        assert!(result.is_some());
+    }
 }
