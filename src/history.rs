@@ -105,6 +105,7 @@ impl History {
     }
 
     /// 删除历史条目
+    #[allow(dead_code)]
     pub fn remove_entry(&mut self, id: Uuid) -> bool {
         let initial_len = self.entries.len();
         self.entries.retain(|e| e.id != id);
@@ -147,6 +148,7 @@ impl History {
     }
 
     /// 删除书签
+    #[allow(dead_code)]
     pub fn remove_bookmark(&mut self, id: Uuid) -> bool {
         let initial_len = self.bookmarks.len();
         self.bookmarks.retain(|b| b.id != id);
@@ -159,11 +161,13 @@ impl History {
     }
 
     /// 获取历史条数
+    #[allow(dead_code)]
     pub fn history_count(&self) -> usize {
         self.entries.len()
     }
 
     /// 获取书签条数
+    #[allow(dead_code)]
     pub fn bookmark_count(&self) -> usize {
         self.bookmarks.len()
     }
