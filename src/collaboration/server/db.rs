@@ -497,18 +497,16 @@ impl Database {
     }
 }
 
-/// 生成 12 位邀请码（使用密码学安全的 OsRng）
+/// 生成 16 位高熵邀请码（使用密码学安全的 OsRng）
+/// 字符集: 0-9, A-Z, a-z, !@#$%^&*  (共 50 个字符)
 fn generate_invite_code() -> String {
     use rand::Rng;
+    const CHARSET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!@#$%^&*";
     let mut rng = rand::rngs::OsRng;
-    (0..12)
+    (0..16)
         .map(|_| {
-            let i = rng.gen_range(0..36);
-            if i < 10 {
-                (b'0' + i) as char
-            } else {
-                (b'A' + i - 10) as char
-            }
+            let i = rng.gen_range(0..CHARSET.len());
+            CHARSET[i] as char
         })
         .collect()
 }
@@ -529,8 +527,8 @@ mod tests {
         let team = db.create_team("Test Team").expect("Failed to create team");
 
         assert_eq!(team.name, "Test Team");
-        assert_eq!(team.invite_code.len(), 12);
-        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert_eq!(team.invite_code.len(), 16);
+        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric() || "!@#$%^&*".contains(c)));
     }
 
     #[test]
@@ -727,11 +725,11 @@ mod tests {
         let db = create_test_db();
         let team = db.create_team("Test Team").expect("Failed to create team");
 
-        // 邀请码应该是 12 字符
-        assert_eq!(team.invite_code.len(), 12);
+        // 邀请码应该是 16 字符
+        assert_eq!(team.invite_code.len(), 16);
 
-        // 邀请码应该只包含字母和数字
-        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric()));
+        // 邀请码应该包含字母、数字和特殊字符
+        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric() || "!@#$%^&*".contains(c)));
     }
 
     #[test]
