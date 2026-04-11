@@ -34,8 +34,13 @@ pub enum AuthError {
     InvalidFormat,
 }
 
-/// 共享密钥（生产环境应从配置或环境变量获取）
-const SHARED_SECRET: &str = "ws-auth-shared-secret-key-2024";
+/// 获取共享密钥
+///
+/// 从环境变量 WEBSOCKET_SHARED_SECRET 读取，如未设置则使用默认开发密钥
+fn get_shared_secret() -> String {
+    std::env::var("WEBSOCKET_SHARED_SECRET")
+        .unwrap_or_else(|_| "ws-auth-dev-secret-key-do-not-use-in-production".to_string())
+}
 
 impl AuthToken {
     /// 生成认证 token
@@ -114,7 +119,8 @@ impl AuthToken {
 
     /// HMAC-SHA256 签名
     fn hmac_sign(message: &str) -> String {
-        let mut mac = HmacSha256::new_from_slice(SHARED_SECRET.as_bytes())
+        let secret = get_shared_secret();
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
             .expect("HMAC can take key of any size");
         mac.update(message.as_bytes());
         let result = mac.finalize();

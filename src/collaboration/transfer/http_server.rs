@@ -4,8 +4,10 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -14,11 +16,61 @@ use uuid::Uuid;
 /// 单次请求最大 Range 范围 (100MB)
 const MAX_RANGE_SIZE: u64 = 100 * 1024 * 1024;
 
+/// 速率限制器：每个 IP 在窗口时间内最多 N 个请求
+struct RateLimiter {
+    /// 时间窗口（秒）
+    window_secs: u64,
+    /// 窗口内最大请求数
+    max_requests: u64,
+    /// 每个 IP 的请求时间记录
+    requests: HashMap<IpAddr, Vec<Instant>>,
+}
+
+impl RateLimiter {
+    fn new(window_secs: u64, max_requests: u64) -> Self {
+        Self {
+            window_secs,
+            max_requests,
+            requests: HashMap::new(),
+        }
+    }
+
+    /// 检查 IP 是否超过速率限制
+    fn is_allowed(&mut self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let window = std::time::Duration::from_secs(self.window_secs);
+
+        let timestamps = self.requests.entry(ip).or_default();
+
+        // 移除过期的请求记录
+        timestamps.retain(|&t| now.duration_since(t) < window);
+
+        if timestamps.len() >= self.max_requests as usize {
+            return false;
+        }
+
+        timestamps.push(now);
+        true
+    }
+
+    /// 清理过期的 IP 记录（定期调用）
+    #[allow(dead_code)]
+    fn cleanup(&mut self) {
+        let now = Instant::now();
+        let window = std::time::Duration::from_secs(self.window_secs);
+        self.requests.retain(|_, timestamps| {
+            timestamps.retain(|&t| now.duration_since(t) < window);
+            !timestamps.is_empty()
+        });
+    }
+}
+
 /// HTTP 文件服务器
 #[allow(dead_code)]
 pub struct FileServer {
     port: u16,
     files: Arc<RwLock<HashMap<Uuid, PathBuf>>>, // task_id -> path
+    rate_limiter: Arc<RwLock<RateLimiter>>,
 }
 
 #[allow(dead_code)]
@@ -28,6 +80,8 @@ impl FileServer {
         Self {
             port,
             files: Arc::new(RwLock::new(HashMap::new())),
+            // 速率限制：每 60 秒最多 100 个请求（每个 IP）
+            rate_limiter: Arc::new(RwLock::new(RateLimiter::new(60, 100))),
         }
     }
 
@@ -66,9 +120,10 @@ impl FileServer {
         loop {
             let (mut stream, remote_addr) = listener.accept().await?;
             let files = self.files.clone();
+            let rate_limiter = self.rate_limiter.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_request(&mut stream, files).await {
+                if let Err(e) = Self::handle_request(&mut stream, files, rate_limiter, remote_addr).await {
                     eprintln!("请求处理错误 ({}): {}", remote_addr, e);
                 }
             });
@@ -78,7 +133,19 @@ impl FileServer {
     async fn handle_request(
         stream: &mut tokio::net::TcpStream,
         files: Arc<RwLock<HashMap<Uuid, PathBuf>>>,
+        rate_limiter: Arc<RwLock<RateLimiter>>,
+        remote_addr: std::net::SocketAddr,
     ) -> Result<()> {
+        // 速率限制检查
+        {
+            let mut limiter = rate_limiter.write().await;
+            if !limiter.is_allowed(remote_addr.ip()) {
+                let response = "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n";
+                stream.write_all(response.as_bytes()).await?;
+                return Ok(());
+            }
+        }
+
         // 动态读取请求，支持大请求头和长URL
         // 使用 64KB 初始缓冲区，按需自动扩展
         let mut buffer = vec![0u8; 65536];
