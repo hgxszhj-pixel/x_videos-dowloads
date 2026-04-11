@@ -337,18 +337,18 @@ impl Database {
                 team_id: Uuid::parse_str(&row.get::<_, String>(1)?).expect("Invalid UUID in database"),
                 url: row.get(2)?,
                 status,
-                claimed_by: row.get::<_, Option<String>>(5)?.map(|s| Uuid::parse_str(&s).expect("Invalid claimed_by UUID in database")),
+                claimed_by: row.get::<_, Option<String>>(4)?.map(|s| Uuid::parse_str(&s).expect("Invalid claimed_by UUID in database")),
                 claimed_at: row
-                    .get::<_, Option<String>>(6)?
+                    .get::<_, Option<String>>(5)?
                     .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
-                progress: row.get(7)?,
-                local_path: row.get::<_, Option<String>>(8)?.map(PathBuf::from),
-                file_size: row.get::<_, Option<i64>>(9)?.map(|s| s as u64),
-                created_by: Uuid::parse_str(&row.get::<_, String>(10)?).expect("Invalid UUID in database"),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                progress: row.get(6)?,
+                local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
+                file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
+                created_by: Uuid::parse_str(&row.get::<_, String>(9)?).expect("Invalid UUID in database"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
                     .unwrap()
                     .with_timezone(&Utc),
-                version: row.get::<_, i64>(12)? as u64,
+                version: row.get::<_, i64>(11)? as u64,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -459,4 +459,214 @@ fn generate_invite_code() -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_db() -> Database {
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join(format!("test_db_{}.db", Uuid::new_v4()));
+        Database::open(db_path.as_path()).expect("Failed to create test database")
+    }
+
+    #[test]
+    fn test_create_team() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        assert_eq!(team.name, "Test Team");
+        assert_eq!(team.invite_code.len(), 12);
+        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn test_get_team_by_code() {
+        let db = create_test_db();
+        let created = db.create_team("Test Team").expect("Failed to create team");
+
+        let found = db.get_team_by_code(&created.invite_code)
+            .expect("Failed to get team by code")
+            .expect("Team not found");
+
+        assert_eq!(found.id, created.id);
+        assert_eq!(found.name, "Test Team");
+    }
+
+    #[test]
+    fn test_get_team_by_code_not_found() {
+        let db = create_test_db();
+        let found = db.get_team_by_code("NONEXISTENT")
+            .expect("Failed to query team");
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn test_register_device() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        let device = Device {
+            id: Uuid::new_v4(),
+            team_id: team.id,
+            name: "Test Device".to_string(),
+            public_ip: Some("192.168.1.1".to_string()),
+            public_port: Some(8080),
+            last_seen: Utc::now(),
+            is_online: true,
+        };
+
+        db.register_device(&device).expect("Failed to register device");
+
+        let devices = db.get_team_devices(team.id).expect("Failed to get team devices");
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].name, "Test Device");
+    }
+
+    #[test]
+    fn test_update_device_heartbeat() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        let device = Device {
+            id: Uuid::new_v4(),
+            team_id: team.id,
+            name: "Test Device".to_string(),
+            public_ip: None,
+            public_port: None,
+            last_seen: Utc::now(),
+            is_online: true,
+        };
+
+        db.register_device(&device).expect("Failed to register device");
+        db.update_device_heartbeat(device.id).expect("Failed to update heartbeat");
+
+        let retrieved = db.get_device(device.id)
+            .expect("Failed to get device")
+            .expect("Device not found");
+        assert!(retrieved.is_online);
+    }
+
+    #[test]
+    fn test_set_device_offline() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        let device = Device {
+            id: Uuid::new_v4(),
+            team_id: team.id,
+            name: "Test Device".to_string(),
+            public_ip: None,
+            public_port: None,
+            last_seen: Utc::now(),
+            is_online: true,
+        };
+
+        db.register_device(&device).expect("Failed to register device");
+        db.set_device_offline(device.id).expect("Failed to set device offline");
+
+        let retrieved = db.get_device(device.id)
+            .expect("Failed to get device")
+            .expect("Device not found");
+        assert!(!retrieved.is_online);
+    }
+
+    #[test]
+    fn test_create_and_get_task() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+        let device_id = Uuid::new_v4();
+
+        let task = Task::new("https://example.com/video".to_string(), team.id, device_id);
+        db.create_task(&task, team.id).expect("Failed to create task");
+
+        let tasks = db.get_tasks_by_team(team.id).expect("Failed to get tasks");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].url, "https://example.com/video");
+        assert_eq!(tasks[0].status, TaskStatus::New);
+    }
+
+    #[test]
+    fn test_update_task() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+        let device_id = Uuid::new_v4();
+
+        let mut task = Task::new("https://example.com/video".to_string(), team.id, device_id);
+        db.create_task(&task, team.id).expect("Failed to create task");
+
+        task.status = TaskStatus::Claimed;
+        task.claimed_by = Some(device_id);
+        task.progress = 50.0;
+        db.update_task(&task, team.id).expect("Failed to update task");
+
+        let tasks = db.get_tasks_by_team(team.id).expect("Failed to get tasks");
+        assert_eq!(tasks[0].status, TaskStatus::Claimed);
+        assert_eq!(tasks[0].progress, 50.0);
+    }
+
+    #[test]
+    fn test_release_task() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+        let device_id = Uuid::new_v4();
+
+        let mut task = Task::new("https://example.com/video".to_string(), team.id, device_id);
+        task.status = TaskStatus::Claimed;
+        task.claimed_by = Some(device_id);
+        db.create_task(&task, team.id).expect("Failed to create task");
+
+        db.release_task(task.id).expect("Failed to release task");
+
+        let tasks = db.get_tasks_by_team(team.id).expect("Failed to get tasks");
+        assert_eq!(tasks[0].status, TaskStatus::Queued);
+        assert!(tasks[0].claimed_by.is_none());
+    }
+
+    #[test]
+    fn test_get_tasks_by_device() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+        let device_id = Uuid::new_v4();
+
+        let mut task = Task::new("https://example.com/video1".to_string(), team.id, device_id);
+        task.status = TaskStatus::Claimed;
+        task.claimed_by = Some(device_id);
+        db.create_task(&task, team.id).expect("Failed to create task");
+
+        let task2 = Task::new("https://example.com/video2".to_string(), team.id, device_id);
+        db.create_task(&task2, team.id).expect("Failed to create task");
+
+        let tasks = db.get_tasks_by_device(device_id).expect("Failed to get tasks by device");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].url, "https://example.com/video1");
+    }
+
+    #[test]
+    fn test_offline_messages() {
+        let db = create_test_db();
+        let device_id = Uuid::new_v4();
+
+        db.save_offline_message(device_id, "Message 1").expect("Failed to save message");
+        db.save_offline_message(device_id, "Message 2").expect("Failed to save message");
+
+        let messages = db.get_offline_messages(device_id).expect("Failed to get messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0], "Message 1");
+        assert_eq!(messages[1], "Message 2");
+
+        db.clear_offline_messages(device_id).expect("Failed to clear messages");
+        let messages = db.get_offline_messages(device_id).expect("Failed to get messages");
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_invite_code_is_unique() {
+        let db = create_test_db();
+        let team1 = db.create_team("Team 1").expect("Failed to create team 1");
+        let team2 = db.create_team("Team 2").expect("Failed to create team 2");
+
+        assert_ne!(team1.invite_code, team2.invite_code);
+    }
 }
