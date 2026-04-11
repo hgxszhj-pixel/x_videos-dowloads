@@ -11,6 +11,9 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+/// 单次请求最大 Range 范围 (100MB)
+const MAX_RANGE_SIZE: u64 = 100 * 1024 * 1024;
+
 /// HTTP 文件服务器
 #[allow(dead_code)]
 pub struct FileServer {
@@ -168,8 +171,41 @@ impl FileServer {
 
         match range {
             Some((start, end)) => {
-                // Range 请求
-                let end = end.unwrap_or(file_size - 1).min(file_size - 1);
+                // ========== Range 验证增强 ==========
+
+                // 1. 防止 start >= file_size（请求范围超过文件大小）
+                if start >= file_size {
+                    let response = "HTTP/1.1 416 Range Not Satisfiable\r\n\
+                                   Content-Range: */\r\n\
+                                   Content-Length: 0\r\n\r\n";
+                    stream.write_all(response.as_bytes()).await?;
+                    return Ok(());
+                }
+
+                // 2. 计算实际 end 值（处理 open-ended ranges like "bytes=100-"）
+                let end = end.unwrap_or(file_size - 1);
+
+                // 3. 防止 start > end
+                if start > end {
+                    let response = "HTTP/1.1 416 Range Not Satisfiable\r\n\
+                                   Content-Range: */\r\n\
+                                   Content-Length: 0\r\n\r\n";
+                    stream.write_all(response.as_bytes()).await?;
+                    return Ok(());
+                }
+
+                // 4. 计算请求范围大小，防止大范围读取
+                let range_size = end - start + 1;
+                if range_size > MAX_RANGE_SIZE {
+                    let response = "HTTP/1.1 416 Range Not Satisfiable\r\n\
+                                   Content-Range: */\r\n\
+                                   Content-Length: 0\r\n\r\n";
+                    stream.write_all(response.as_bytes()).await?;
+                    return Ok(());
+                }
+
+                // 限制 end 不超过文件大小
+                let end = end.min(file_size - 1);
                 let content_length = end - start + 1;
 
                 let response = format!(
