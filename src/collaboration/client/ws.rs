@@ -277,7 +277,6 @@ impl CollaborationClientWithFileHandler {
     pub async fn start_file_handler(&self) {
         let mut rx = self.client.subscribe();
         let downloader = self.downloader.clone();
-        let _file_server = self.file_server.clone();
         let download_dir = self.download_dir.clone();
 
         tokio::spawn(async move {

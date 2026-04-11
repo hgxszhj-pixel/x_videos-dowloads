@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 
 use tokio::net::UdpSocket;
 use bytes::{BytesMut, BufMut};
+use rand::Rng;
 
 /// STUN 服务器地址
 const STUN_SERVER: &str = "stun.l.google.com:19302";
@@ -114,7 +115,7 @@ fn build_binding_request(buf: &mut BytesMut) {
     // 魔术 cookie
     buf.put_u32(STUN_MAGIC_COOKIE);
     // 事务 ID（12 字节）
-    let transaction_id: [u8; 12] = rand::random();
+    let transaction_id: [u8; 12] = rand::thread_rng().gen();
     buf.put_slice(&transaction_id);
 }
 

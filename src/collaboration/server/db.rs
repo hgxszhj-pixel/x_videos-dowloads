@@ -24,6 +24,11 @@ fn validate_port(port: u16) -> Result<()> {
     Ok(())
 }
 
+/// 将 uuid::Error 转换为 rusqlite::Error（用于 query_map 闭包内）
+fn uuid_err_to_rusqlite(_: uuid::Error) -> rusqlite::Error {
+    rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string())
+}
+
 /// 数据库封装
 #[allow(dead_code)]
 pub struct Database {
@@ -193,8 +198,10 @@ impl Database {
         )?;
         let rows = stmt.query_map(params![team_id.to_string()], |row| {
             Ok(Device {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).expect("Invalid UUID in database"),
-                team_id: Uuid::parse_str(&row.get::<_, String>(1)?).expect("Invalid UUID in database"),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
+                team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
                 name: row.get(2)?,
                 public_ip: row.get(3)?,
                 public_port: row.get(4)?,
@@ -239,8 +246,10 @@ impl Database {
         let mut rows = stmt.query(params![device_id.to_string()])?;
         if let Some(row) = rows.next()? {
             Ok(Some(Device {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).expect("Invalid UUID in database"),
-                team_id: Uuid::parse_str(&row.get::<_, String>(1)?).expect("Invalid UUID in database"),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
+                team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
                 name: row.get(2)?,
                 public_ip: row.get(3)?,
                 public_port: row.get(4)?,
@@ -319,18 +328,24 @@ impl Database {
                 _ => TaskStatus::New,
             };
             Ok(Task {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).expect("Invalid UUID in database"),
-                team_id: Uuid::parse_str(&row.get::<_, String>(1)?).expect("Invalid UUID in database"),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .map_err(uuid_err_to_rusqlite)?,
+                team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .map_err(uuid_err_to_rusqlite)?,
                 url: row.get(2)?,
                 status,
-                claimed_by: row.get::<_, Option<String>>(4)?.map(|s| Uuid::parse_str(&s).expect("Invalid claimed_by UUID in database")),
+                claimed_by: row
+                    .get::<_, Option<String>>(4)?
+                    .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
+                    .transpose()?,
                 claimed_at: row
                     .get::<_, Option<String>>(5)?
                     .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
-                created_by: Uuid::parse_str(&row.get::<_, String>(9)?).expect("Invalid UUID in database"),
+                created_by: Uuid::parse_str(&row.get::<_, String>(9)?)
+                    .map_err(uuid_err_to_rusqlite)?,
                 created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
                     .unwrap()
                     .with_timezone(&Utc),
@@ -357,18 +372,24 @@ impl Database {
                 _ => TaskStatus::New,
             };
             Ok(Task {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).expect("Invalid UUID in database"),
-                team_id: Uuid::parse_str(&row.get::<_, String>(1)?).expect("Invalid UUID in database"),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .map_err(uuid_err_to_rusqlite)?,
+                team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .map_err(uuid_err_to_rusqlite)?,
                 url: row.get(2)?,
                 status,
-                claimed_by: row.get::<_, Option<String>>(4)?.map(|s| Uuid::parse_str(&s).expect("Invalid claimed_by UUID in database")),
+                claimed_by: row
+                    .get::<_, Option<String>>(4)?
+                    .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
+                    .transpose()?,
                 claimed_at: row
                     .get::<_, Option<String>>(5)?
                     .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
-                created_by: Uuid::parse_str(&row.get::<_, String>(9)?).expect("Invalid UUID in database"),
+                created_by: Uuid::parse_str(&row.get::<_, String>(9)?)
+                    .map_err(uuid_err_to_rusqlite)?,
                 created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
                     .unwrap()
                     .with_timezone(&Utc),
@@ -395,18 +416,24 @@ impl Database {
                 _ => TaskStatus::New,
             };
             Ok(Task {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).expect("Invalid UUID in database"),
-                team_id: Uuid::parse_str(&row.get::<_, String>(1)?).expect("Invalid UUID in database"),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .map_err(uuid_err_to_rusqlite)?,
+                team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .map_err(uuid_err_to_rusqlite)?,
                 url: row.get(2)?,
                 status,
-                claimed_by: row.get::<_, Option<String>>(4)?.map(|s| Uuid::parse_str(&s).expect("Invalid claimed_by UUID in database")),
+                claimed_by: row
+                    .get::<_, Option<String>>(4)?
+                    .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
+                    .transpose()?,
                 claimed_at: row
                     .get::<_, Option<String>>(5)?
                     .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
-                created_by: Uuid::parse_str(&row.get::<_, String>(9)?).expect("Invalid UUID in database"),
+                created_by: Uuid::parse_str(&row.get::<_, String>(9)?)
+                    .map_err(uuid_err_to_rusqlite)?,
                 created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
                     .unwrap()
                     .with_timezone(&Utc),
@@ -431,7 +458,8 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT DISTINCT team_id FROM devices")?;
         let rows = stmt.query_map([], |row| {
-            Ok(Uuid::parse_str(&row.get::<_, String>(0)?).expect("Invalid UUID in database"))
+            Uuid::parse_str(&row.get::<_, String>(0)?)
+                .map_err(uuid_err_to_rusqlite)
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }

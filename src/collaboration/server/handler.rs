@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 
-/// Session 信息
+/// WebSocket 连接会话信息
 struct Session {
     device_id: Uuid,
     team_id: Uuid,
@@ -160,12 +160,14 @@ impl MessageHandler {
         }
     }
 
+    /// 处理心跳消息
     async fn handle_heartbeat(&self, device_id: Uuid) {
         if let Err(e) = self.db.update_device_heartbeat(device_id) {
             eprintln!("更新心跳失败: {}", e);
         }
     }
 
+    /// 处理创建团队消息
     async fn handle_create_team(&self, key: &str, name: String) {
         // 创建团队
         let team = match self.db.create_team(&name) {
@@ -197,11 +199,13 @@ impl MessageHandler {
         }
 
         // 注册设备到团队
+        // 注意: public_ip 和 public_port 在设备加入时通过 STUN 检测获取
+        // 此处设为 None，后续设备 Register 时会更新
         let device = crate::collaboration::types::Device {
             id: Uuid::nil(), // 临时，Register 时会更新
             team_id: team.id,
             name: name.clone(),
-            public_ip: None,
+            public_ip: None, // TODO: 创建团队时可选择进行 STUN 检测
             public_port: None,
             last_seen: chrono::Utc::now(),
             is_online: true,
@@ -211,6 +215,7 @@ impl MessageHandler {
         }
     }
 
+    /// 处理加入团队消息
     async fn handle_join_team(&self, key: &str, invite_code: String) {
         // 通过邀请码查找团队
         let team = match self.db.get_team_by_code(&invite_code) {
@@ -245,11 +250,13 @@ impl MessageHandler {
         }
 
         // 注册设备到团队
+        // 注意: public_ip 和 public_port 应在客户端通过 STUN 检测后更新
+        // 此处设为 None，等待客户端 Register 消息时更新
         let device = crate::collaboration::types::Device {
             id: Uuid::nil(),
             team_id: team.id,
             name: "NewDevice".to_string(),
-            public_ip: None,
+            public_ip: None, // TODO: 加入团队时可选择进行 STUN 检测
             public_port: None,
             last_seen: chrono::Utc::now(),
             is_online: true,
@@ -259,6 +266,7 @@ impl MessageHandler {
         }
     }
 
+    /// 发送错误消息给客户端
     async fn send_error(&self, key: &str, message: String) -> Result<(), anyhow::Error> {
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(key) {
@@ -267,6 +275,7 @@ impl MessageHandler {
         Ok(())
     }
 
+    /// 处理添加任务消息
     async fn handle_add_task(&self, device_id: Uuid, team_id: Uuid, url: String) {
         // URL 冲突检测
         if let Ok(tasks) = self.db.get_tasks_by_team(team_id) {
@@ -318,6 +327,7 @@ impl MessageHandler {
         ).await;
     }
 
+    /// 处理认领任务消息
     async fn handle_claim_task(&self, device_id: Uuid, team_id: Uuid, task_id: Uuid) {
         if let Ok(tasks) = self.db.get_tasks_by_team(team_id) {
             if let Some(mut task) = tasks.into_iter().find(|t| t.id == task_id) {
@@ -360,6 +370,7 @@ impl MessageHandler {
         ).await;
     }
 
+    /// 处理更新进度消息
     async fn handle_update_progress(
         &self,
         device_id: Uuid,
@@ -389,6 +400,7 @@ impl MessageHandler {
         }
     }
 
+    /// 处理任务完成消息
     async fn handle_task_complete(
         &self,
         device_id: Uuid,
@@ -422,6 +434,7 @@ impl MessageHandler {
         }
     }
 
+    /// 处理文件请求消息
     async fn handle_request_file(&self, device_id: Uuid, team_id: Uuid, task_id: Uuid) {
         if let Ok(tasks) = self.db.get_tasks_by_team(team_id) {
             if let Some(task) = tasks.iter().find(|t| t.id == task_id) {
@@ -456,6 +469,7 @@ impl MessageHandler {
         }
     }
 
+    /// 处理离开团队消息
     async fn handle_leave_team(&self, device_id: Uuid) {
         if let Err(e) = self.db.set_device_offline(device_id) {
             eprintln!("标记设备离线失败: {}", e);
