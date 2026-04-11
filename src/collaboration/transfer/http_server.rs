@@ -93,6 +93,25 @@ impl FileServer {
         Ok(())
     }
 
+    /// 路径安全验证：确保文件在允许的 files 目录下，防止路径遍历攻击
+    fn validate_path(path: &PathBuf) -> Result<()> {
+        let canonical_path = std::fs::canonicalize(path)
+            .map_err(|e| anyhow::anyhow!("无法获取文件路径: {}", e))?;
+
+        let base_dir = std::env::current_dir()
+            .map_err(|e| anyhow::anyhow!("无法获取当前目录: {}", e))?
+            .join("files");
+
+        let canonical_base = std::fs::canonicalize(&base_dir)
+            .map_err(|e| anyhow::anyhow!("基准目录不存在: {}", e))?;
+
+        if !canonical_path.starts_with(&canonical_base) {
+            anyhow::bail!("路径遍历攻击尝试: {:?} 不在允许目录 {:?} 内", canonical_path, canonical_base);
+        }
+
+        Ok(())
+    }
+
     /// 解析 Range 请求头
     fn parse_range(lines: &[&str]) -> Option<(u64, Option<u64>)> {
         for line in lines {
@@ -119,7 +138,10 @@ impl FileServer {
         path: &PathBuf,
         range: Option<(u64, Option<u64>)>,
     ) -> Result<()> {
-        let metadata = std::fs::metadata(path)?;
+        // 路径安全验证
+        Self::validate_path(path)?;
+
+        let metadata = tokio::fs::metadata(path).await?;
         let file_size = metadata.len();
 
         match range {
