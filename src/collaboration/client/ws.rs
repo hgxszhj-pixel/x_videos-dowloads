@@ -5,11 +5,35 @@ use crate::collaboration::types::{ClientMessage, ServerMessage};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
+use tokio::time::{sleep, Duration};
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
-use tracing::warn;
+use tracing::{warn, info, error};
+
+/// 连接状态
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionState {
+    /// 已连接
+    Connected,
+    /// 连接中
+    Connecting,
+    /// 断开连接，等待重连
+    Disconnected,
+    /// 重连中
+    Reconnecting { attempt: u64 },
+    /// 永久断开（达到最大重试次数）
+    Failed,
+}
+
+/// 最大重试次数
+const MAX_RECONNECT_ATTEMPTS: u64 = 10;
+/// 指数退避基础值（秒）
+const BACKOFF_BASE_SECS: u64 = 1;
+/// 最大退避时间（秒）
+const MAX_BACKOFF_SECS: u64 = 30;
 
 /// WebSocket 客户端
 #[allow(dead_code)]
@@ -18,6 +42,24 @@ pub struct CollaborationClient {
     team_id: Uuid,
     write_tx: mpsc::Sender<String>,
     msg_tx: broadcast::Sender<ServerMessage>,
+    /// 连接状态
+    pub state: Arc<AtomicU64>,
+    /// 设备名称
+    device_name: String,
+    /// 服务器 URL
+    server_url: String,
+}
+
+impl ConnectionState {
+    pub fn from_u64(val: u64) -> Self {
+        match val {
+            0 => ConnectionState::Disconnected,
+            1 => ConnectionState::Connecting,
+            2 => ConnectionState::Connected,
+            3 => ConnectionState::Failed,
+            n => ConnectionState::Reconnecting { attempt: n - 4 },
+        }
+    }
 }
 
 /// 带有文件传输功能的协作客户端
@@ -42,11 +84,31 @@ impl CollaborationClient {
         device_id: Uuid,
         device_name: &str,
     ) -> Result<Self> {
-        let (ws_stream, _) = tokio_tungstenite::connect_async(server_url).await?;
+        let state = Arc::new(AtomicU64::new(1)); // Connecting
+
+        let client = Self {
+            device_id,
+            team_id,
+            write_tx: mpsc::channel(100).0,
+            msg_tx: broadcast::channel(100).0,
+            state,
+            device_name: device_name.to_string(),
+            server_url: server_url.to_string(),
+        };
+
+        // 初始化 WebSocket 连接
+        client.init_ws_connection().await?;
+
+        Ok(client)
+    }
+
+    /// 初始化 WebSocket 连接（供 connect 和重连使用）
+    async fn init_ws_connection(&self) -> Result<()> {
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&self.server_url).await?;
         let (mut write, read) = ws_stream.split();
 
         // ===== 发送认证 token =====
-        let auth_token = AuthToken::generate(team_id, device_id);
+        let auth_token = AuthToken::generate(self.team_id, self.device_id);
         let auth_msg = format!("AUTH:{}", auth_token);
         write.send(Message::Text(auth_msg)).await?;
 
@@ -56,9 +118,9 @@ impl CollaborationClient {
 
         // 发送注册消息
         let register = ClientMessage::Register {
-            device_id,
-            team_id,
-            name: device_name.to_string(),
+            device_id: self.device_id,
+            team_id: self.team_id,
+            name: self.device_name.clone(),
         };
         let register_json = serde_json::to_string(&register)?;
         write.send(Message::Text(register_json)).await?;
@@ -88,7 +150,7 @@ impl CollaborationClient {
         };
 
         // 心跳循环
-        let device_id_clone = device_id;
+        let device_id_clone = self.device_id;
         let write_tx_clone = write_tx.clone();
         let heartbeat_loop = async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
@@ -110,12 +172,50 @@ impl CollaborationClient {
             tokio::join!(write_loop, read_loop, heartbeat_loop);
         });
 
-        Ok(Self {
-            device_id,
-            team_id,
-            write_tx,
-            msg_tx,
-        })
+        // 更新连接状态为已连接
+        self.state.store(2, Ordering::SeqCst);
+        info!("WebSocket 连接已建立");
+
+        Ok(())
+    }
+
+    /// 断开并重连
+    async fn reconnect(&self) -> Result<()> {
+        let mut attempt = 1u64;
+
+        loop {
+            if attempt > MAX_RECONNECT_ATTEMPTS {
+                error!("达到最大重连次数 ({}), 放弃重连", MAX_RECONNECT_ATTEMPTS);
+                self.state.store(3, Ordering::SeqCst); // Failed
+                return Err(anyhow::anyhow!("达到最大重连次数"));
+            }
+
+            self.state.store(4 + attempt, Ordering::SeqCst); // Reconnecting { attempt }
+            info!("尝试重连 (attempt {}/{})", attempt, MAX_RECONNECT_ATTEMPTS);
+
+            // 计算指数退避时间
+            let backoff_secs = std::cmp::min(
+                BACKOFF_BASE_SECS * 2u64.pow(attempt as u32 - 1),
+                MAX_BACKOFF_SECS,
+            );
+            sleep(Duration::from_secs(backoff_secs)).await;
+
+            match self.init_ws_connection().await {
+                Ok(()) => {
+                    info!("重连成功!");
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("重连失败: {}", e);
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    /// 获取当前连接状态
+    pub fn connection_state(&self) -> ConnectionState {
+        ConnectionState::from_u64(self.state.load(Ordering::SeqCst))
     }
 
     /// 发送消息
