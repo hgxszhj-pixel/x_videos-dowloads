@@ -1,5 +1,6 @@
 //! WebSocket 客户端
 
+use crate::collaboration::crypto::auth::AuthToken;
 use crate::collaboration::types::{ClientMessage, ServerMessage};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
@@ -43,6 +44,11 @@ impl CollaborationClient {
     ) -> Result<Self> {
         let (ws_stream, _) = tokio_tungstenite::connect_async(server_url).await?;
         let (mut write, read) = ws_stream.split();
+
+        // ===== 发送认证 token =====
+        let auth_token = AuthToken::generate(team_id, device_id);
+        let auth_msg = format!("AUTH:{}", auth_token);
+        write.send(Message::Text(auth_msg)).await?;
 
         // 消息通道
         let (msg_tx, _) = broadcast::channel(100);
