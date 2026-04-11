@@ -721,4 +721,138 @@ mod tests {
 
         assert_ne!(team1.invite_code, team2.invite_code);
     }
+
+    #[test]
+    fn test_invite_code_format() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        // 邀请码应该是 12 字符
+        assert_eq!(team.invite_code.len(), 12);
+
+        // 邀请码应该只包含字母和数字
+        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn test_get_device_team_id() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        let device = Device {
+            id: Uuid::new_v4(),
+            team_id: team.id,
+            name: "Test Device".to_string(),
+            public_ip: None,
+            public_port: None,
+            last_seen: Utc::now(),
+            is_online: true,
+        };
+
+        db.register_device(&device).expect("Failed to register device");
+
+        let found_team_id = db.get_device_team_id(device.id)
+            .expect("Failed to get device team id")
+            .expect("Team ID should not be None");
+        assert_eq!(found_team_id, team.id);
+    }
+
+    #[test]
+    fn test_get_device_team_id_not_found() {
+        let db = create_test_db();
+        let fake_id = Uuid::new_v4();
+
+        let found = db.get_device_team_id(fake_id)
+            .expect("Failed to query device team id");
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn test_get_all_team_ids() {
+        let db = create_test_db();
+        let team1 = db.create_team("Team 1").expect("Failed to create team 1");
+        let team2 = db.create_team("Team 2").expect("Failed to create team 2");
+
+        let device1 = Device {
+            id: Uuid::new_v4(),
+            team_id: team1.id,
+            name: "Device 1".to_string(),
+            public_ip: None,
+            public_port: None,
+            last_seen: Utc::now(),
+            is_online: true,
+        };
+        let device2 = Device {
+            id: Uuid::new_v4(),
+            team_id: team2.id,
+            name: "Device 2".to_string(),
+            public_ip: None,
+            public_port: None,
+            last_seen: Utc::now(),
+            is_online: true,
+        };
+
+        db.register_device(&device1).expect("Failed to register device1");
+        db.register_device(&device2).expect("Failed to register device2");
+
+        let team_ids = db.get_all_team_ids().expect("Failed to get all team ids");
+        assert_eq!(team_ids.len(), 2);
+        assert!(team_ids.contains(&team1.id));
+        assert!(team_ids.contains(&team2.id));
+    }
+
+    #[test]
+    fn test_get_claimed_tasks() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+        let device_id = Uuid::new_v4();
+
+        // 创建多个任务
+        let mut task1 = Task::new("https://example.com/video1".to_string(), team.id, device_id);
+        task1.status = TaskStatus::Claimed;
+        task1.claimed_by = Some(device_id);
+        db.create_task(&task1, team.id).expect("Failed to create task1");
+
+        let task2 = Task::new("https://example.com/video2".to_string(), team.id, device_id);
+        db.create_task(&task2, team.id).expect("Failed to create task2");
+
+        let mut task3 = Task::new("https://example.com/video3".to_string(), team.id, device_id);
+        task3.status = TaskStatus::Claimed;
+        task3.claimed_by = Some(device_id);
+        db.create_task(&task3, team.id).expect("Failed to create task3");
+
+        let claimed = db.get_claimed_tasks(team.id).expect("Failed to get claimed tasks");
+        assert_eq!(claimed.len(), 2);
+    }
+
+    #[test]
+    fn test_get_tasks_by_team_empty() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        let tasks = db.get_tasks_by_team(team.id).expect("Failed to get tasks");
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_devices_same_team() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+
+        for i in 0..5 {
+            let device = Device {
+                id: Uuid::new_v4(),
+                team_id: team.id,
+                name: format!("Device {}", i),
+                public_ip: None,
+                public_port: None,
+                last_seen: Utc::now(),
+                is_online: true,
+            };
+            db.register_device(&device).expect("Failed to register device");
+        }
+
+        let devices = db.get_team_devices(team.id).expect("Failed to get team devices");
+        assert_eq!(devices.len(), 5);
+    }
 }
