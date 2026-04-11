@@ -125,6 +125,12 @@ impl FileServer {
                     } else {
                         None
                     };
+                    // 验证 start > end 的情况（会导致 u64 下溢）
+                    if let Some(end_val) = end {
+                        if start > end_val {
+                            return None;
+                        }
+                    }
                     return Some((start, end));
                 }
             }
