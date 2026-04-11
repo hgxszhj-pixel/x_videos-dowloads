@@ -87,8 +87,8 @@ impl CorsAllowList {
         }
     }
 
-    /// 添加额外的允许 origin
-    #[allow(dead_code)]
+    /// 添加额外的允许 origin (预留 API)
+    #[allow(unknown_lints, dead_code)]
     fn with_extra_origins(mut self, origins: Vec<String>) -> Self {
         for origin in &origins {
             if let Ok(parsed) = origin.parse::<url::Url>() {
