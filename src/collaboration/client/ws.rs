@@ -40,7 +40,7 @@ const MAX_BACKOFF_SECS: u64 = 30;
 pub struct CollaborationClient {
     device_id: Uuid,
     team_id: Uuid,
-    write_tx: mpsc::Sender<String>,
+    write_tx: Arc<mpsc::Sender<String>>,
     msg_tx: broadcast::Sender<ServerMessage>,
     /// 连接状态
     pub state: Arc<AtomicU64>,
@@ -88,10 +88,11 @@ impl CollaborationClient {
     ) -> Result<Self> {
         let state = Arc::new(AtomicU64::new(1)); // Connecting
 
+        let (write_tx, write_rx) = mpsc::channel(100);
         let client = Self {
             device_id,
             team_id,
-            write_tx: mpsc::channel(100).0,
+            write_tx: Arc::new(write_tx),
             msg_tx: broadcast::channel(100).0,
             state,
             device_name: device_name.to_string(),
@@ -99,14 +100,14 @@ impl CollaborationClient {
             on_failure: std::sync::Mutex::new(None),
         };
 
-        // 初始化 WebSocket 连接
-        client.init_ws_connection().await?;
+        // 初始化 WebSocket 连接（传入 receiver）
+        client.init_ws_connection_with_receiver(write_rx).await?;
 
         Ok(client)
     }
 
     /// 初始化 WebSocket 连接（供 connect 和重连使用）
-    async fn init_ws_connection(&self) -> Result<()> {
+    async fn init_ws_connection_with_receiver(&self, write_rx: mpsc::Receiver<String>) -> Result<()> {
         let (ws_stream, _) = tokio_tungstenite::connect_async(&self.server_url).await?;
         let (mut write, read) = ws_stream.split();
 
@@ -128,12 +129,10 @@ impl CollaborationClient {
         let register_json = serde_json::to_string(&register)?;
         write.send(Message::Text(register_json)).await?;
 
-        // 获取写入的 sender
-        let (write_tx, mut write_rx) = mpsc::channel::<String>(100);
-
         // WebSocket 写入循环
         let write_loop = async move {
-            while let Some(json) = write_rx.recv().await {
+            let mut rx = write_rx;
+            while let Some(json) = rx.recv().await {
                 if write.send(Message::Text(json)).await.is_err() {
                     break;
                 }
@@ -154,7 +153,7 @@ impl CollaborationClient {
 
         // 心跳循环
         let device_id_clone = self.device_id;
-        let write_tx_clone = write_tx.clone();
+        let write_tx_clone = self.write_tx.clone();
         let heartbeat_loop = async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
             loop {
@@ -183,7 +182,7 @@ impl CollaborationClient {
     }
 
     /// 断开并重连
-    async fn reconnect(&self) -> Result<()> {
+    async fn reconnect(&mut self) -> Result<()> {
         let mut attempt = 1u64;
 
         loop {
@@ -207,7 +206,10 @@ impl CollaborationClient {
             );
             sleep(Duration::from_secs(backoff_secs)).await;
 
-            match self.init_ws_connection().await {
+            // reconnect 时需要新的 channel
+            let (write_tx, write_rx) = mpsc::channel(100);
+            self.write_tx = Arc::new(write_tx);
+            match self.init_ws_connection_with_receiver(write_rx).await {
                 Ok(()) => {
                     info!("重连成功!");
                     return Ok(());
