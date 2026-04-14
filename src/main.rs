@@ -5,6 +5,7 @@
 mod collaboration;
 mod config;
 mod downloader;
+mod fxtwitter;
 mod gui;
 mod history;
 mod types;
@@ -23,6 +24,7 @@ use crate::collaboration::server::ws::WsServer;
 use crate::collaboration::CollaborationClient;
 use crate::config::AppConfig;
 use crate::downloader::{DownloaderConfig, VideoDownloader};
+use crate::fxtwitter::FxTwitterResolver;
 use crate::history::History;
 use crate::types::{format_bytes, sanitize_filename, DownloadRequest, DownloadResult, VideoInfo, DEFAULT_USER_AGENT};
 use crate::yt_dlp::YtDlp;
@@ -312,7 +314,7 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
     Ok(())
 }
 
-/// 获取视频信息
+/// 获取视频信息（尝试 yt-dlp，失败则使用 FxTwitter）
 async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo> {
     let mut yt = ytdlp.clone();
 
@@ -329,10 +331,29 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo
         yt = yt.with_proxy(proxy.clone());
     }
 
-    // 获取视频信息
-    let info = yt.get_video_info(url)?;
-
-    Ok(info)
+    // 首先尝试使用 yt-dlp 获取视频信息
+    match yt.get_video_info(url) {
+        Ok(info) => Ok(info),
+        Err(e) => {
+            info!("yt-dlp 解析失败: {}，尝试 FxTwitter API...", e);
+            // yt-dlp 失败时，尝试使用 FxTwitter API
+            let fxtwitter = if let Some(ref proxy) = cli.proxy {
+                FxTwitterResolver::with_proxy(proxy)?
+            } else {
+                FxTwitterResolver::new()
+            };
+            match fxtwitter.get_video_info(url).await {
+                Ok(info) => {
+                    info!("FxTwitter API 解析成功!");
+                    Ok(info)
+                }
+                Err(fx_err) => {
+                    // 两个都失败了，返回 yt-dlp 的原始错误
+                    Err(anyhow::anyhow!("{} | FxTwitter 也失败: {}", e, fx_err))
+                }
+            }
+        }
+    }
 }
 
 /// 打印可用格式
@@ -407,6 +428,43 @@ async fn download_with_ytdlp(
     // 构建 yt-dlp 命令
     let output_path = output_dir.join(format!("{}.%(ext)s", filename));
 
+    // 对于 video.twimg.com 的直接 URL，使用 Rust 下载器更可靠
+    if is_direct_url && !cli.audio_only && !cli.subtitles {
+        info!("检测到直接视频URL，使用 Rust 下载器: {}", info.title);
+
+        // 使用 Rust VideoDownloader 直接下载
+        let download_config = DownloaderConfig {
+            user_agent: cli.user_agent.clone(),
+            proxy: cli.proxy.clone(),
+            ..Default::default()
+        };
+
+        let downloader = VideoDownloader::with_config(download_config)?;
+        let request = DownloadRequest::new(&info.url, &output_path)
+            .with_user_agent(cli.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()));
+
+        let progress_callback: Arc<dyn Fn(types::DownloadProgress) + Send + Sync> = Arc::new(|progress: types::DownloadProgress| {
+            print!(
+                "\r下载进度: {:.1}% | 速度: {} | 已下载: {}",
+                progress.percent * 100.0,
+                format_bytes(progress.speed as u64),
+                format_bytes(progress.bytes_downloaded)
+            );
+        });
+
+        let result = downloader.download(&request, Some(progress_callback)).await?;
+        println!();
+
+        if result.success {
+            println!("下载完成: {} ({} bytes)", info.title, result.file_size);
+        } else {
+            println!("下载失败: {}", result.error_message.as_deref().unwrap_or("未知错误"));
+        }
+
+        return Ok(());
+    }
+
+    // 使用 yt-dlp 下载
     let mut yt = ytdlp.clone();
 
     // 应用配置

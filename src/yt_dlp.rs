@@ -165,6 +165,17 @@ impl YtDlp {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // 区分用户提示和技术错误
+            if stderr.contains("No video could be found") {
+                warn!("yt-dlp 提示: {}", stderr);
+                return Err(anyhow!(
+                    "该推文没有可下载的视频内容或需要登录后才能查看。\n\
+                     提示: 如果这是私密/年龄限制内容，请使用 --cookies 选项提供认证 cookie。"
+                ));
+            }
+
+            // 其他技术错误
             warn!("yt-dlp 错误: {}", stderr);
             return Err(anyhow!("获取视频信息失败: {}", stderr));
         }

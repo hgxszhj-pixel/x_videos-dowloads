@@ -4,6 +4,7 @@
 
 pub mod collaboration;
 pub mod downloader;
+pub mod fxtwitter;
 pub mod gui;
 pub mod types;
 pub mod yt_dlp;
