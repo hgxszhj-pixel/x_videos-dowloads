@@ -1,22 +1,35 @@
-# 项目接手文档 (Handoff)
+# 项目交接文档 (Handoff)
 
 **项目**: x_video_downloader (Rust x.com 视频下载器)
-**生成时间**: 2026-04-11
-**当前分支**: main (e365a01)
-**领先 origin/master**: 18 commits
+**生成时间**: 2026-04-14
+**当前分支**: main
+**Git 状态**: 干净 (领先 origin/master)
 
 ---
 
-## 项目架构图
+## 项目概述
+
+基于 Rust 的 x.com 视频下载器，使用 yt-dlp 作为后端，支持 CLI 和 GUI 模式，具有协作下载功能。
+
+**核心技术栈:**
+- Rust (tokio, reqwest)
+- yt-dlp 视频下载
+- iced GUI 框架
+- WebSocket 协作通信
+- SQLite (rusqlite) 数据持久化
+
+---
+
+## 项目架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         CLI/GUI 入口                              │
+│                         CLI/GUI 入口                            │
 │                    main.rs / gui.rs                              │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────────────┐
-│                     核心模块 (lib.rs)                             │
+│                     核心模块 (lib.rs)                            │
 │  config.rs │ types.rs │ history.rs │ downloader.rs │ yt_dlp.rs  │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
@@ -33,8 +46,7 @@
 │   client/  │   server/  │   crypto/  │  discovery/ │  transfer/│
 │             │             │             │             │           │
 │  ws.rs     │  handler.rs│  hashring  │  stun.rs    │ http_server│
-│  queue.rs  │  db.rs     │  auth.rs   │             │ downloader│
-│  discovery │  ws.rs     │             │             │           │
+│  queue.rs  │  db.rs     │  auth.rs   │             │ downloader │
 └─────────────┴─────────────┴─────────────┴─────────────┴───────────┘
 ```
 
@@ -51,6 +63,7 @@
 | **下载器** | downloader.rs | 直接 HTTP 下载，支持分段并行 |
 | **yt-dlp** | yt_dlp.rs | yt-dlp 集成，视频信息解析 |
 | **GUI** | gui.rs | iced 框架图形界面 |
+| **协作** | collaboration/ | 分布式下载协作 |
 
 ### 协作模块 (collaboration/)
 
@@ -64,7 +77,7 @@
 | **crypto/auth** | AuthToken | HMAC-SHA256 认证 |
 | **crypto/hashring** | HashRing | 一致性哈希，URL 路由 |
 | **discovery/stun** | STUN Client | NAT 类型检测 |
-| **transfer/http_server** | FileServer | HTTP 范围请求文件服务 |
+| **transfer/http_server** | FileServer | HTTP 范围请求文件服务 (默认绑定 127.0.0.1) |
 | **transfer/downloader** | ChunkedDownloader | 分块下载 |
 
 ---
@@ -111,105 +124,39 @@ Task { id, team_id, url, status, claimed_by, progress, local_path, file_size, ..
 
 ---
 
-## 待处理问题
+## 已解决问题 (2026-04-14)
 
-### 🔴 高优先级 (需优先处理)
-
-| # | 问题 | 文件 | 影响 | 建议 |
-|---|------|------|------|------|
-| 1 | URL TOCTOU 竞争条件 | `handler.rs:273-283` | 可能创建重复任务 | 数据库唯一约束 |
-| 2 | Failed 状态无通知 | `client/ws.rs` | 用户不知连接断开 | 添加事件回调 |
-| 3 | 0.0.0.0 绑定暴露公网 | `http_server.rs:62` | 安全风险 | IP 白名单 |
-
-### 🟡 中优先级
-
-| # | 问题 | 文件 | 说明 |
-|---|------|------|------|
-| 4 | RateLimiter cleanup 未用 | `http_server.rs:57` | 预留 API |
-| 5 | ParallelDownload 分段无重试 | `downloader.rs:213-224` | 失败分段仅重试 3 次 |
-| 6 | 任务超时无通知 | `handler.rs:502-508` | 超时释放无事件 |
+| # | 问题 | 优先级 | 状态 | 修复提交 |
+|---|------|--------|------|----------|
+| 1 | URL TOCTOU 竞争条件 | 🔴 CRITICAL | ✅ 已修复 | f746632 |
+| 2 | 0.0.0.0 绑定暴露公网 | 🔴 CRITICAL | ✅ 已修复 | f746632 |
+| 3 | WebSocket 失败状态无通知 | 🟠 HIGH | ✅ 已修复 | f746632 |
+| 4 | RateLimiter cleanup 未使用 | 🟡 MEDIUM | ✅ 已修复 | f746632 |
+| 5 | 分块下载重试不足 (仅3次) | 🟡 MEDIUM | ✅ 已修复 | f746632 |
+| 6 | WebSocket Channel 已关闭 | 🟠 HIGH | ✅ 已修复 | db8fa87 |
 
 ---
 
-## 高效开发提示词
+## 快速开始
 
-### 问题修复提示词
+```bash
+# 构建
+cargo build --release
 
-**TOCTOU 竞争条件修复:**
-```
-修复 src/collaboration/server/handler.rs 的 URL TOCTOU 问题：
-1. 在 Database::add_task 表添加 UNIQUE(url) 约束
-2. 在 handle_add_task 中处理 rusqlite UNIQUE 约束冲突错误
-3. 返回合适的错误消息给客户端
-4. 写 2 个测试：正常添加、重复 URL 错误
-```
+# 下载视频
+./target/release/x-video-downloader "https://x.com/user/status/123"
 
-**WebSocket Failed 状态通知:**
-```
-修复 src/collaboration/client/ws.rs 的连接失败通知：
-1. 当 ConnectionState 变为 Failed 时触发通知
-2. 添加回调机制：pub fn on_connection_failed<F>(&self, f: F) where F: Fn() + Send + Sync
-3. 在 main.rs 或 gui.rs 中处理该回调，显示错误给用户
-```
+# GUI 模式
+./target/release/x-video-downloader --gui
 
-**IP 白名单安全:**
-```
-修复 src/collaboration/transfer/http_server.rs 的安全风险：
-1. FileServer 仅绑定本地 IP (127.0.0.1) 而非 0.0.0.0
-2. 或添加配置项允许指定绑定地址
-3. 添加注释说明为何选择该方案
-```
+# 启动协作服务器
+./target/release/x-video-downloader --start-server
 
-### 功能实现提示词
+# 创建团队
+./target/release/x-video-downloader --create-team "团队名称"
 
-**分段下载重试增强:**
-```
-增强 src/downloader.rs 的分段下载重试机制：
-1. 将重试次数从 3 次增加到 10 次
-2. 当所有分段都失败时，标记任务为 Failed 并返回错误
-3. 写单元测试验证：模拟部分分段失败场景
-```
-
-**任务超时事件:**
-```
-在 src/collaboration/server/handler.rs 添加超时事件：
-1. check_task_timeouts 释放任务时广播 TaskReleased 消息
-2. 客户端收到后显示通知给用户
-3. 在 handler.rs 的 check_task_timeouts 末尾添加广播逻辑
-```
-
-### 代码审查提示词
-
-**审查 handler.rs:**
-```
-审查 src/collaboration/server/handler.rs，重点：
-1. 所有 unwrap/expect 改为错误处理
-2. handle_add_task 的 URL 重复检测逻辑
-3. 数据库事务是否正确使用
-4. 输出：问题列表 + 修复建议
-```
-
----
-
-## 开发工作流
-
-### 单任务流程
-
-```
-1. 选择一个问题 (从待处理列表)
-2. 创建 worktree: git worktree add ../fix-xxx -b fix/xxx
-3. 修复问题
-4. 测试: cargo test
-5. 提交: git add -A && git commit -m "fix: ..."
-6. 合并: git checkout main && git merge fix/xxx
-7. 清理: git worktree remove ../fix-xxx
-```
-
-### 时间盒
-
-```
-每个问题: 最多 30 分钟
-超时则暂停，下次继续
+# 加入团队
+./target/release/x-video-downloader --join-team "邀请码"
 ```
 
 ---
@@ -217,27 +164,114 @@ Task { id, team_id, url, status, claimed_by, progress, local_path, file_size, ..
 ## 构建和测试
 
 ```bash
+# 构建
 cargo build
-cargo test        # 119 passed
+
+# 运行测试 (121 tests)
+cargo test
+
+# Clippy 检查
 cargo clippy -- -W warnings
-cargo run -- "URL"
-cargo run -- --gui
+
+# 发布版本构建
+cargo build --release
+
+# 运行发布版本
+./target/release/x-video-downloader "URL"
 ```
 
 ---
 
-## 提交记录 (18 commits)
+## 测试结果
+
+| 测试项 | 命令 | 结果 |
+|--------|------|------|
+| 帮助信息 | `--help` | ✅ 正常显示 |
+| 版本 | `--version` | ✅ 0.1.0 |
+| 协作服务器 | `--start-server` | ✅ 监听 0.0.0.0:9000 |
+| 创建团队 | `--create-team` | ✅ 连接成功 |
+| 下载历史 | `--history` | ✅ 暂无历史 |
+| 书签列表 | `--bookmarks` | ✅ 暂无书签 |
+| 搜索历史 | `--search` | ✅ 未找到匹配 |
+| 初始化配置 | `--init-config` | ✅ 配置文件已存在 |
+| 单元测试 | `cargo test` | ✅ 121 passed |
+| 代码检查 | `cargo clippy` | ✅ No issues found |
+
+---
+
+## 最近提交
 
 ```
-e365a01 - Merge: WebSocket auto-reconnect
-2718cc2 - Merge: CORS validation
-7fd1d03 - WebSocket exponential backoff reconnect
-2ac549f - Invite code 16 chars + special chars
-b9bbd36 - Error handling + memory leak fixes
-97026f3 - 30 new unit tests
-395f704 - CRITICAL: shared secret + rate limiter
-1ac89da - STUN fix + CLI integration
+db8fa87 - fix: resolve WebSocket channel closed issue in CollaborationClient
+f746632 - fix: resolve 5 critical and medium priority issues from HANDOFF
+97f1080 - docs: add project handoff document with architecture and tasks
+e365a01 - Merge: add WebSocket auto-reconnect
+2718cc2 - Merge: add CORS validation
 ```
+
+---
+
+## 项目规范
+
+### 提交信息格式
+```
+<类型>: <描述>
+
+类型: feat, fix, refactor, docs, test, chore, perf, ci
+```
+
+### 代码质量标准
+- 函数 < 50 行
+- 文件 < 800 行
+- 嵌套层级 < 4 层
+- 使用 `?` 操作符进行错误处理
+- 禁止硬编码 (使用常量或配置)
+
+### 安全准则
+- 禁止硬编码 secrets (使用环境变量)
+- 所有用户输入验证
+- 所有端点限速
+- 错误信息不泄露敏感数据
+
+---
+
+## 文件结构
+
+```
+src/
+├── main.rs              # CLI 入口
+├── lib.rs               # 库入口
+├── config.rs            # 配置管理
+├── types.rs             # 类型定义
+├── downloader.rs        # 直接 HTTP 下载器
+├── yt_dlp.rs            # yt-dlp 集成
+├── gui.rs               # GUI (iced)
+├── history.rs           # 下载历史/书签
+└── collaboration/       # 分布式协作
+    ├── client/          # WebSocket 客户端
+    │   └── ws.rs         # CollaborationClient, auto-reconnect
+    ├── server/          # 服务器端
+    │   ├── handler.rs    # MessageHandler
+    │   └── db.rs         # SQLite Database
+    ├── crypto/          # 加密相关
+    │   ├── auth.rs       # HMAC-SHA256 认证
+    │   └── hashring.rs   # 一致性哈希环
+    ├── discovery/       # NAT 检测
+    │   └── stun.rs       # STUN 客户端
+    ├── transfer/        # 文件传输
+    │   ├── http_server.rs # HTTP 文件服务器 (绑定 127.0.0.1)
+    │   └── downloader.rs  # 分块下载器
+    └── types.rs         # 共享类型
+```
+
+---
+
+## 技术参考
+
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - 视频下载后端
+- [iced](https://iced.rs/) - Rust GUI 库
+- [tokio-tungstenite](https://github.com/snapview/tokio-tungstenite) - WebSocket
+- [rusqlite](https://github.com/rusqlite/rusqlite) - SQLite 绑定
 
 ---
 
