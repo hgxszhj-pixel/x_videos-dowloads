@@ -53,8 +53,7 @@ impl RateLimiter {
         true
     }
 
-    /// 清理过期的 IP 记录（定期调用）
-    #[allow(dead_code)]
+    /// 清理过期的 IP 记录（定时调用防止内存泄漏）
     fn cleanup(&mut self) {
         let now = Instant::now();
         let window = std::time::Duration::from_secs(self.window_secs);
@@ -164,6 +163,8 @@ impl CorsAllowList {
 #[allow(dead_code)]
 pub struct FileServer {
     port: u16,
+    /// 绑定地址（默认 127.0.0.1 安全绑定）
+    bind_address: String,
     files: Arc<RwLock<HashMap<Uuid, PathBuf>>>, // task_id -> path
     rate_limiter: Arc<RwLock<RateLimiter>>,
     cors_allow_list: CorsAllowList,
@@ -171,12 +172,24 @@ pub struct FileServer {
 
 #[allow(dead_code)]
 impl FileServer {
-    /// 创建文件服务器
+    /// 创建文件服务器（绑定到 127.0.0.1）
     pub fn new(port: u16) -> Self {
         Self {
             port,
+            bind_address: "127.0.0.1".to_string(),
             files: Arc::new(RwLock::new(HashMap::new())),
             // 速率限制：每 60 秒最多 100 个请求（每个 IP）
+            rate_limiter: Arc::new(RwLock::new(RateLimiter::new(60, 100))),
+            cors_allow_list: CorsAllowList::new(),
+        }
+    }
+
+    /// 创建文件服务器（指定绑定地址）
+    pub fn new_with_bind_address(port: u16, bind_address: &str) -> Self {
+        Self {
+            port,
+            bind_address: bind_address.to_string(),
+            files: Arc::new(RwLock::new(HashMap::new())),
             rate_limiter: Arc::new(RwLock::new(RateLimiter::new(60, 100))),
             cors_allow_list: CorsAllowList::new(),
         }
@@ -208,11 +221,22 @@ impl FileServer {
         self.files.write().await.remove(&task_id);
     }
 
-    /// 启动服务器
+    /// 启动服务器（使用安全的 127.0.0.1 绑定）
     pub async fn start(&self) -> Result<()> {
-        let addr = format!("0.0.0.0:{}", self.port);
+        let addr = format!("{}:{}", self.bind_address, self.port);
         let listener = TcpListener::bind(&addr).await?;
         println!("文件服务器监听: {}", addr);
+
+        // 启动定时清理任务
+        let rate_limiter_clone = self.rate_limiter.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mut limiter = rate_limiter_clone.write().await;
+                limiter.cleanup();
+            }
+        });
 
         loop {
             let (mut stream, remote_addr) = listener.accept().await?;

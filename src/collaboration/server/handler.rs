@@ -277,29 +277,20 @@ impl MessageHandler {
 
     /// 处理添加任务消息
     async fn handle_add_task(&self, device_id: Uuid, team_id: Uuid, url: String) {
-        // URL 冲突检测
-        if let Ok(tasks) = self.db.get_tasks_by_team(team_id) {
-            if tasks.iter().any(|t| t.url == url) {
-                let _ = self.send_to_device(
-                    device_id,
-                    ServerMessage::Error {
-                        message: "URL already exists".to_string(),
-                    },
-                ).await;
-                return;
-            }
-        }
-
-        // 创建任务
+        // 创建任务（数据库 UNIQUE 约束处理 URL 冲突）
         let mut task = Task::new(url, team_id, device_id);
         task.status = TaskStatus::Queued;
 
         if let Err(e) = self.db.create_task(&task, team_id) {
+            // 数据库唯一约束冲突错误
+            let error_msg = if e.to_string().contains("URL already exists") {
+                "URL already exists".to_string()
+            } else {
+                format!("Failed to create task: {}", e)
+            };
             let _ = self.send_to_device(
                 device_id,
-                ServerMessage::Error {
-                    message: format!("Failed to create task: {}", e),
-                },
+                ServerMessage::Error { message: error_msg },
             ).await;
             return;
         }

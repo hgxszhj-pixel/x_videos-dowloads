@@ -48,6 +48,8 @@ pub struct CollaborationClient {
     device_name: String,
     /// 服务器 URL
     server_url: String,
+    /// 连接失败回调
+    on_failure: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl ConnectionState {
@@ -94,6 +96,7 @@ impl CollaborationClient {
             state,
             device_name: device_name.to_string(),
             server_url: server_url.to_string(),
+            on_failure: std::sync::Mutex::new(None),
         };
 
         // 初始化 WebSocket 连接
@@ -187,6 +190,10 @@ impl CollaborationClient {
             if attempt > MAX_RECONNECT_ATTEMPTS {
                 error!("达到最大重连次数 ({}), 放弃重连", MAX_RECONNECT_ATTEMPTS);
                 self.state.store(3, Ordering::SeqCst); // Failed
+                // 触发失败回调
+                if let Some(callback) = self.on_failure.lock().unwrap().as_ref() {
+                    callback();
+                }
                 return Err(anyhow::anyhow!("达到最大重连次数"));
             }
 
@@ -216,6 +223,14 @@ impl CollaborationClient {
     /// 获取当前连接状态
     pub fn connection_state(&self) -> ConnectionState {
         ConnectionState::from_u64(self.state.load(Ordering::SeqCst))
+    }
+
+    /// 设置连接失败回调
+    pub fn on_connection_failed<F>(&self, f: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        *self.on_failure.lock().unwrap() = Some(Box::new(f));
     }
 
     /// 发送消息
@@ -367,6 +382,19 @@ impl CollaborationClientWithFileHandler {
             file_server: Some(file_server),
             download_dir,
         })
+    }
+
+    /// 设置连接失败回调
+    pub fn on_connection_failed<F>(&self, f: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.client.on_connection_failed(f);
+    }
+
+    /// 获取连接状态
+    pub fn connection_state(&self) -> ConnectionState {
+        self.client.connection_state()
     }
 
     /// 启动消息监听循环

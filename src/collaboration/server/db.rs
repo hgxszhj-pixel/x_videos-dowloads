@@ -74,7 +74,7 @@ impl Database {
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 team_id TEXT NOT NULL,
-                url TEXT NOT NULL,
+                url TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL,
                 claimed_by TEXT,
                 claimed_at TEXT,
@@ -268,7 +268,7 @@ impl Database {
     /// 创建任务
     pub fn create_task(&self, task: &Task, team_id: Uuid) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let result = conn.execute(
             r#"INSERT INTO tasks (id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
             params![
@@ -285,8 +285,15 @@ impl Database {
                 task.created_at.to_rfc3339(),
                 task.version as i64
             ],
-        )?;
-        Ok(())
+        );
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("UNIQUE constraint failed") => {
+                Err(anyhow!("URL already exists"))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// 更新任务
@@ -850,7 +857,25 @@ mod tests {
             db.register_device(&device).expect("Failed to register device");
         }
 
-        let devices = db.get_team_devices(team.id).expect("Failed to get team devices");
+let devices = db.get_team_devices(team.id).expect("Failed to get team devices");
         assert_eq!(devices.len(), 5);
+    }
+
+    #[test]
+    fn test_create_task_duplicate_url() {
+        let db = create_test_db();
+        let team = db.create_team("Test Team").expect("Failed to create team");
+        let device_id = Uuid::new_v4();
+        let url = "https://example.com/video".to_string();
+
+        // 创建第一个任务
+        let task1 = Task::new(url.clone(), team.id, device_id);
+        db.create_task(&task1, team.id).expect("First task should be created");
+
+        // 尝试创建相同 URL 的任务应该失败
+        let task2 = Task::new(url, team.id, device_id);
+        let result = db.create_task(&task2, team.id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("URL already exists"));
     }
 }

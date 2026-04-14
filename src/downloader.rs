@@ -208,9 +208,9 @@ impl VideoDownloader {
             } else {
                 (i + 1) as u64 * chunk_size - 1
             };
+            let retry_count = self.config.retry_count;
 
             let handle = tokio::spawn(async move {
-                let retry_count = 3;
                 for attempt in 0..retry_count {
                     let result = download_segment(&client, &url, &temp_path, start, end).await;
                     if result.is_ok() {
