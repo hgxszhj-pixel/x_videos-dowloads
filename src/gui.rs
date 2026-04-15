@@ -167,20 +167,30 @@ impl Application for App {
             Message::BrowseOutputDir => {
                 let current_dir = self.output_dir.clone();
                 Command::perform(async move {
-                    // 直接使用 rfd::FileDialog，它会自己处理阻塞问题
-                    let picked = rfd::FileDialog::new()
-                        .set_directory(&current_dir)
-                        .pick_folder();
-                    picked.map(|p| p.to_string_lossy().to_string())
+                    let handle = std::thread::spawn(move || {
+                        rfd::FileDialog::new()
+                            .set_directory(&current_dir)
+                            .pick_folder()
+                            .map(|p| p.to_string_lossy().to_string())
+                    });
+                    match handle.join() {
+                        Ok(Some(path)) => Some(path),
+                        _ => None,
+                    }
                 }, Message::FolderSelected)
             }
             Message::BrowseCookie => {
                 Command::perform(async move {
-                    // 直接使用 rfd::FileDialog
-                    let picked = rfd::FileDialog::new()
-                        .add_filter("Cookie files", &["txt", "cookies", "json"])
-                        .pick_file();
-                    picked.map(|p| p.to_string_lossy().to_string())
+                    let handle = std::thread::spawn(|| {
+                        rfd::FileDialog::new()
+                            .add_filter("Cookie files", &["txt", "cookies", "json"])
+                            .pick_file()
+                            .map(|p| p.to_string_lossy().to_string())
+                    });
+                    match handle.join() {
+                        Ok(Some(path)) => Some(path),
+                        _ => None,
+                    }
                 }, Message::CookieSelected)
             }
             Message::CookieSelected(path) => {
