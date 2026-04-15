@@ -2,6 +2,7 @@
 //!
 //! 使用 iced 框架的 GUI 界面
 
+use crate::fxtwitter::FxTwitterResolver;
 use crate::types::{format_bytes, sanitize_filename, VideoInfo};
 use crate::yt_dlp::YtDlp;
 use tracing::{info, warn};
@@ -166,28 +167,22 @@ impl Application for App {
             Message::BrowseOutputDir => {
                 let current_dir = self.output_dir.clone();
                 Command::perform(async move {
-                    tokio::task::spawn_blocking(move || {
-                        rfd::FileDialog::new()
-                            .set_directory(&current_dir)
-                            .pick_folder()
-                            .map(|p| p.to_string_lossy().to_string())
-                    })
-                    .await
-                    .ok()
-                    .flatten()
+                    // 直接使用 rfd::FileDialog，它会自己处理阻塞问题
+                    let picked = rfd::FileDialog::new()
+                        .set_directory(&current_dir)
+                        .pick_folder();
+                    picked.map(|p| p.to_string_lossy().to_string())
                 }, Message::FolderSelected)
             }
-            Message::BrowseCookie => Command::perform(async move {
-                tokio::task::spawn_blocking(|| {
-                    rfd::FileDialog::new()
+            Message::BrowseCookie => {
+                Command::perform(async move {
+                    // 直接使用 rfd::FileDialog
+                    let picked = rfd::FileDialog::new()
                         .add_filter("Cookie files", &["txt", "cookies", "json"])
-                        .pick_file()
-                        .map(|p| p.to_string_lossy().to_string())
-                })
-                .await
-                .ok()
-                .flatten()
-            }, Message::CookieSelected),
+                        .pick_file();
+                    picked.map(|p| p.to_string_lossy().to_string())
+                }, Message::CookieSelected)
+            }
             Message::CookieSelected(path) => {
                 if let Some(p) = path {
                     self.cookie_file = p;
@@ -218,7 +213,19 @@ impl Application for App {
                     }
 
                     Command::perform(
-                        async move { ytdlp.get_video_info(&url).map_err(|e| e.to_string()) },
+                        async move {
+                            // 首先尝试 yt-dlp
+                            match ytdlp.get_video_info(&url) {
+                                Ok(info) => Ok(info),
+                                Err(e) => {
+                                    info!("yt-dlp failed: {}, trying FxTwitter...", e);
+                                    // yt-dlp 失败时尝试 FxTwitter
+                                    let fxtwitter = FxTwitterResolver::new();
+                                    fxtwitter.get_video_info(&url).await
+                                        .map_err(|fx_err| format!("{} | FxTwitter: {}", e, fx_err))
+                                }
+                            }
+                        },
                         Message::InfoFetched,
                     )
                 }
