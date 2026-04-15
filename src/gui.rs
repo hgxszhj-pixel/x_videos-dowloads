@@ -229,16 +229,23 @@ impl Application for App {
                                 Ok(info) => Ok(info),
                                 Err(e) => {
                                     warn!("yt-dlp failed: {}, trying FxTwitter...", e);
-                                    // yt-dlp 失败时尝试 FxTwitter
-                                    match FxTwitterResolver::new().get_video_info(&url).await {
-                                        Ok(info) => {
+                                    // FxTwitter 需要 Tokio runtime，使用 spawn_blocking 创建
+                                    let url = url.clone();
+                                    match tokio::task::spawn_blocking(move || {
+                                        let rt = tokio::runtime::Runtime::new()?;
+                                        rt.block_on(async {
+                                            FxTwitterResolver::new().get_video_info(&url).await
+                                        })
+                                    }).await {
+                                        Ok(Ok(info)) => {
                                             info!("FxTwitter fallback succeeded");
                                             Ok(info)
                                         },
-                                        Err(fx_err) => {
+                                        Ok(Err(fx_err)) => {
                                             warn!("FxTwitter also failed: {}", fx_err);
                                             Err(format!("{} | FxTwitter: {}", e, fx_err))
-                                        }
+                                        },
+                                        Err(_) => Err(format!("{} | FxTwitter: thread panicked", e))
                                     }
                                 }
                             }
