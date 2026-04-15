@@ -13,7 +13,6 @@ use iced::{
     alignment, executor, Application, Command, Element, Length, Settings, Theme,
 };
 use std::path::PathBuf;
-use tokio::process::Command as TokioCommand;
 
 /// 配置文件路径
 fn config_path() -> PathBuf {
@@ -334,10 +333,9 @@ impl Application for App {
                                 false,
                             );
 
-                            let output = TokioCommand::new(&ytdlp.executable)
+                            let output = std::process::Command::new(&ytdlp.executable)
                                 .args(&args)
                                 .output()
-                                .await
                                 .map_err(|e| format!("Failed to run yt-dlp: {}", e))?;
 
                             if output.status.success() {
