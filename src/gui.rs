@@ -228,11 +228,18 @@ impl Application for App {
                             match ytdlp.get_video_info(&url) {
                                 Ok(info) => Ok(info),
                                 Err(e) => {
-                                    info!("yt-dlp failed: {}, trying FxTwitter...", e);
+                                    warn!("yt-dlp failed: {}, trying FxTwitter...", e);
                                     // yt-dlp 失败时尝试 FxTwitter
-                                    let fxtwitter = FxTwitterResolver::new();
-                                    fxtwitter.get_video_info(&url).await
-                                        .map_err(|fx_err| format!("{} | FxTwitter: {}", e, fx_err))
+                                    match FxTwitterResolver::new().get_video_info(&url).await {
+                                        Ok(info) => {
+                                            info!("FxTwitter fallback succeeded");
+                                            Ok(info)
+                                        },
+                                        Err(fx_err) => {
+                                            warn!("FxTwitter also failed: {}", fx_err);
+                                            Err(format!("{} | FxTwitter: {}", e, fx_err))
+                                        }
+                                    }
                                 }
                             }
                         },

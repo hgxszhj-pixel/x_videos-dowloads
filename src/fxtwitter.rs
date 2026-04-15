@@ -116,20 +116,21 @@ pub struct FxTwitterResolver {
 impl FxTwitterResolver {
     /// 创建新的解析器（自动使用环境变量代理）
     pub fn new() -> Self {
-        let mut client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36");
+        let mut builder = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            .tcp_keepalive(std::time::Duration::from_secs(60));
 
         // 尝试从环境变量获取代理
         for env_var in ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"] {
             if let Ok(proxy_url) = std::env::var(env_var) {
                 if !proxy_url.is_empty() {
                     let proxy_with_scheme = if proxy_url.starts_with("http://") || proxy_url.starts_with("https://") {
-                        proxy_url
+                        proxy_url.to_string()
                     } else {
                         format!("http://{}", proxy_url)
                     };
                     if let Ok(proxy) = reqwest::Proxy::all(&proxy_with_scheme) {
-                        client = client.proxy(proxy);
+                        builder = builder.proxy(proxy);
                         break;
                     }
                 }
@@ -137,7 +138,7 @@ impl FxTwitterResolver {
         }
 
         Self {
-            client: client.build().unwrap_or_default(),
+            client: builder.build().unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 
