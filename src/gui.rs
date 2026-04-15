@@ -586,5 +586,7 @@ pub fn run_gui() {
         eprintln!("Error: yt-dlp not found. Install with: brew install yt-dlp");
         return;
     }
+
+    // iced 0.12 manages its own async runtime internally
     let _ = App::run(Settings::default());
 }
