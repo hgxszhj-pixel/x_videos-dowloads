@@ -1,0 +1,285 @@
+export component AppWindow inherits Window {
+    title: "X Video Downloader";
+    width: 700px;
+    height: 650px;
+
+    in-out property <string> url: "";
+    in-out property <string> output-dir: "";
+    in-out property <string> cookie-file: "";
+    in-out property <string> video-title: "";
+    in-out property <string> video-uploader: "";
+    in-out property <string> video-duration: "";
+    in-out property <string> video-formats: "";
+    in-out property <bool> is-fetching: false;
+    in-out property <bool> is-downloading: false;
+    in-out property <float> download-progress: 0.0;
+    in-out property <string> status-message: "Enter video URL";
+    in-out property <string> error-message: "";
+    in-out property <bool> has-video-info: false;
+
+    callback fetch-info();
+    callback start-download();
+    callback save-config();
+    callback browse-cookie();
+    callback tick();
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: start;
+
+        // Header
+        Text {
+            text: "X Video Downloader";
+            font-size: 28px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        // URL Section
+        Text {
+            text: "Video URL";
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        Rectangle {
+            background: white;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #ccc;
+            height: 40px;
+            HorizontalLayout {
+                padding-left: 12px;
+                TextInput {
+                    text <=> root.url;
+                    font-size: 14px;
+                    color: black;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Text {
+            text: "Enter X.com/Twitter video URL";
+            font-size: 11px;
+            color: #888;
+        }
+
+        // Action Buttons
+        HorizontalLayout {
+            spacing: 16px;
+            height: 44px;
+
+            Rectangle {
+                background: root.is-fetching ? #cccccc : #4285f4;
+                border-radius: 6px;
+                horizontal-stretch: 1;
+                Text {
+                    text: root.is-fetching ? "Fetching..." : "Fetch Info";
+                    color: white;
+                    font-size: 15px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    clicked => { root.fetch-info(); }
+                    enabled: !root.is-fetching && root.url != "";
+                }
+            }
+
+            Rectangle {
+                background: root.is-downloading || !root.has-video-info ? #cccccc : #34a853;
+                border-radius: 6px;
+                horizontal-stretch: 1;
+                Text {
+                    text: root.is-downloading ? "Downloading..." : "Download";
+                    color: white;
+                    font-size: 15px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    clicked => { root.start-download(); }
+                    enabled: !root.is-downloading && root.has-video-info;
+                }
+            }
+        }
+
+        // Video Info Section
+        if root.has-video-info: Rectangle {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+            VerticalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Video Information";
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: #333;
+                }
+                Text {
+                    text: "Title: " + root.video-title;
+                    font-size: 13px;
+                    color: #555;
+                }
+                Text {
+                    text: "Uploader: " + root.video-uploader;
+                    font-size: 13px;
+                    color: #555;
+                }
+                Text {
+                    text: "Duration: " + root.video-duration;
+                    font-size: 13px;
+                    color: #555;
+                }
+            }
+        }
+
+        // Progress Section
+        if root.is-downloading: Rectangle {
+            background: #e8f5e9;
+            border-radius: 8px;
+            padding: 16px;
+            VerticalLayout {
+                spacing: 12px;
+                Text {
+                    text: "Downloading... " + root.download-progress * 100 + "%";
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #2e7d32;
+                }
+                Rectangle {
+                    background: #ddd;
+                    border-radius: 4px;
+                    height: 24px;
+                    Rectangle {
+                        background: #34a853;
+                        border-radius: 4px;
+                        width: root.download-progress * parent.width;
+                        height: parent.height;
+                    }
+                }
+            }
+        }
+
+        // Status Message
+        if root.status-message != "" && !root.is-downloading: Text {
+            text: root.status-message;
+            font-size: 13px;
+            horizontal-alignment: center;
+            color: #666;
+        }
+
+        // Error Message
+        if root.error-message != "": Rectangle {
+            background: #ffebee;
+            border-radius: 6px;
+            padding: 12px;
+            Text {
+                text: root.error-message;
+                font-size: 13px;
+                color: #c62828;
+            }
+        }
+
+        // Settings Section
+        Rectangle {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 16px;
+            VerticalLayout {
+                spacing: 12px;
+                Text {
+                    text: "Settings";
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: #333;
+                }
+
+                Text {
+                    text: "Output Directory";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #555;
+                }
+                Rectangle {
+                    background: white;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: #ccc;
+                    height: 32px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        TextInput {
+                            text <=> root.output-dir;
+                            font-size: 12px;
+                            color: black;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Cookie File (optional)";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #555;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Rectangle {
+                        background: white;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: #ccc;
+                        height: 32px;
+                        horizontal-stretch: 1;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            TextInput {
+                                text <=> root.cookie-file;
+                                font-size: 12px;
+                                color: black;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        background: #666666;
+                        border-radius: 4px;
+                        width: 70px;
+                        height: 32px;
+                        TouchArea { clicked => { root.browse-cookie(); } }
+                        Text {
+                            text: "Browse";
+                            color: white;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: #4285f4;
+                    border-radius: 6px;
+                    height: 40px;
+                    TouchArea { clicked => { root.save-config(); } }
+                    Text {
+                        text: "Save Settings";
+                        color: white;
+                        font-size: 14px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

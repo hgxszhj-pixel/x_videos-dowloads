@@ -117,8 +117,10 @@ impl FxTwitterResolver {
     /// 创建新的解析器（自动使用环境变量代理）
     pub fn new() -> Self {
         let mut builder = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-            .tcp_keepalive(std::time::Duration::from_secs(60));
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(60));
 
         // 尝试从环境变量获取代理
         for env_var in ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"] {
@@ -167,8 +169,23 @@ impl FxTwitterResolver {
 
         // 调用 FxTwitter API
         let api_url = format!("https://api.fxtwitter.com/status/{}", tweet_id);
+        eprintln!("DEBUG FxTwitter: Calling API: {}", api_url);
 
-        let response = self.client.get(&api_url).send().await?;
+        let response = self.client
+            .get(&api_url)
+            .header("Accept", "application/json")
+            .send().await.map_err(|e| {
+            eprintln!("DEBUG FxTwitter: request send error: {}", e);
+            eprintln!("DEBUG FxTwitter: url was: {}", api_url);
+            if e.is_timeout() {
+                eprintln!("DEBUG FxTwitter: error is a timeout");
+            } else if e.is_connect() {
+                eprintln!("DEBUG FxTwitter: error is a connection error");
+            }
+            anyhow!("FxTwitter 请求失败: {}", e)
+        })?;
+
+        eprintln!("DEBUG FxTwitter: Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow!("FxTwitter API 请求失败: HTTP {}", response.status()));
@@ -186,11 +203,12 @@ impl FxTwitterResolver {
         // 解析推文中的链接，找到真正的视频源
         let video_url = self.find_video_url(&tweet)?;
 
-        // 构建 VideoInfo
-        let title = format!("Tweet by @{}", tweet.author.screen_name);
+        // 构建 VideoInfo - 使用推文文本作为标题
+        let title = tweet.text.clone();
         let mut video_info = VideoInfo::new(title, video_url.clone());
 
         video_info.uploader = Some(tweet.author.name.clone());
+        eprintln!("DEBUG FxTwitter: author.name = '{}', screen_name = '{}'", tweet.author.name, tweet.author.screen_name);
         video_info.description = Some(tweet.text.clone());
 
         // 解析媒体信息
@@ -259,23 +277,55 @@ impl FxTwitterResolver {
             if let Some(ref all) = media.all {
                 for item in all {
                     if item.media_type.as_deref() == Some("video") {
-                        if let Some(ref url) = item.url {
-                            return Ok(url.clone());
-                        }
-                        // 如果没有直接的 url，尝试从 formats 获取最高质量的
-                        if let Some(ref formats) = item.formats {
-                            for fmt in formats {
-                                if let Some(ref fmt_url) = fmt.url {
-                                    // 优先选择 mp4 格式的高分辨率
-                                    if fmt_url.contains("1280x720") || fmt_url.contains("1920x1080") {
-                                        return Ok(fmt_url.clone());
+                        // 优先从 variants 获取最高质量的视频 URL
+                        if let Some(ref variants) = item.variants {
+                            // 找最高的 bitrate 的 mp4 视频
+                            let mut best_variant: Option<&FxVariant> = None;
+                            let mut best_bitrate: u64 = 0;
+                            for variant in variants {
+                                if variant.content_type.as_deref() == Some("video/mp4") {
+                                    if let Some(bitrate) = variant.bitrate {
+                                        if bitrate > best_bitrate {
+                                            best_bitrate = bitrate;
+                                            best_variant = Some(variant);
+                                        }
                                     }
                                 }
                             }
-                            // 如果没有找到高分辨率，返回第一个可用 URL
-                            if let Some(first) = formats.first() {
-                                if let Some(ref fmt_url) = first.url {
-                                    return Ok(fmt_url.clone());
+                            // 如果没找到 mp4，找第一个有 URL 的 variant
+                            if best_variant.is_none() {
+                                for variant in variants {
+                                    if let Some(ref url) = variant.url {
+                                        if !url.contains(".m3u8") {
+                                            return Ok(url.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(ref variant) = best_variant {
+                                if let Some(ref url) = variant.url {
+                                    return Ok(url.clone());
+                                }
+                            }
+                        }
+                        // 其次从 formats 获取
+                        if let Some(ref formats) = item.formats {
+                            // 优先选择 mp4 格式的高分辨率
+                            for fmt in formats {
+                                if let Some(ref fmt_url) = fmt.url {
+                                    if fmt_url.contains("1280x720") || fmt_url.contains("1920x1080") {
+                                        if !fmt_url.contains(".m3u8") {
+                                            return Ok(fmt_url.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            // 返回第一个非 m3u8 的 URL
+                            for fmt in formats {
+                                if let Some(ref fmt_url) = fmt.url {
+                                    if !fmt_url.contains(".m3u8") {
+                                        return Ok(fmt_url.clone());
+                                    }
                                 }
                             }
                         }

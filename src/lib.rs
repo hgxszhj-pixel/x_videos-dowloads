@@ -7,6 +7,7 @@ pub mod downloader;
 pub mod fxtwitter;
 pub mod gui;
 pub mod types;
+pub mod website_profile;
 pub mod yt_dlp;
 
 // ============================================================================

@@ -8,7 +8,10 @@ mod downloader;
 mod fxtwitter;
 mod gui;
 mod history;
+mod scrapling_client;
+mod scrapling_extractor;
 mod types;
+mod website_profile;
 mod yt_dlp;
 
 use anyhow::Result;
@@ -314,7 +317,7 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
     Ok(())
 }
 
-/// 获取视频信息（尝试 yt-dlp，失败则使用 FxTwitter）
+/// 获取视频信息（尝试 yt-dlp，失败则使用 FxTwitter，最后尝试 Scrapling）
 async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo> {
     let mut yt = ytdlp.clone();
 
@@ -348,8 +351,25 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo
                     Ok(info)
                 }
                 Err(fx_err) => {
-                    // 两个都失败了，返回 yt-dlp 的原始错误
-                    Err(anyhow::anyhow!("{} | FxTwitter 也失败: {}", e, fx_err))
+                    // FxTwitter 也失败，尝试 Scrapling（绕过 Cloudflare）
+                    info!("FxTwitter 也失败: {}，尝试 Scrapling (Cloudflare bypass)...", fx_err);
+                    match scrapling_client::ScraplingClient::new() {
+                        Ok(client) => {
+                            match client.get_video_info(url).await {
+                                Ok(info) => {
+                                    info!("Scrapling 解析成功!");
+                                    Ok(info)
+                                }
+                                Err(scrapling_err) => {
+                                    Err(anyhow::anyhow!("{} | FxTwitter 失败: {} | Scrapling 也失败: {}", e, fx_err, scrapling_err))
+                                }
+                            }
+                        }
+                        Err(_sc_client_err) => {
+                            // Scrapling 初始化失败，返回原始错误
+                            Err(anyhow::anyhow!("{} | FxTwitter 也失败: {}", e, fx_err))
+                        }
+                    }
                 }
             }
         }
@@ -432,6 +452,12 @@ async fn download_with_ytdlp(
     if is_direct_url && !cli.audio_only && !cli.subtitles {
         info!("检测到直接视频URL，使用 Rust 下载器: {}", info.title);
 
+        // 确定输出文件路径（不能用 yt-dlp 的 %(ext)s 占位符）
+        let ext = info.formats.first()
+            .map(|f| f.ext.clone())
+            .unwrap_or_else(|| "mp4".to_string());
+        let final_output_path = output_dir.join(format!("{}.{}", filename, ext));
+
         // 使用 Rust VideoDownloader 直接下载
         let download_config = DownloaderConfig {
             user_agent: cli.user_agent.clone(),
@@ -440,7 +466,7 @@ async fn download_with_ytdlp(
         };
 
         let downloader = VideoDownloader::with_config(download_config)?;
-        let request = DownloadRequest::new(&info.url, &output_path)
+        let request = DownloadRequest::new(&info.url, &final_output_path)
             .with_user_agent(cli.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()));
 
         let progress_callback: Arc<dyn Fn(types::DownloadProgress) + Send + Sync> = Arc::new(|progress: types::DownloadProgress| {

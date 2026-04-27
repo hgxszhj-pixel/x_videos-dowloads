@@ -41,6 +41,14 @@ pub struct DownloaderConfig {
     pub tcp_keepalive: u64,
     /// 分段下载线程数（0表示禁用）
     pub parallel_segments: u32,
+    /// 自适应线程控制
+    pub adaptive_threads: bool,
+    /// 最小线程数
+    pub min_threads: u32,
+    /// 最大线程数（避免封IP）
+    pub max_threads: u32,
+    /// 速度阈值（字节/秒），低于此值增加线程
+    pub speed_threshold_bps: u64,
 }
 
 impl Default for DownloaderConfig {
@@ -50,13 +58,17 @@ impl Default for DownloaderConfig {
             request_timeout: 600, // 大文件需要更长超时
             retry_count: 5,      // 增加重试次数
             retry_max_delay: 30,  // 最大重试间隔30秒
-            chunk_size: 1024 * 1024, // 1MB
+            chunk_size: 1024 * 1024, // 1MB chunk
             user_agent: None,
             proxy: None,
-            pool_max_idle_per_host: 10,
+            pool_max_idle_per_host: 16,  // 适度连接池
             http2: true,
-            tcp_keepalive: 60,
-            parallel_segments: 4, // 4线程并行下载
+            tcp_keepalive: 120, // 减少连接断开
+            parallel_segments: 4, // 默认4线程
+            adaptive_threads: true, // 启用自适应线程
+            min_threads: 2,        // 最少2线程
+            max_threads: 8,        // 最多8线程（防封IP）
+            speed_threshold_bps: 500 * 1024, // 500KB/s 低于此值增加线程
         }
     }
 }
@@ -112,6 +124,22 @@ impl VideoDownloader {
         self
     }
 
+    /// 应用网站特征配置（从已知网站学习）
+    pub fn with_website_profile(mut self, url: &str) -> Self {
+        let (adaptive, min_threads, max_threads, threshold) =
+            crate::website_profile::get_recommended_config(url);
+
+        self.config.adaptive_threads = adaptive;
+        self.config.min_threads = min_threads;
+        self.config.max_threads = max_threads;
+        self.config.speed_threshold_bps = threshold;
+
+        info!("应用网站特征: adaptive={}, threads=[{}-{}], threshold={:.1}KB/s",
+            adaptive, min_threads, max_threads, threshold as f64 / 1024.0);
+
+        self
+    }
+
     /// 下载文件（带重试机制和分段并行下载）
     pub async fn download(
         &self,
@@ -133,7 +161,9 @@ impl VideoDownloader {
 
             // 大于10MB且启用了分段下载时使用并行下载
             if let Some(size) = total_size {
+                eprintln!("DEBUG: File size: {} bytes, parallel_segments: {}", size, self.config.parallel_segments);
                 if self.config.parallel_segments > 0 && size > 10 * 1024 * 1024 {
+                    eprintln!("DEBUG: Using parallel_download");
                     match self.parallel_download(request, size, progress_callback.clone()).await {
                         Ok(result) => return Ok(result),
                         Err(e) => {
@@ -146,6 +176,7 @@ impl VideoDownloader {
             }
 
             // 普通下载
+            eprintln!("DEBUG: Using do_download");
             match self.do_download(request, progress_callback.clone()).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
@@ -156,6 +187,42 @@ impl VideoDownloader {
         }
 
         Err(anyhow!("下载失败，已重试 {} 次: {:?}", self.config.retry_count, last_error))
+    }
+
+    /// 根据速度计算最佳线程数（自适应）
+    fn calculate_optimal_threads(&self, current_speed: u64, current_threads: u32) -> u32 {
+        if !self.config.adaptive_threads {
+            return current_threads;
+        }
+
+        let threshold = self.config.speed_threshold_bps;
+        let min = self.config.min_threads;
+        let max = self.config.max_threads;
+
+        // 速度过低，增加线程
+        if current_speed < threshold && current_threads < max {
+            let new_threads = (current_threads + 1).min(max);
+            info!("速度过低 ({:.1} KB/s < {:.1} KB/s)，增加线程: {} -> {}",
+                current_speed as f64 / 1024.0,
+                threshold as f64 / 1024.0,
+                current_threads,
+                new_threads
+            );
+            return new_threads;
+        }
+
+        // 速度很好，尝试减少线程（更省资源）
+        if current_speed > threshold * 3 && current_threads > min {
+            let new_threads = (current_threads - 1).max(min);
+            info!("速度良好 ({:.1} KB/s)，减少线程: {} -> {}",
+                current_speed as f64 / 1024.0,
+                current_threads,
+                new_threads
+            );
+            return new_threads;
+        }
+
+        current_threads
     }
 
     /// 分段并行下载
@@ -327,9 +394,6 @@ impl VideoDownloader {
         let mut downloaded: u64 = 0;
         let mut file = File::create(output_path).await?;
 
-        let mut last_update = Instant::now();
-        let update_interval = Duration::from_millis(500);
-
         while let Some(chunk_result) = stream.next().await {
             let chunk: bytes::Bytes = chunk_result?;
 
@@ -338,22 +402,19 @@ impl VideoDownloader {
 
             downloaded += chunk.len() as u64;
 
-            // 计算速度（每500ms更新一次）
-            if last_update.elapsed() >= update_interval {
-                let elapsed = start_time.elapsed().as_secs_f64();
-                let speed = if elapsed > 0.0 {
-                    downloaded as f64 / elapsed
-                } else {
-                    0.0
-                };
+            // 计算速度并更新进度
+            let elapsed = start_time.elapsed().as_secs_f64();
+            let speed = if elapsed > 0.0 {
+                downloaded as f64 / elapsed
+            } else {
+                0.0
+            };
 
-                progress.update(downloaded, speed);
+            progress.update(downloaded, speed);
 
-                if let Some(ref callback) = progress_callback {
-                    callback(progress.clone());
-                }
-
-                last_update = Instant::now();
+            // 每次chunk都触发回调（不再等待时间间隔），确保UI实时更新
+            if let Some(ref callback) = progress_callback {
+                callback(progress.clone());
             }
 
             debug!("下载进度: {}/{} bytes", downloaded, total);
@@ -391,7 +452,9 @@ impl VideoDownloader {
 
     /// 获取内容长度
     async fn get_content_length(&self, url: &str) -> Result<Option<u64>> {
+        eprintln!("DEBUG: get_content_length HEAD request to: {}", url);
         let response = self.client.head(url).send().await?;
+        eprintln!("DEBUG: get_content_length response status: {}", response.status());
 
         if response.status().is_success() {
             let length = response
