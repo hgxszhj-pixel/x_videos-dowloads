@@ -384,8 +384,7 @@ pub fn run_gui() {
                             let progress_for_ytdlp_clone = progress_for_ytdlp.clone();
                             std::thread::spawn(move || {
                                 let reader = BufReader::new(stderr);
-                                #[allow(clippy::unnecessary_filter_map)]
-                                for line in reader.lines().filter_map(|l| l.ok()) {
+                                for line in reader.lines().map_while(Result::ok) {
                                     eprintln!("DEBUG yt-dlp stderr: {}", line);
                                     if let Some(percent) = parse_ytdlp_progress(&line) {
                                         eprintln!("DEBUG: yt-dlp parsed progress: {}%", percent);
