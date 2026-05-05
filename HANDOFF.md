@@ -2,8 +2,9 @@
 
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
 **生成时间**: 2026-04-27
-**当前分支**: main
-**Git 状态**: 有未提交更改
+**最后更新**: 2026-05-01
+**当前分支**: main (GitButler 虚拟分支: gitbutler/workspace)
+**Git 状态**: 使用 GitButler 管理虚拟分支
 
 ---
 
@@ -101,13 +102,13 @@
 ┌─────────────────────────────────────────────────────────────┐
 │ 3. Scrapling (Cloudflare 绕过)                                │
 │    - 使用 Python scrapling StealthyFetcher                   │
-│    - 绕过 Cloudflare Turnstile 挑战                          │
-│    - 返回 HTML，从中提取视频 URL                              │
+│    - 绕过 Cloudflare Turnstile 挑战                         │
+│    - 返回 HTML，从中提取视频 URL                               │
 └─────────────────────────────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 4. 直接下载 (video.twimg.com 直链)                           │
+│ 4. 直接下载 (video.twimg.com 直链)                          │
 │    - 使用 downloader.rs 的 VideoDownloader                   │
 │    - 4线程分段并行下载                                       │
 │    - 输出文件名为 {title}.{ext} (非 %(ext)s)               │
@@ -179,10 +180,12 @@ let response = client.get(&api_url)
 - 默认 4 线程并行
 - 使用 `tempfile::TempDir` 自动清理临时文件
 - 流式合并避免内存翻倍
+- **2026-04-30 修复**: 分段失败时自动回退到单线程下载
+- **2026-05-01 优化**: 使用 `spawn_blocking` 避免阻塞 async runtime
 
 ---
 
-## 已知问题与修复 (2026-04-27)
+## 已知问题与修复 (2026-05-01)
 
 ### 问题 1: 输出文件名包含 %(ext)s 占位符
 
@@ -192,45 +195,48 @@ let response = client.get(&api_url)
 
 **修复**: 提取视频格式扩展名生成正确文件名
 
-```rust
-// 修复前
-let output_path = output_dir.join(format!("{}.%(ext)s", filename));
-
-// 修复后
-let ext = info.formats.first()
-    .map(|f| f.ext.clone())
-    .unwrap_or_else(|| "mp4".to_string());
-let final_output_path = output_dir.join(format!("{}.{}", filename, ext));
-```
-
 ### 问题 2: yt-dlp 和 FxTwitter 都失败时的后备方案
 
 **解决方案**: 新增 Scrapling 模块作为第三级解析器
-
-当 FxTwitter 失败时：
-1. 初始化 `ScraplingClient`
-2. 调用 `StealthyFetcher.fetch(url, headless=True, solve_cloudflare=True)`
-3. 从返回的 HTML 中提取视频 URL
-4. 使用 Rust VideoDownloader 下载
 
 ### 问题 3: 封IP风险和下载速度优化
 
 **解决方案**: 网站特征学习 + 自适应线程控制
 
-网站特征表 (30+ 网站):
-```
-video.twimg.com: Cloudflare, 2-4线程, UA轮换
-github.com: RateLimit, 2-6线程
-youtube.com: RateLimit, 2-8线程
-reddit.com: Cloudflare+CookieAuth, 2-4线程
-```
+---
 
-自适应逻辑:
-- 速度 < 500KB/s → 增加线程 (+1)
-- 速度 > 1.5MB/s → 减少线程 (-1)
-- 失败3次+ → 降低max_threads
+## 代码优化 (2026-05-01)
 
-配置文件: `~/.config/x-video-downloader/website_profiles.json`
+> Phase 1-4 优化已完成，详见 git log。核心问题：异步阻塞、进度条、竞态条件、性能优化。
+
+### Phase 1: 关键异步阻塞修复
+
+| 修复项 | 文件 | 方案 |
+|--------|------|------|
+| Nested Runtime | gui.rs | 预创建单一 Arc<Runtime> |
+| TempDir 阻塞 | downloader.rs | spawn_blocking 包装 |
+| Progress 线程 | gui.rs | std::thread::sleep() |
+
+### Phase 2: GUI 进度条 + 竞态修复
+
+| 问题 | 修复 |
+|------|------|
+| 进度条不更新/跳跃 | download_segment()只更新总量，后台任务统一计算 |
+| 进度条从中间扩展 | HorizontalLayout { alignment: start } |
+| Slint width/min-width 冲突 | 只用 min_width/max_width |
+| 中文字体显示方块 | font-family: "PingFang SC" (单个字体) |
+| get_or_create TOCTOU | 双检查锁定模式 |
+
+### Phase 3: 性能优化
+
+| 优化项 | 修复 |
+|--------|------|
+| fxtwitter.rs 媒体迭代 | 直接迭代，避免 Vec 分配 |
+| clippy 修复 | rsplit('/').next() → next_back() 等 |
+
+### Phase 4: 代码质量
+
+- 删除未使用函数: detect_speed_limit(), check_speed_limit(), list_domains(), stats()
 
 ---
 
@@ -251,6 +257,9 @@ cargo run -- "https://x.com/user/status/123456"
 
 # 运行 GUI
 ./target/release/x-video-downloader --gui
+
+# clippy 检查
+cargo clippy -- -D warnings
 ```
 
 ---
@@ -258,24 +267,35 @@ cargo run -- "https://x.com/user/status/123456"
 ## 测试用 URL
 
 ```
-https://x.com/HopePJ/status/2048259171158741395?s=20
+https://x.com/HopePJ/status/2048259171158741395
+https://x.com/film_korean9/status/2049539100588577014
+https://x.com/elvis_mwanza1/status/2048648323280822482
 ```
 
 **测试结果**:
-- yt-dlp → ❌ (需要认证)
-- FxTwitter → ✅ (成功获取 863MB 视频)
-- 输出文件: `chudai.mp4`
+
+| URL | 文件大小 | 下载时间 | 平均速度 |
+|-----|----------|----------|----------|
+| film_korean9 | 386 MB | 39.56s | 10.7 MB/s |
+| elvis_mwanza1 | 1.17 GB | 110.34s | 10.8 MB/s |
+
+**结论**: 速度稳定在 ~10.7-10.8 MB/s，瓶颈在 `video.twimg.com` 的上行带宽
 
 ---
 
 ## 最近提交
 
 ```
-fe1b47e - docs: 更新交接文档 - 新增题型支持扩展章节
-0880c31 - chore: 清理 slides 目录，移除 node_modules 依赖
-464eeeb - feat: 完善AI批处理模块 + 新增测试
-7eedb7b - docs: 添加项目交接文档
-4df59c1 - fix: 修复中文文本截断的字节边界panic
+<PENDING> - refactor: website_profile.rs using ProfileTemplate enum
+<PENDING> - test: add unit tests for config.rs, yt_dlp.rs, scrapling_extractor.rs
+<PENDING> - fix: clippy errors (too_many_arguments, unnecessary_cast, etc.)
+<PENDING> - fix: website_profile.rs AntiCrawlerType derive Default
+<PENDING> - test: add unit tests for types.rs (sanitize, errors, progress)
+190be3a - GitButler Workspace Commit
+b4e7c27 - update commit
+9dd6899 - fix: use std::process::Command instead of tokio::Command
+e1ece79 - fix: use std::thread instead of tokio::spawn_blocking
+15fed43 - fix: run FxTwitter in spawn_blocking with Tokio runtime
 ```
 
 ---
@@ -308,8 +328,23 @@ python -m playwright install chromium
 2. [x] 输出文件名修复 - 已完成
 3. [x] 网站特征学习系统 - 已完成
 4. [x] 自适应线程控制 - 已完成
-5. [ ] 清理 gui.rs 中的未使用变量警告
-6. [ ] 添加更多测试用例
+5. [x] 清理 gui.rs 中的未使用变量警告 - 已完成
+6. [x] 文件扩展名修复 - 已从 URL 提取扩展名
+7. [x] 懒加载网站配置 - 已实现按需加载
+8. [x] **异步阻塞修复** - gui.rs nested runtime + downloader.rs TempDir
+9. [x] **竞态条件修复** - get_or_create 双检查锁定
+10. [x] **媒体迭代优化** - 消除中间 Vec 分配
+11. [x] **clippy 修复** - 4 处代码质量修复
+12. [x] **website_profile.rs 重构** - ProfileTemplate 枚举减少样板代码 (861→614行)
+13. [x] **测试覆盖率提升** - 新增 40+ 单元测试 (133→174)
+14. [ ] 添加更多集成测试
+15. [ ] Slint UI warnings (172个 padding/layout warnings)
+
+---
+
+## GitButler
+
+项目使用 [GitButler](https://gitbutler.com) 管理虚拟分支。详见 `but --help` 或 https://gitbutler.com
 
 ---
 
@@ -326,22 +361,82 @@ python -m playwright install chromium
 
 ## 交接清单
 
-### 代码变更 (2026-04-27)
-- [x] 新增 scrapling_client.rs - Scrapling Python subprocess 封装
-- [x] 新增 scrapling_extractor.rs - HTML 视频 URL 提取
-- [x] 新增 website_profile.rs - 网站特征学习系统（30+网站默认配置）
-- [x] 修改 downloader.rs - 自适应线程控制
-- [x] 修改 main.rs - 添加 Scrapling 解析链
-- [x] 修改 main.rs - 修复输出文件名 %(ext)s 问题
-- [x] Cargo.toml - 添加 `which = "6"` 依赖
-
-### 测试验证
-- [x] cargo build - 构建成功
-- [x] cargo test - 133 tests passed
-- [x] 真实 URL 测试 - https://x.com/HopePJ/status/2048259171158741395 成功下载 863MB
-
 ### 给接手的同事
+
 1. 运行 `cargo build --release` 确保编译通过
 2. 确保 Python 环境有 scrapling: `pip install scrapling`
 3. 测试 URL: `cargo run -- "https://x.com/HopePJ/status/2048259171158741395"`
 4. 查看日志了解解析链: `INFO yt-dlp 解析失败...` → `INFO FxTwitter 解析成功!`
+
+### 遗留问题
+
+1. **website_profile.rs 死代码**: 某些方法标记了 `#[allow(dead_code)]`，预留 API 但未使用
+
+---
+
+## GitNexus 代码分析集成 (2026-05-01)
+
+### 概述
+
+GitNexus 是基于知识图谱的代码分析工具，可以为 Claude Code 提供深度的代码结构理解能力。
+
+### 已完成配置
+
+| 项目 | 状态 | 说明 |
+|------|------|------|
+| **OrbStack** | ✅ 已安装 | Docker 替代品，运行 Linux 容器 |
+| **GitNexus CLI** | ✅ 已安装 | `npm link` 到本地 GitNexus 源码 |
+| **GitNexus Skills** | ✅ 已安装 | 8 个 skills 在 `~/.claude/skills/` |
+| **MCP 配置** | ✅ 已配置 | `~/.claude/mcp.json` 中的 gitnexus 条目 |
+| **代码索引** | ✅ 已完成 | 1,292 nodes, 2,827 edges, 38 clusters |
+
+### OrbStack 说明
+
+OrbStack 是 Docker 的轻量替代品：
+- 提供与 Docker 兼容的 API（Docker socket 兼容）
+- 比 Docker Desktop 启动更快，资源占用更少
+- 支持 x86_64 和 ARM64 容器
+- 当前 `docker` 命令已通过 OrbStack 执行
+
+### 使用方式
+
+**分析项目（需要 Docker/OrbStack）：**
+```bash
+docker run --rm -v /Users/hgxszhj/x_videos-dowloads:/repo -w /repo ghcr.io/abhigyanpatwari/gitnexus:latest node /app/gitnexus/dist/cli/index.js analyze
+```
+
+**GitNexus Skills（Claude Code 中使用）：**
+- `gitnexus-cli` - 分析、状态、清理命令
+- `gitnexus-exploring` - 代码探索和查询
+- `gitnexus-debugging` - 调试相关分析
+- `gitnexus-refactoring` - 重构相关分析
+- `gitnexus-impact-analysis` - 影响范围分析
+- `gitnexus-pr-review` - PR 审查
+- `gitnexus-guide` - 使用指南
+- `gitnexus-analyzer` - 知识图谱分析
+
+**触发条件：** 在 Claude Code 中提到"分析代码结构"、"理解项目依赖"、"代码关系图"时使用。
+
+### 索引结果
+
+```
+Repository indexed successfully (26.5s)
+1,292 nodes | 2,827 edges | 38 clusters | 113 flows
+```
+
+生成的索引存储在 `.gitnexus/` 目录中。
+
+---
+
+## 详细模块参考
+
+> 详见各模块源码：src/downloader.rs, src/website_profile.rs, src/fxtwitter.rs, src/gui.rs 等
+
+---
+
+### 下一步工作
+
+1. [已完成] website_profile.rs 重构 - ProfileTemplate 枚举 (861→614行)
+2. [已完成] 测试覆盖率提升 - 新增 40+ 单元测试 (133→174)
+3. [ ] 添加更多集成测试
+4. [ ] Slint UI warnings (172个 padding/layout warnings)

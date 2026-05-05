@@ -452,20 +452,15 @@ async fn download_with_ytdlp(
     if is_direct_url && !cli.audio_only && !cli.subtitles {
         info!("检测到直接视频URL，使用 Rust 下载器: {}", info.title);
 
-        // 确定输出文件路径（不能用 yt-dlp 的 %(ext)s 占位符）
-        let ext = info.formats.first()
-            .map(|f| f.ext.clone())
-            .unwrap_or_else(|| "mp4".to_string());
+        // 从 URL 本身提取扩展名（最可靠，因为 API 返回的 container 字段可能不准确）
+        let ext = info.url.split('?').next()
+            .and_then(|s| s.rsplit('/').next()?.split('.').last())
+            .unwrap_or("mp4");
         let final_output_path = output_dir.join(format!("{}.{}", filename, ext));
 
-        // 使用 Rust VideoDownloader 直接下载
-        let download_config = DownloaderConfig {
-            user_agent: cli.user_agent.clone(),
-            proxy: cli.proxy.clone(),
-            ..Default::default()
-        };
-
-        let downloader = VideoDownloader::with_config(download_config)?;
+        // 使用 Rust VideoDownloader 直接下载（应用网站特征配置）
+        let downloader = VideoDownloader::new()?
+            .with_website_profile(&info.url);
         let request = DownloadRequest::new(&info.url, &final_output_path)
             .with_user_agent(cli.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()));
 
@@ -480,6 +475,14 @@ async fn download_with_ytdlp(
 
         let result = downloader.download(&request, Some(progress_callback)).await?;
         println!();
+
+        // 记录下载结果（用于网站特征学习）
+        let speed_bps = if result.duration_secs > 0.0 {
+            result.file_size as f64 / result.duration_secs as f64
+        } else {
+            0.0
+        };
+        website_profile::record_download_result(&info.url, result.success, speed_bps as u64);
 
         if result.success {
             println!("下载完成: {} ({} bytes)", info.title, result.file_size);

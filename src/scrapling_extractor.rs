@@ -234,6 +234,23 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_video_url_from_meta() {
+        let html = r#"<meta property="og:video" content="https://video.twimg.com/ext_tw_video/123/vid/1920x1080/test.mp4">"#;
+        let url = extract_video_url(html);
+        assert!(url.is_some());
+        let url = url.unwrap();
+        assert!(url.contains("video.twimg.com"));
+        assert!(url.contains("1920x1080"));
+    }
+
+    #[test]
+    fn test_extract_video_url_not_found() {
+        let html = "<html><body>No video here</body></html>";
+        let url = extract_video_url(html);
+        assert!(url.is_none());
+    }
+
+    #[test]
     fn test_extract_title() {
         let html = r#"<title>Test Video Title</title>"#;
         let title = extract_title(html);
@@ -241,8 +258,31 @@ mod tests {
     }
 
     #[test]
-    fn test_needs_bypass() {
-        // 导入需要检查的函数
-        assert!(extract_video_url("https://x.com/user/status/123").is_some() || true);
+    fn test_extract_title_from_og() {
+        let html = r#"<meta property="og:title" content="OG Title Here">"#;
+        let title = extract_title(html);
+        assert_eq!(title, Some("OG Title Here".to_string()));
+    }
+
+    #[test]
+    fn test_extract_title_not_found() {
+        let html = "<html><body>No title</body></html>";
+        let title = extract_title(html);
+        assert!(title.is_none());
+    }
+
+    #[test]
+    fn test_extract_all_video_sources_empty() {
+        let sources = extract_all_video_sources("<html>no video</html>");
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn test_estimate_resolution_from_url() {
+        assert_eq!(estimate_resolution_from_url("vid/1280x720/test.mp4"), Some("1280x720".to_string()));
+        assert_eq!(estimate_resolution_from_url("vid/1920x1080/test.mp4"), Some("1920x1080".to_string()));
+        assert_eq!(estimate_resolution_from_url("vid/720p/test.mp4"), Some("720p".to_string()));
+        assert_eq!(estimate_resolution_from_url("vid/360p/test.mp4"), Some("360x".to_string()));
+        assert_eq!(estimate_resolution_from_url("vid/no-res/test.mp4"), None);
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! 调用 yt-dlp 获取视频信息、解析格式、获取下载链接
 
-use crate::types::{VideoFormat, VideoInfo};
-use anyhow::{anyhow, Result};
+use crate::types::{DownloadError, VideoFormat, VideoInfo};
+use anyhow::Result;
 use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, info, warn};
@@ -166,18 +166,31 @@ impl YtDlp {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
 
-            // 区分用户提示和技术错误
-            if stderr.contains("No video could be found") {
-                warn!("yt-dlp 提示: {}", stderr);
-                return Err(anyhow!(
-                    "该推文没有可下载的视频内容或需要登录后才能查看。\n\
-                     提示: 如果这是私密/年龄限制内容，请使用 --cookies 选项提供认证 cookie。"
-                ));
+            // 内容类错误（用户操作可解决）
+            if stderr.contains("No video could be found")
+                || stderr.contains("Video unavailable")
+                || stderr.contains("This video is not available")
+            {
+                return Err(DownloadError::content_unavailable("视频不存在或已被删除").into());
             }
 
-            // 其他技术错误
+            if stderr.contains("login") || stderr.contains("authenticate") || stderr.contains("Sign in") {
+                return Err(DownloadError::authentication().into());
+            }
+
+            if stderr.contains("HTTP Error 429") || stderr.contains("rate limit") {
+                return Err(DownloadError::rate_limited().into());
+            }
+
+            if stderr.contains("ffmpeg") || stderr.contains("concurrent") {
+                // 技术类错误
+                warn!("yt-dlp 技术错误: {}", stderr);
+                return Err(DownloadError::ytdlp(&stderr).into());
+            }
+
+            // 其他错误
             warn!("yt-dlp 错误: {}", stderr);
-            return Err(anyhow!("获取视频信息失败: {}", stderr));
+            return Err(DownloadError::ytdlp(&stderr).into());
         }
 
         let json_str = String::from_utf8_lossy(&output.stdout);
@@ -355,8 +368,8 @@ mod tests {
     #[test]
     fn test_ytdlp_creation() {
         let yt = YtDlp::new();
-        // executable 现在会检测 ~/.yt-dlp-venv/bin/yt-dlp
         assert!(yt.executable.to_string_lossy().contains("yt-dlp"));
+        assert!(yt.anti_bot.enabled);
     }
 
     #[test]
@@ -365,5 +378,98 @@ mod tests {
             .with_user_agent("test-agent".to_string());
 
         assert_eq!(yt.anti_bot.user_agent, Some("test-agent".to_string()));
+    }
+
+    #[test]
+    fn test_antibot_config_default() {
+        let config = AntiBotConfig::default();
+        assert!(config.enabled);
+        assert!(config.user_agent.is_none());
+        assert!(config.cookie_file.is_none());
+        assert!(config.proxy.is_none());
+        assert!(!config.skip_ssl_verify);
+    }
+
+    #[test]
+    fn test_ytdlp_builder_chain() {
+        let yt = YtDlp::new()
+            .with_user_agent("test-agent".to_string())
+            .with_proxy("http://proxy:8080".to_string());
+
+        assert_eq!(yt.anti_bot.user_agent, Some("test-agent".to_string()));
+        assert_eq!(yt.anti_bot.proxy, Some("http://proxy:8080".to_string()));
+    }
+
+    #[test]
+    fn test_build_download_args_basic() {
+        let yt = YtDlp::new();
+        let args = yt.build_download_args(
+            "https://example.com/video",
+            "/tmp/output.mp4",
+            None,
+            false,
+            false,
+        );
+
+        assert!(args.contains(&"--no-warnings".to_string()));
+        assert!(args.contains(&"--newline".to_string()));
+        assert!(args.contains(&"-o".to_string()));
+        assert!(args.contains(&"/tmp/output.mp4".to_string()));
+        assert!(args.contains(&"https://example.com/video".to_string()));
+    }
+
+    #[test]
+    fn test_build_download_args_audio() {
+        let yt = YtDlp::new();
+        let args = yt.build_download_args(
+            "https://example.com/video",
+            "/tmp/output.mp4",
+            None,
+            true, // audio_only
+            false,
+        );
+
+        assert!(args.contains(&"-x".to_string()));
+        assert!(args.contains(&"--audio-format".to_string()));
+        assert!(args.contains(&"mp3".to_string()));
+    }
+
+    #[test]
+    fn test_build_download_args_with_format() {
+        let yt = YtDlp::new();
+        let args = yt.build_download_args(
+            "https://example.com/video",
+            "/tmp/output.mp4",
+            Some("best[ext=mp4]"),
+            false,
+            false,
+        );
+
+        assert!(args.contains(&"-f".to_string()));
+        assert!(args.contains(&"best[ext=mp4]".to_string()));
+    }
+
+    #[test]
+    fn test_build_download_args_with_subtitles() {
+        let yt = YtDlp::new();
+        let args = yt.build_download_args(
+            "https://example.com/video",
+            "/tmp/output.mp4",
+            None,
+            false,
+            true, // subtitles
+        );
+
+        assert!(args.contains(&"--write-subs".to_string()));
+        assert!(args.contains(&"--sub-lang".to_string()));
+        assert!(args.contains(&"en,zh-Hans,zh-Hant".to_string()));
+    }
+
+    #[test]
+    fn test_get_user_agent() {
+        let yt = YtDlp::new();
+        let ua = yt.get_user_agent();
+        assert!(ua.starts_with("Mozilla/5.0"));
+        assert!(ua.len() > 50);
     }
 }

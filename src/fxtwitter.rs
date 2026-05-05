@@ -93,6 +93,7 @@ struct FxMediaItem {
 #[derive(Debug, Deserialize)]
 struct FxFormat {
     url: Option<String>,
+    #[allow(dead_code)]
     container: Option<String>,
     codec: Option<String>,
     bitrate: Option<u64>,
@@ -213,39 +214,43 @@ impl FxTwitterResolver {
 
         // 解析媒体信息
         if let Some(ref media) = tweet.media {
-            // 获取所有媒体项
-            let media_items: Vec<&FxMediaItem> = media.all.as_ref()
-                .map(|m| m.iter().collect())
-                .unwrap_or_default();
+            // 直接迭代媒体项，避免创建中间 Vec
+            if let Some(ref all_media) = media.all {
+                for item in all_media {
+                    if item.media_type.as_deref() == Some("video") {
+                        // 设置缩略图
+                        if let Some(ref thumb_url) = item.thumbnail_url {
+                            video_info.thumbnail = Some(thumb_url.clone());
+                        }
 
-            for item in media_items {
-                if item.media_type.as_deref() == Some("video") {
-                    // 设置缩略图
-                    if let Some(ref thumb_url) = item.thumbnail_url {
-                        video_info.thumbnail = Some(thumb_url.clone());
-                    }
+                        // 设置时长
+                        if let Some(dur) = item.duration {
+                            video_info.duration = Some(dur as u64);
+                        }
 
-                    // 设置时长
-                    if let Some(dur) = item.duration {
-                        video_info.duration = Some(dur as u64);
-                    }
+                        // 解析格式
+                        if let Some(ref formats) = item.formats {
+                            for (idx, fmt) in formats.iter().enumerate() {
+                                if let Some(ref fmt_url) = fmt.url {
+                                    let resolution = Self::extract_resolution_from_url(fmt_url);
 
-                    // 解析格式
-                    if let Some(ref formats) = item.formats {
-                        for (idx, fmt) in formats.iter().enumerate() {
-                            if let Some(ref fmt_url) = fmt.url {
-                                let resolution = Self::extract_resolution_from_url(fmt_url);
+                                    // 从 URL 路径推断扩展名（忽略 query string），避免 API 返回不准确的 container 值
+                                    let ext = fmt_url.split('?').next()
+                                        .and_then(|s| s.rsplit('/').next_back()?.split('.').next_back())
+                                        .unwrap_or("mp4")
+                                        .to_string();
 
-                                video_info.formats.push(VideoFormat {
-                                    format_id: format!("fxtwitter_{}", idx),
-                                    ext: fmt.container.clone().unwrap_or_else(|| "mp4".to_string()),
-                                    resolution,
-                                    filesize: None,
-                                    bitrate: fmt.bitrate,
-                                    codec: fmt.codec.clone(),
-                                    audio_only: false,
-                                    format_note: Some(format!("{} kbps", fmt.bitrate.unwrap_or(0) / 1000)),
-                                });
+                                    video_info.formats.push(VideoFormat {
+                                        format_id: format!("fxtwitter_{}", idx),
+                                        ext,
+                                        resolution,
+                                        filesize: None,
+                                        bitrate: fmt.bitrate,
+                                        codec: fmt.codec.clone(),
+                                        audio_only: false,
+                                        format_note: Some(format!("{} kbps", fmt.bitrate.unwrap_or(0) / 1000)),
+                                    });
+                                }
                             }
                         }
                     }
@@ -302,8 +307,8 @@ impl FxTwitterResolver {
                                     }
                                 }
                             }
-                            if let Some(ref variant) = best_variant {
-                                if let Some(ref url) = variant.url {
+                            if let Some(variant) = best_variant {
+                                if let Some(url) = &variant.url {
                                     return Ok(url.clone());
                                 }
                             }
@@ -312,11 +317,9 @@ impl FxTwitterResolver {
                         if let Some(ref formats) = item.formats {
                             // 优先选择 mp4 格式的高分辨率
                             for fmt in formats {
-                                if let Some(ref fmt_url) = fmt.url {
-                                    if fmt_url.contains("1280x720") || fmt_url.contains("1920x1080") {
-                                        if !fmt_url.contains(".m3u8") {
-                                            return Ok(fmt_url.clone());
-                                        }
+                                if let Some(fmt_url) = &fmt.url {
+                                    if (fmt_url.contains("1280x720") || fmt_url.contains("1920x1080")) && !fmt_url.contains(".m3u8") {
+                                        return Ok(fmt_url.clone());
                                     }
                                 }
                             }

@@ -4,12 +4,12 @@
 
 use crate::downloader::{DownloaderConfig, VideoDownloader};
 use crate::fxtwitter::FxTwitterResolver;
-use crate::types::{sanitize_filename, DownloadProgress, DownloadRequest, VideoInfo, DEFAULT_USER_AGENT};
+use crate::types::{format_bytes, sanitize_filename, DownloadProgress, DownloadRequest, VideoInfo, DEFAULT_USER_AGENT};
 use crate::yt_dlp::YtDlp;
 use std::io::{BufRead, BufReader};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use tokio::runtime::Runtime;
 use tracing::{info, warn};
 
 slint::include_modules!();
@@ -23,9 +23,12 @@ struct SharedState {
     is_fetching: bool,
     is_downloading: bool,
     download_progress: f32,
+    download_speed: String,
     error_message: String,
+    error_action: String,
     status_message: String,
     download_progress_arc: Option<Arc<AtomicU32>>,
+    cancel_flag: Arc<AtomicU32>,
 }
 
 impl Default for SharedState {
@@ -38,9 +41,12 @@ impl Default for SharedState {
             is_fetching: false,
             is_downloading: false,
             download_progress: 0.0,
+            download_speed: String::new(),
             error_message: String::new(),
+            error_action: String::new(),
             status_message: "Enter video URL".to_string(),
             download_progress_arc: None,
+            cancel_flag: Arc::new(AtomicU32::new(0)),
         }
     }
 }
@@ -68,11 +74,13 @@ pub fn run_gui() {
     let app_weak_fetch = app.as_weak();
     let app_weak_download = app.as_weak();
     let app_weak_browse = app.as_weak();
+    let app_weak_clear = app.as_weak();
 
     // 克隆 Weak 引用给各个回调使用
     let app_weak_fetch_clone = app_weak_fetch.clone();
     let _app_weak_download_clone = app_weak_download.clone();
     let app_weak_browse_clone = app_weak_browse.clone();
+    let app_weak_clear_clone = app_weak_clear.clone();
     let app_weak_tick = app.as_weak();
     let app_weak_tick_clone = app_weak_tick.clone();
 
@@ -90,16 +98,29 @@ pub fn run_gui() {
     app.set_cookie_file(saved_cookie.into());
     app.set_status_message("Enter video URL".into());
     app.set_error_message("".into());
+    app.set_error_action("".into());
     app.set_is_fetching(false);
     app.set_is_downloading(false);
     app.set_has_video_info(false);
     app.set_download_progress(0.0);
+    app.set_download_speed("".into());
+    app.set_download_eta("".into());
+    app.set_network_status("Checking".into());
+    app.set_download_threads("".into());
 
     // 克隆给各个回调
     let shared_fetch = shared.clone();
     let shared_download = shared.clone();
     let shared_save = shared.clone();
     let shared_tick = shared.clone();
+    let shared_cancel = shared.clone();
+
+    // 创建单一的 tokio runtime (避免每次回调创建新 runtime 的开销)
+    let rt = Runtime::new().expect("Failed to create tokio runtime");
+    let rt = Arc::new(rt);
+    // 使用 Mutex 包装以支持 FnMut 回调 (回调可能被调用多次)
+    let rt_fetch = Arc::clone(&rt);
+    let rt_download = Arc::clone(&rt);
 
     // Fetch Info 回调
     app.on_fetch_info(move || {
@@ -138,9 +159,11 @@ pub fn run_gui() {
             }
 
             let url_clone = url.clone();
+            // 克隆 runtime 以在后台线程中使用
+            let rt = rt_fetch.clone();
 
             // 在后台线程执行
-            thread::spawn(move || {
+            std::thread::spawn(move || {
                 eprintln!("DEBUG: background thread started");
                 let ytdlp = YtDlp::new();
                 let result = ytdlp.get_video_info(&url_clone);
@@ -151,24 +174,20 @@ pub fn run_gui() {
                     Err(e) => {
                         warn!("yt-dlp failed: {}, trying FxTwitter...", e);
                         let url_fx = url_clone.clone();
-                        let fx_result = thread::spawn(move || {
-                            let rt = tokio::runtime::Runtime::new()
-                                .expect("Failed to create tokio runtime");
-                            rt.block_on(async {
-                                FxTwitterResolver::new().get_video_info(&url_fx).await
-                            })
-                        }).join();
+                        // 使用预创建的 runtime 执行 async 代码，避免每次创建新 runtime
+                        let fx_result = rt.block_on(async {
+                            FxTwitterResolver::new().get_video_info(&url_fx).await
+                        });
 
                         match fx_result {
-                            Ok(Ok(info)) => {
+                            Ok(info) => {
                                 warn!("FxTwitter fallback succeeded");
                                 Ok(info)
                             }
-                            Ok(Err(fx_err)) => {
+                            Err(fx_err) => {
                                 warn!("FxTwitter also failed: {}", fx_err);
                                 Err(format!("{} | FxTwitter: {}", e, fx_err))
                             }
-                            Err(_) => Err(format!("{} | FxTwitter: thread panicked", e)),
                         }
                     }
                 };
@@ -236,16 +255,19 @@ pub fn run_gui() {
 
             if let Some(info) = video_info {
                 let progress_arc = Arc::new(AtomicU32::new(0));
+                let speed_arc = Arc::new(AtomicU64::new(0));
 
                 app.set_is_downloading(true);
                 app.set_download_progress(0.0);
                 app.set_status_message("Connecting to server...".into());
                 app.set_error_message("".into());
+                app.set_download_threads("4".into());
 
                 {
                     let mut s = shared.lock().unwrap();
                     s.is_downloading = true;
                     s.download_progress = 0.0;
+                    s.download_speed = String::new();
                     s.status_message = "Connecting to server...".into();
                     s.error_message = String::new();
                     s.download_progress_arc = Some(progress_arc.clone());
@@ -255,38 +277,44 @@ pub fn run_gui() {
                 let video_url = info.url.clone();
                 let output_dir_clone = output_dir.clone();
                 let title = info.title.clone();
+                let uploader = info.uploader.clone().unwrap_or_default();
                 let is_direct_url = video_url.contains("video.twimg.com");
                 let progress_arc_for_update = progress_arc.clone();
+                let speed_arc_for_update = speed_arc.clone();
                 let app_weak_for_update = app_weak_download.clone();
 
-                // 启动进度更新线程
-                thread::spawn(move || {
-                    let mut last_log_time = std::time::Instant::now();
-                    while progress_arc_for_update.load(Ordering::Relaxed) < 100 {
-                        thread::sleep(std::time::Duration::from_millis(200));
+                // 启动进度更新线程 (使用 std 线程，无需 tokio)
+                std::thread::spawn(move || {
+                    while progress_arc_for_update.load(Ordering::Relaxed) < 100 {  // 使用 100 表示 100%
+                        std::thread::sleep(std::time::Duration::from_millis(1));  // 1ms 间隔，极速更新
                         let current_progress = progress_arc_for_update.load(Ordering::Relaxed) as f32 / 100.0;
+                        let current_speed = speed_arc_for_update.load(Ordering::Relaxed);
+                        let speed_str = if current_speed > 0 {
+                            format_bytes(current_speed)
+                        } else {
+                            String::new()
+                        };
                         let app_weak_clone = app_weak_for_update.clone();
                         slint::invoke_from_event_loop(move || {
                             if let Some(app) = app_weak_clone.upgrade() {
                                 app.set_download_progress(current_progress);
+                                app.set_download_speed(speed_str.into());
                             }
                         }).ok();
-                        // 每秒打印一次进度
-                        if last_log_time.elapsed().as_secs() >= 1 {
-                            eprintln!("DEBUG: Download progress: {}%", current_progress * 100.0);
-                            last_log_time = std::time::Instant::now();
-                        }
                     }
-                    eprintln!("DEBUG: Download progress thread exiting");
                 });
 
-                thread::spawn(move || {
+                // 克隆 runtime 以在下载线程中使用
+                let rt_for_download = rt_download.clone();
+                std::thread::spawn(move || {
+                    let rt = rt_for_download;
+
                     let output_path = std::path::Path::new(&output_dir_clone);
                     if !output_path.exists() {
                         let _ = std::fs::create_dir_all(output_path);
                     }
 
-                    let filename = sanitize_filename(&title);
+                    let filename = sanitize_filename(&format!("{}_{}", uploader, title));
                     let download_result: Result<String, String>;
 
                     if is_direct_url {
@@ -304,28 +332,26 @@ pub fn run_gui() {
                                 .with_user_agent(DEFAULT_USER_AGENT.to_string());
 
                             let progress_for_thread = progress_arc.clone();
+                            let speed_for_thread = speed_arc.clone();
                             let progress_callback: Arc<dyn Fn(DownloadProgress) + Send + Sync> =
                                 Arc::new(move |p: DownloadProgress| {
-                                    eprintln!("DEBUG: Direct download progress callback: {}%", p.percent * 100.0);
                                     progress_for_thread.store((p.percent * 100.0) as u32, Ordering::Relaxed);
+                                    speed_for_thread.store(p.speed as u64, Ordering::Relaxed);
                                 });
 
-                            let result = thread::spawn(move || {
-                                let rt = tokio::runtime::Runtime::new()
-                                    .expect("Failed to create tokio runtime");
-                                rt.block_on(async {
-                                    downloader.download(&request, Some(progress_callback)).await
-                                })
-                            }).join();
+                            // 使用预创建的 runtime 执行下载，避免每次创建新 runtime
+                            let result = rt.block_on(async {
+                                downloader.download(&request, Some(progress_callback)).await
+                            });
 
                             match result {
-                                Ok(Ok(r)) if r.success => {
+                                Ok(r) if r.success => {
                                     progress_arc.store(100, Ordering::Relaxed);
-                                    download_result = Ok(format!("Download completed: {} ({} bytes)", title, r.file_size));
+                                    let size_str = format_bytes(r.file_size);
+                                    download_result = Ok(format!("Download completed: {} ({})", title, size_str));
                                 }
-                                Ok(Ok(r)) => download_result = Err(r.error_message.unwrap_or_else(|| "Download failed".to_string())),
-                                Ok(Err(e)) => download_result = Err(format!("Download error: {}", e)),
-                                Err(_) => download_result = Err("Download thread panicked".to_string()),
+                                Ok(r) => download_result = Err(r.error_message.unwrap_or_else(|| "Download failed".to_string())),
+                                Err(e) => download_result = Err(format!("Download error: {}", e)),
                             }
                         } else {
                             download_result = Err("Failed to create downloader".to_string());
@@ -358,13 +384,12 @@ pub fn run_gui() {
                             let progress_for_ytdlp_clone = progress_for_ytdlp.clone();
                             std::thread::spawn(move || {
                                 let reader = BufReader::new(stderr);
-                                for line in reader.lines() {
-                                    if let Ok(line) = line {
-                                        eprintln!("DEBUG yt-dlp stderr: {}", line);
-                                        if let Some(percent) = parse_ytdlp_progress(&line) {
-                                            eprintln!("DEBUG: yt-dlp parsed progress: {}%", percent);
-                                            progress_for_ytdlp_clone.store(percent as u32, Ordering::Relaxed);
-                                        }
+                                #[allow(clippy::unnecessary_filter_map)]
+                                for line in reader.lines().filter_map(|l| l.ok()) {
+                                    eprintln!("DEBUG yt-dlp stderr: {}", line);
+                                    if let Some(percent) = parse_ytdlp_progress(&line) {
+                                        eprintln!("DEBUG: yt-dlp parsed progress: {}%", percent);
+                                        progress_for_ytdlp_clone.store(percent as u32, Ordering::Relaxed);
                                     }
                                 }
                             });
@@ -411,6 +436,19 @@ pub fn run_gui() {
         }
     });
 
+    // Cancel Download 回调
+    app.on_cancel_download(move || {
+        let shared = shared_cancel.clone();
+        let mut s = shared.lock().unwrap();
+        if s.is_downloading {
+            s.cancel_flag.store(1, Ordering::Relaxed);
+            s.is_downloading = false;
+            s.status_message = "Download cancelled".to_string();
+            s.error_message = "Download was cancelled by user".to_string();
+            s.error_action = "".to_string();
+        }
+    });
+
     // Browse Cookie File 回调
     app.on_browse_cookie(move || {
         if let Some(app) = app_weak_browse_clone.upgrade() {
@@ -434,12 +472,30 @@ pub fn run_gui() {
         }
     });
 
-    // Tick 回调 - 定期更新下载进度
+    // Clear URL 回调
+    app.on_clear_url(move || {
+        if let Some(app) = app_weak_clear_clone.upgrade() {
+            app.set_url("".into());
+            app.set_status_message("Enter video URL".into());
+            app.set_has_video_info(false);
+            app.set_error_message("".into());
+            app.set_error_action("".into());
+        }
+    });
+
+    // Tick 回调 - 定期更新下载进度和网络状态
     app.on_tick(move || {
         let app_weak = app_weak_tick_clone.clone();
         let shared = shared_tick.clone();
 
         if let Some(app) = app_weak.upgrade() {
+            // 检查网络状态 - 使用百度作为检测点(国内可访问)
+            let baidu_ip = std::net::SocketAddr::from(([120, 46, 59, 242], 443));
+            let is_online = std::net::TcpStream::connect_timeout(&baidu_ip, std::time::Duration::from_secs(2)).is_ok();
+            eprintln!("DEBUG: network check to {} = {}", baidu_ip, is_online);
+            let network_status = if is_online { "Online" } else { "Offline" };
+            app.set_network_status(network_status.into());
+
             let is_downloading = app.get_is_downloading();
             if is_downloading {
                 let progress = {
@@ -451,6 +507,20 @@ pub fn run_gui() {
                 };
                 app.set_download_progress(progress);
             }
+        }
+    });
+
+    // 启动定时器定期更新网络状态
+    let app_weak_for_timer = app.as_weak();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let app_weak_clone = app_weak_for_timer.clone();
+            slint::invoke_from_event_loop(move || {
+                if let Some(app) = app_weak_clone.upgrade() {
+                    app.invoke_tick();
+                }
+            }).ok();
         }
     });
 
@@ -524,7 +594,7 @@ fn parse_ytdlp_progress(line: &str) -> Option<f32> {
         let part = part.trim();
         if part.ends_with('%') && !part.starts_with('%') {
             if let Ok(percent) = part.trim_end_matches('%').parse::<f32>() {
-                if percent >= 0.0 && percent <= 100.0 {
+                if (0.0..=100.0).contains(&percent) {
                     return Some(percent);
                 }
             }

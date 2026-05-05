@@ -183,15 +183,33 @@ mod tests {
         assert_eq!(config.concurrent_downloads, 3);
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.server_addr, "ws://localhost:9000");
+        assert_eq!(config.log_level, "info");
+        assert!(!config.audio_only);
+        assert!(!config.subtitles);
     }
 
     #[test]
     fn test_config_path() {
         let path = AppConfig::config_path();
-        println!("Config path: {:?}", path);
-        // 路径应该包含 x-video-downloader
         if let Some(p) = path {
             assert!(p.to_string_lossy().contains("x-video-downloader"));
         }
+    }
+
+    #[test]
+    fn test_default_output_dir() {
+        let dir = default_output_dir();
+        // 应该是有效的路径
+        assert!(dir.to_string_lossy().len() > 0);
+    }
+
+    #[test]
+    fn test_default_functions() {
+        assert_eq!(default_concurrent_downloads(), 3);
+        assert_eq!(default_max_retries(), 5);
+        assert_eq!(default_server_addr(), "ws://localhost:9000");
+        assert_eq!(default_device_name(), "MyDevice");
+        assert_eq!(default_log_level(), "info");
+        assert!(default_user_agent().contains("Mozilla"));
     }
 }

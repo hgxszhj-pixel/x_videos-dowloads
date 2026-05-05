@@ -2,57 +2,170 @@
 //!
 //! 项目中使用的核心数据类型定义
 
+use anyhow;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use thiserror::Error;
 
 /// 默认 User-Agent 常量
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-/// 应用错误类型
-#[derive(Debug, Error)]
+/// 下载错误类型（用户友好）
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub enum AppError {
-    #[error("网络错误: {0}")]
-    Network(#[from] reqwest::Error),
-
-    #[error("IO错误: {0}")]
-    Io(#[from] std::io::Error),
-    
-    #[error("yt-dlp错误: {0}")]
+pub enum DownloadErrorType {
+    /// 网络连接问题（超时、断开）
+    Network,
+    /// HTTP 错误（403/404/500 等）
+    Http(u16),
+    /// 内容不可用（视频不存在、私密、地区限制）
+    ContentUnavailable,
+    /// 需要认证（登录、Cookie 过期）
+    Authentication,
+    /// 速度限制/封 IP
+    RateLimited,
+    /// 磁盘空间不足
+    DiskFull,
+    /// 磁盘写入错误（权限、路径无效）
+    DiskIo,
+    /// 下载被取消
+    Cancelled,
+    /// yt-dlp 内部错误
     YtDlp(String),
-    
-    #[error("URL验证失败: {0}")]
-    InvalidUrl(String),
-    
-    #[error("文件路径无效: {0}")]
-    InvalidPath(String),
-    
-    #[error("下载失败: {0}")]
-    DownloadFailed(String),
-    
-    #[error("配置错误: {0}")]
-    Config(String),
-    
-    #[error("未知错误: {0}")]
+    /// 未知错误
     Unknown(String),
 }
 
-impl From<anyhow::Error> for AppError {
-    fn from(e: anyhow::Error) -> Self {
-        AppError::Unknown(e.to_string())
+/// 下载错误（带用户友好的错误描述和操作建议）
+#[derive(Debug, Clone)]
+pub struct DownloadError {
+    /// 错误类型
+    pub error_type: DownloadErrorType,
+    /// 简短错误信息（供 UI 显示）
+    pub message: String,
+    /// 操作建议（告诉用户怎么解决）
+    pub action: Option<String>,
+}
+
+impl DownloadError {
+    /// 创建网络错误
+    pub fn network(_e: impl std::fmt::Display) -> Self {
+        Self {
+            error_type: DownloadErrorType::Network,
+            message: "网络连接失败，请检查网络".to_string(),
+            action: Some("尝试更换网络环境或使用代理".to_string()),
+        }
+    }
+
+    /// 创建 HTTP 错误
+    pub fn http(status: u16) -> Self {
+        let (message, action) = match status {
+            403 => ("服务器拒绝访问".to_string(), Some("可能需要登录，请设置 Cookie".to_string())),
+            404 => ("视频不存在或已被删除".to_string(), None),
+            429 => ("请求过于频繁，已被限速".to_string(), Some("请稍后再试或使用代理".to_string())),
+            450..=499 => ("无法访问该内容".to_string(), Some("可能需要登录或内容不可用".to_string())),
+            500..=599 => ("服务器异常".to_string(), Some("稍后重试".to_string())),
+            _ => ("下载请求失败".to_string(), None),
+        };
+        Self {
+            error_type: DownloadErrorType::Http(status),
+            message,
+            action,
+        }
+    }
+
+    /// 创建内容不可用错误
+    pub fn content_unavailable(reason: &str) -> Self {
+        Self {
+            error_type: DownloadErrorType::ContentUnavailable,
+            message: format!("无法下载: {}", reason),
+            action: Some("检查视频是否需要登录或地区限制".to_string()),
+        }
+    }
+
+    /// 创建认证错误
+    pub fn authentication() -> Self {
+        Self {
+            error_type: DownloadErrorType::Authentication,
+            message: "需要登录才能下载此视频".to_string(),
+            action: Some("点击「设置 Cookie」提供登录凭证".to_string()),
+        }
+    }
+
+    /// 创建限速错误
+    pub fn rate_limited() -> Self {
+        Self {
+            error_type: DownloadErrorType::RateLimited,
+            message: "下载被限速".to_string(),
+            action: Some("等待几分钟后重试，或使用代理".to_string()),
+        }
+    }
+
+    /// 创建磁盘错误
+    pub fn disk_io(reason: &str) -> Self {
+        Self {
+            error_type: DownloadErrorType::DiskIo,
+            message: format!("磁盘写入失败: {}", reason),
+            action: Some("检查磁盘空间和写入权限".to_string()),
+        }
+    }
+
+    /// 创建 yt-dlp 错误
+    pub fn ytdlp(msg: &str) -> Self {
+        Self {
+            error_type: DownloadErrorType::YtDlp(msg.to_string()),
+            message: format!("下载工具错误: {}", msg),
+            action: None,
+        }
+    }
+
+    /// 创建取消错误
+    pub fn cancelled() -> Self {
+        Self {
+            error_type: DownloadErrorType::Cancelled,
+            message: "下载已取消".to_string(),
+            action: None,
+        }
+    }
+
+    /// 从 reqwest 错误转换
+    pub fn from_reqwest(e: reqwest::Error) -> Self {
+        if e.is_timeout() {
+            return Self::network("连接超时");
+        }
+        if e.is_connect() {
+            return Self::network("无法连接到服务器");
+        }
+        if let Some(status) = e.status() {
+            return Self::http(status.as_u16());
+        }
+        Self::network(e.to_string())
+    }
+
+    /// 获取简短消息
+    pub fn short_message(&self) -> &str {
+        &self.message
     }
 }
 
-impl From<String> for AppError {
-    fn from(s: String) -> Self {
-        AppError::Unknown(s)
+impl std::fmt::Display for DownloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)?;
+        if let Some(ref action) = self.action {
+            write!(f, " ({})", action)?;
+        }
+        Ok(())
     }
 }
 
-impl From<&str> for AppError {
-    fn from(s: &str) -> Self {
-        AppError::Unknown(s.to_string())
+impl From<DownloadError> for String {
+    fn from(e: DownloadError) -> String {
+        e.to_string()
+    }
+}
+
+impl From<DownloadError> for anyhow::Error {
+    fn from(e: DownloadError) -> Self {
+        anyhow::anyhow!("{}", e)
     }
 }
 
@@ -415,5 +528,112 @@ mod tests {
         assert!(DownloadStatus::Failed.is_terminal());
         assert!(!DownloadStatus::Downloading.is_terminal());
         assert!(DownloadStatus::Downloading.is_active());
+    }
+
+    #[test]
+    fn test_sanitize_filename() {
+        assert_eq!(sanitize_filename("normal_video.mp4"), "normal_video.mp4");
+        assert_eq!(sanitize_filename("video with spaces.mp4"), "video_with_spaces.mp4");
+        assert_eq!(sanitize_filename("../../../etc/passwd"), "video");
+        assert_eq!(sanitize_filename("/absolute/path"), "video");
+        assert_eq!(sanitize_filename(""), "video");
+        assert_eq!(sanitize_filename("a".repeat(300).as_str()).len(), 200);
+    }
+
+    #[test]
+    fn test_download_error() {
+        let err = DownloadError::http(403);
+        assert!(matches!(err.error_type, DownloadErrorType::Http(403)));
+        assert!(err.message.contains("拒绝访问"));
+
+        let err = DownloadError::network("timeout");
+        assert!(matches!(err.error_type, DownloadErrorType::Network));
+
+        let err = DownloadError::rate_limited();
+        assert!(matches!(err.error_type, DownloadErrorType::RateLimited));
+    }
+
+    #[test]
+    fn test_download_progress_update() {
+        let mut progress = DownloadProgress::new("task1".to_string())
+            .with_total_bytes(1000)
+            .with_status(DownloadStatus::Downloading);
+
+        progress.update(500, 100.0);
+        assert_eq!(progress.bytes_downloaded, 500);
+        assert!((progress.percent - 0.5).abs() < 0.001);
+        assert!(progress.eta_secs.is_some());
+
+        progress.update(1000, 100.0);
+        assert!((progress.percent - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_video_info_new() {
+        let info = VideoInfo::new("Test Video".to_string(), "https://example.com/video.mp4".to_string());
+        assert_eq!(info.title, "Test Video");
+        assert_eq!(info.url, "https://example.com/video.mp4");
+        assert!(info.formats.is_empty());
+        assert!(info.created_at.is_some());
+    }
+
+    #[test]
+    fn test_download_result() {
+        let result = DownloadResult::success(
+            std::path::PathBuf::from("/tmp/video.mp4"),
+            1024 * 1024,
+            10.5,
+        );
+        assert!(result.success);
+        assert_eq!(result.file_size, 1024 * 1024);
+        assert_eq!(result.duration_secs, 10.5);
+        assert!(result.error_message.is_none());
+
+        let result = DownloadResult::failure(
+            std::path::PathBuf::from("/tmp/video.mp4"),
+            "Network error".to_string(),
+        );
+        assert!(!result.success);
+        assert!(result.error_message.is_some());
+    }
+
+    #[test]
+    fn test_download_request_options() {
+        let request = DownloadRequest::new("https://example.com/video", "/tmp")
+            .with_user_agent("test-ua".to_string())
+            .with_subtitles();
+
+        assert!(request.user_agent.is_some());
+        assert!(request.download_subtitles);
+    }
+
+    #[test]
+    fn test_format_bytes_large() {
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024 * 1024), "1.0 TB");
+        assert_eq!(format_bytes(500), "500 B");
+    }
+
+    #[test]
+    fn test_sanitize_filename_edge_cases() {
+        assert_eq!(sanitize_filename("normal_video.mp4"), "normal_video.mp4");
+        assert_eq!(sanitize_filename("video with spaces.mp4"), "video_with_spaces.mp4");
+        assert_eq!(sanitize_filename("../../../etc/passwd"), "video");
+        assert_eq!(sanitize_filename("/absolute/path"), "video");
+    }
+
+    #[test]
+    fn test_download_error_factory() {
+        let err = DownloadError::http(403);
+        assert!(matches!(err.error_type, DownloadErrorType::Http(403)));
+        let err = DownloadError::rate_limited();
+        assert!(matches!(err.error_type, DownloadErrorType::RateLimited));
+    }
+
+    #[test]
+    fn test_download_progress() {
+        let mut p = DownloadProgress::new("t1".to_string()).with_total_bytes(1000);
+        p.update(500, 100.0);
+        assert!((p.percent - 0.5).abs() < 0.001);
     }
 }

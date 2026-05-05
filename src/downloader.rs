@@ -4,12 +4,13 @@
 
 #![allow(dead_code)]
 
-use crate::types::{DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, DEFAULT_USER_AGENT};
+use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, DEFAULT_USER_AGENT};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -134,8 +135,16 @@ impl VideoDownloader {
         self.config.max_threads = max_threads;
         self.config.speed_threshold_bps = threshold;
 
-        info!("应用网站特征: adaptive={}, threads=[{}-{}], threshold={:.1}KB/s",
-            adaptive, min_threads, max_threads, threshold as f64 / 1024.0);
+        // 联动优化：parallel_segments 跟随 max_threads，保持一致性
+        // 如果有线程限制，使用 max_threads 作为分段数；否则用默认的 4
+        self.config.parallel_segments = if max_threads < 8 {
+            max_threads
+        } else {
+            self.config.parallel_segments
+        };
+
+        info!("应用网站特征: adaptive={}, threads=[{}-{}], threshold={:.1}KB/s, parallel_segments={}",
+            adaptive, min_threads, max_threads, threshold as f64 / 1024.0, self.config.parallel_segments);
 
         self
     }
@@ -232,8 +241,11 @@ impl VideoDownloader {
         total_size: u64,
         progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
     ) -> Result<DownloadResult> {
+        let start_time = Instant::now();
         let url = request.url.clone();
         let output_path = request.output_path.clone();
+
+        // 使用网站特征推荐的线程数（来自 website_profile）
         let segments = self.config.parallel_segments;
 
         info!("开始分段并行下载: {} ({} 线程)", url, segments);
@@ -244,11 +256,13 @@ impl VideoDownloader {
         }
 
         // 创建临时目录存储各分段（使用 TempDir 自动清理）
-        let temp_dir = tempfile::TempDir::new_in(
-            output_path.parent().context("输出路径没有有效父目录")?
-        )?;
+        // 使用 spawn_blocking 避免阻塞 async runtime
+        let parent_dir = output_path.parent().context("输出路径没有有效父目录")?.to_path_buf();
+        let temp_dir = tokio::task::spawn_blocking(move || {
+            tempfile::TempDir::new_in(parent_dir)
+        }).await??;
         let temp_dir_path = temp_dir.path().to_path_buf();
-        
+
         // 预创建临时文件以避免竞争条件
         for i in 0..segments {
             let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
@@ -257,12 +271,43 @@ impl VideoDownloader {
 
         let chunk_size = (total_size as f64 / segments as f64).ceil() as u64;
 
-        // 创建进度跟踪
+        // 创建进度跟踪（使用原子操作支持多线程更新）
+        let total_downloaded = Arc::new(AtomicU64::new(0));
+        let download_active = Arc::new(AtomicBool::new(true));
         let progress = Arc::new(Mutex::new(DownloadProgress::new("parallel".to_string())
             .with_total_bytes(total_size)
             .with_status(DownloadStatus::Downloading)));
 
-        // 并行下载各分段
+        // 克隆进度相关数据用于后台进度报告任务
+        let total_downloaded_clone = total_downloaded.clone();
+        let download_active_clone = download_active.clone();
+        let progress_clone = progress.clone();
+        let callback_clone = progress_callback.clone();
+        let start_time_clone = start_time;
+
+        // 启动后台进度报告任务（每 0.5 秒更新一次）
+        let progress_task = tokio::spawn(async move {
+            while download_active_clone.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                let downloaded = total_downloaded_clone.load(Ordering::Relaxed);
+                let elapsed = start_time_clone.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.0 {
+                    downloaded as f64 / elapsed
+                } else {
+                    0.0
+                };
+
+                let mut progress = progress_clone.lock().await;
+                progress.update(downloaded, speed);
+
+                if let Some(ref callback) = callback_clone {
+                    callback(progress.clone());
+                }
+            }
+        });
+
+        // 并行下载各分段（每个分段有独立的较短超时）
         let mut handles = vec![];
 
         for i in 0..segments {
@@ -276,62 +321,127 @@ impl VideoDownloader {
                 (i + 1) as u64 * chunk_size - 1
             };
             let retry_count = self.config.retry_count;
+            let segment_size = chunk_size;
+            let td = total_downloaded.clone();
+            let cb = progress_callback.clone();
 
             let handle = tokio::spawn(async move {
-                for attempt in 0..retry_count {
-                    let result = download_segment(&client, &url, &temp_path, start, end).await;
-                    if result.is_ok() {
-                        return result;
-                    }
-                    if attempt < retry_count - 1 {
-                        tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
-                    }
-                }
-                download_segment(&client, &url, &temp_path, start, end).await
+                download_segment_with_retry(&client, &url, &temp_path, start, end, segment_size, retry_count, Some(td), cb).await
             });
             handles.push(handle);
         }
 
         // 等待所有分段下载完成
         let mut success_count = 0u32;
-        for handle in handles {
+        let mut segment_sizes = vec![0u64; segments as usize];
+        for (i, handle) in handles.into_iter().enumerate() {
             match handle.await {
-                Ok(Ok(_)) => success_count += 1,
-                Ok(Err(e)) => warn!("分段下载失败: {:?}", e),
-                Err(e) => warn!("分段任务panic: {:?}", e),
+                Ok(Ok(size)) => {
+                    success_count += 1;
+                    segment_sizes[i] = size;
+                    total_downloaded.fetch_add(size, Ordering::Relaxed);
+                }
+                Ok(Err(e)) => {
+                    warn!("分段 {} 下载失败: {:?}", i, e);
+                    segment_sizes[i] = 0;
+                }
+                Err(e) => {
+                    warn!("分段 {} 任务panic: {:?}", i, e);
+                    segment_sizes[i] = 0;
+                }
             }
         }
-        
+
+        info!("分段下载完成: {}/{} 成功", success_count, segments);
+
         // 所有分段都失败则报错
         if success_count == 0 {
             return Err(anyhow!("所有分段下载都失败了"));
         }
-        
-        // 部分成功则记录警告
-        if success_count < segments {
-            warn!("部分分段下载失败: {}/{} 成功", success_count, segments);
-        }
 
-        // 合并分段文件（流式处理，避免内存翻倍）
-        let mut output_file = File::create(&output_path).await?;
-        for i in 0..segments {
-            let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
-            // 使用 tokio::io::copy 流式复制，不将整个文件加载到内存
-            if let Ok(mut temp_file) = File::open(&temp_path).await {
-                if let Err(e) = tokio::io::copy(&mut temp_file, &mut output_file).await {
-                    warn!("合并分段 {} 时出错: {:?}", i, e);
+        // 部分成功时，检查是否应该回退到单线程断点续传
+        if success_count < segments && success_count > 0 {
+            warn!("部分分段下载失败 ({}/{} 成功)，尝试断点续传...", success_count, segments);
+
+            // 计算已下载的总大小
+            let downloaded_size: u64 = segment_sizes.iter().sum();
+            let expected_min = total_size * success_count as u64 / segments as u64 * 80 / 100;
+
+            if downloaded_size >= expected_min {
+                info!("已下载 {} bytes，尝试断点续传下载剩余部分", downloaded_size);
+                match self.resume_download(&url, &output_path, downloaded_size, progress_callback.clone()).await {
+                    Ok(result) => return Ok(result),
+                    Err(e) => warn!("断点续传失败: {:?}，尝试合并已有分段", e),
                 }
             }
-            // 删除临时文件
+        }
+
+        // 合并分段文件（同步复制，性能优化）
+        use std::fs::{File as StdFile, OpenOptions};
+        use std::io::{copy as io_copy, Seek, SeekFrom};
+
+        // 打开输出文件（不截断，支持追加写入）
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&output_path)?;
+
+        for i in 0..segments {
+            let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
+            let expected_start = i as u64 * chunk_size;
+            let expected_end = if i == segments - 1 {
+                total_size - 1
+            } else {
+                (i + 1) as u64 * chunk_size - 1
+            };
+            let expected_segment_size = expected_end - expected_start + 1;
+
+            // 检查分段文件是否存在且大小合理
+            if let Ok(metadata) = std::fs::metadata(&temp_path) {
+                let actual_size = metadata.len();
+                if actual_size >= expected_segment_size * 90 / 100 {
+                    let mut input = StdFile::open(&temp_path)?;
+
+                    // 移动到正确的写入位置
+                    output.seek(SeekFrom::Start(expected_start))?;
+
+                    // 使用 std::io::copy，操作系统会自动使用大缓冲区
+                    match io_copy(&mut input, &mut output) {
+                        Ok(n) => {
+                            debug!("合并分段 {}: {} bytes", i, n);
+                        }
+                        Err(e) => {
+                            warn!("合并分段 {} 时出错: {:?}", i, e);
+                        }
+                    }
+                } else {
+                    warn!("分段 {} 大小异常: {} (期望 {})", i, actual_size, expected_segment_size);
+                }
+            }
+
             if let Err(e) = tokio::fs::remove_file(&temp_path).await {
-                warn!("删除临时文件 {} 失败: {:?}", temp_path.display(), e);
+                debug!("删除临时文件 {} 失败: {:?}", temp_path.display(), e);
             }
         }
 
-        output_file.flush().await?;
-        drop(output_file);
-        
+        drop(output);
+
+        // 验证最终文件大小
+        if let Ok(final_metadata) = tokio::fs::metadata(&output_path).await {
+            let final_size = final_metadata.len();
+            info!("合并完成: {} bytes (期望: {} bytes)", final_size, total_size);
+
+            if final_size < total_size * 90 / 100 {
+                warn!("最终文件大小异常: {} < {}", final_size, total_size);
+            }
+        }
+
         // TempDir 会在离开作用域时自动清理剩余的临时文件
+
+        // 停止后台进度报告任务
+        download_active.store(false, Ordering::Relaxed);
+        let _ = progress_task.await;
 
         // 通知完成
         let mut final_progress = progress.lock().await;
@@ -344,7 +454,8 @@ impl VideoDownloader {
 
         info!("分段并行下载完成: {}", output_path.display());
 
-        Ok(DownloadResult::success(output_path, total_size, 0.0))
+        let elapsed = start_time.elapsed().as_secs_f64();
+        Ok(DownloadResult::success(output_path, total_size, elapsed))
     }
 
     /// 执行实际下载（内部方法）
@@ -373,7 +484,8 @@ impl VideoDownloader {
         let response = self.client.get(url).send().await?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("下载失败: HTTP {}", response.status()));
+            let status_code = response.status().as_u16();
+            return Err(DownloadError::http(status_code).into());
         }
 
         // 获取内容长度
@@ -549,12 +661,16 @@ impl Default for VideoDownloader {
 }
 
 /// 下载单个分段（用于并行下载）
+#[allow(clippy::too_many_arguments)]
 async fn download_segment(
     client: &Client,
     url: &str,
     output_path: &PathBuf,
     start: u64,
     end: u64,
+    _segment_size: u64,
+    _progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
+    total_downloaded: Option<Arc<AtomicU64>>,
 ) -> Result<u64> {
     let response = client
         .get(url)
@@ -569,15 +685,75 @@ async fn download_segment(
     let mut file = File::create(output_path).await?;
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
+    let start_time = std::time::Instant::now();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
         file.write_all(&chunk).await?;
         downloaded += chunk.len() as u64;
+
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let _speed = if elapsed > 0.0 {
+            downloaded as f64 / elapsed
+        } else {
+            0.0
+        };
+
+        // 更新 total_downloaded（供后台任务统一计算进度）
+        if let Some(ref td) = total_downloaded {
+            td.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+        }
     }
 
     file.flush().await?;
     Ok(downloaded)
+}
+
+/// 带重试的分段下载（使用独立超时控制）
+#[allow(clippy::too_many_arguments)]
+async fn download_segment_with_retry(
+    client: &Client,
+    url: &str,
+    output_path: &PathBuf,
+    start: u64,
+    end: u64,
+    expected_size: u64,
+    retry_count: u32,
+    total_downloaded: Option<Arc<AtomicU64>>,
+    progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
+) -> Result<u64> {
+    let segment_timeout = Duration::from_secs(300); // 5分钟独立超时
+    let segment_size = end - start + 1;
+
+    for attempt in 0..retry_count {
+        if attempt > 0 {
+            let delay = Duration::from_secs(2u64.pow(attempt - 1).min(30));
+            info!("分段 [{}-{}] 重试 {} / {}，等待 {}s", start, end, attempt + 1, retry_count, delay.as_secs());
+            tokio::time::sleep(delay).await;
+        }
+
+        match tokio::time::timeout(segment_timeout, download_segment(client, url, output_path, start, end, segment_size, progress_callback.clone(), total_downloaded.clone())).await {
+            Ok(Ok(size)) => {
+                // 验证下载大小是否合理
+                if size >= expected_size * 90 / 100 {
+                    return Ok(size);
+                } else {
+                    warn!("分段 [{}-{}] 大小异常: {} (期望 {})", start, end, size, expected_size);
+                    if attempt < retry_count - 1 {
+                        continue;
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                warn!("分段 [{}-{}] 下载错误: {:?}", start, end, e);
+            }
+            Err(_) => {
+                warn!("分段 [{}-{}] 超时 ({}s)", start, end, segment_timeout.as_secs());
+            }
+        }
+    }
+
+    Err(anyhow!("分段 [{}-{}] 下载失败，已重试 {} 次", start, end, retry_count))
 }
 
 /// 解析 yt-dlp 进度输出

@@ -290,3 +290,33 @@ pub struct ChunkedDownloader {
 - `serde` - 序列化
 - `anyhow` - 错误处理
 - `chrono` - 时间处理
+
+---
+
+## GitNexus 代码分析
+
+项目已集成 GitNexus 知识图谱分析工具，可帮助理解复杂代码结构。
+
+### OrbStack + GitNexus 配置
+
+| 项目 | 说明 |
+|------|------|
+| **OrbStack** | Docker 替代品，运行 Linux 容器 |
+| **GitNexus Skills** | 8 个 skills 在 `~/.claude/skills/` |
+| **索引状态** | 1,292 nodes, 2,827 edges, 38 clusters |
+
+### 分析命令
+
+```bash
+# 重新分析项目（需要 OrbStack）
+docker run --rm -v /Users/hgxszhj/x_videos-dowloads:/repo -w /repo ghcr.io/abhigyanpatwari/gitnexus:latest node /app/gitnexus/dist/cli/index.js analyze
+```
+
+### Claude Code Skills
+
+- `gitnexus-cli` - 分析、状态命令
+- `gitnexus-exploring` - 代码探索
+- `gitnexus-debugging` - 调试分析
+- `gitnexus-refactoring` - 重构分析
+
+触发条件：提到"分析代码结构"、"理解项目依赖"时使用。

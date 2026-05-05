@@ -8,8 +8,158 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use tracing::{info, warn};
 
+/// 防爬设置（bundled to reduce boilerplate）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct AntiCrawlerSettings {
+    rotate_user_agent: bool,
+    use_accept_language: bool,
+    use_referer: bool,
+    referer_domain: Option<String>,
+    use_chrome_headers: bool,
+    tls_fingerprint: String,
+    requires_js_rendering: bool,
+    detect_js_fingerprint: bool,
+    clear_cookies_on_failure: bool,
+}
+
+impl AntiCrawlerSettings {
+    fn chrome() -> Self {
+        Self {
+            rotate_user_agent: true,
+            use_accept_language: true,
+            use_referer: true,
+            referer_domain: Some("https://x.com".to_string()),
+            use_chrome_headers: true,
+            tls_fingerprint: "chrome".to_string(),
+            requires_js_rendering: false,
+            detect_js_fingerprint: false,
+            clear_cookies_on_failure: true,
+        }
+    }
+
+    fn none() -> Self {
+        Self {
+            rotate_user_agent: false,
+            use_accept_language: false,
+            use_referer: false,
+            referer_domain: None,
+            use_chrome_headers: false,
+            tls_fingerprint: "normal".to_string(),
+            requires_js_rendering: false,
+            detect_js_fingerprint: false,
+            clear_cookies_on_failure: false,
+        }
+    }
+
+    fn js_aware() -> Self {
+        Self {
+            rotate_user_agent: true,
+            use_accept_language: true,
+            use_referer: false,
+            referer_domain: None,
+            use_chrome_headers: true,
+            tls_fingerprint: "chrome".to_string(),
+            requires_js_rendering: true,
+            detect_js_fingerprint: true,
+            clear_cookies_on_failure: true,
+        }
+    }
+}
+
+/// 网站配置模板
+enum ProfileTemplate {
+    Cloudflare { delay_ms: u32, thread_limit: bool },
+    None,
+    RateLimit { delay_ms: u32 },
+    Auth { delay_ms: u32 },
+    JavaScript,
+}
+
+impl ProfileTemplate {
+    fn build(&self, domain: &str) -> WebsiteProfile {
+        let (anti_crawler_type, adaptive_threads, max_threads, speed_threshold_bps, anti_settings, requires_auth, recommended_delay_ms) = match self {
+            Self::Cloudflare { delay_ms, thread_limit } => (
+                AntiCrawlerType::Cloudflare,
+                true,
+                if *thread_limit { 4 } else { 6 },
+                500 * 1024,
+                AntiCrawlerSettings::chrome(),
+                false,
+                *delay_ms,
+            ),
+            Self::None => (
+                AntiCrawlerType::None,
+                true,
+                6,
+                600 * 1024,
+                AntiCrawlerSettings::none(),
+                false,
+                0,
+            ),
+            Self::RateLimit { delay_ms } => (
+                AntiCrawlerType::RateLimit,
+                true,
+                6,
+                800 * 1024,
+                AntiCrawlerSettings::none(),
+                false,
+                *delay_ms,
+            ),
+            Self::Auth { delay_ms } => (
+                AntiCrawlerType::Cloudflare,
+                true,
+                4,
+                500 * 1024,
+                AntiCrawlerSettings::chrome(),
+                true,
+                *delay_ms,
+            ),
+            Self::JavaScript => (
+                AntiCrawlerType::JavaScript,
+                true,
+                4,
+                500 * 1024,
+                AntiCrawlerSettings::js_aware(),
+                false,
+                500,
+            ),
+        };
+
+        let anti = anti_settings;
+        WebsiteProfile {
+            domain: domain.to_string(),
+            adaptive_threads,
+            min_threads: 2,
+            max_threads,
+            speed_threshold_bps,
+            avg_speed_bps: 0,
+            success_count: 0,
+            failure_count: 0,
+            last_visited: 0,
+            has_thread_limit: matches!(self, Self::Cloudflare { thread_limit: true, .. })
+                || matches!(self, Self::Auth { .. }),
+            has_speed_limit: matches!(self, Self::Cloudflare { thread_limit: true, .. })
+                || matches!(self, Self::Auth { .. }),
+            anti_crawler_type,
+            requires_auth,
+            recommended_delay_ms,
+            rotate_user_agent: anti.rotate_user_agent,
+            use_accept_language: anti.use_accept_language,
+            use_referer: anti.use_referer,
+            referer_domain: anti.referer_domain,
+            use_chrome_headers: anti.use_chrome_headers,
+            tls_fingerprint: anti.tls_fingerprint,
+            use_proxy_rotation: false,
+            proxy_rotation_interval_s: 60,
+            requires_js_rendering: anti.requires_js_rendering,
+            detect_js_fingerprint: anti.detect_js_fingerprint,
+            clear_cookies_on_failure: anti.clear_cookies_on_failure,
+        }
+    }
+}
+
 /// 网站特征
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebsiteProfile {
     /// 网站域名
     pub domain: String,
@@ -41,11 +191,34 @@ pub struct WebsiteProfile {
     pub recommended_delay_ms: u32,
     /// 需要User-Agent轮换
     pub rotate_user_agent: bool,
+
+    // ===== 反爬虫规避字段 =====
+    /// 需要 Accept-Language 头
+    pub use_accept_language: bool,
+    /// 需要 Referer 头
+    pub use_referer: bool,
+    /// 防盗链目标域名
+    pub referer_domain: Option<String>,
+    /// 需要额外的浏览器指纹头（Sec-CH-UA 等）
+    pub use_chrome_headers: bool,
+    /// TLS JA3 指纹类型
+    pub tls_fingerprint: String,
+    /// 是否使用代理轮换
+    pub use_proxy_rotation: bool,
+    /// 代理轮换间隔（秒）
+    pub proxy_rotation_interval_s: u32,
+    /// 需要 JavaScript 渲染
+    pub requires_js_rendering: bool,
+    /// 检测 JS 指纹
+    pub detect_js_fingerprint: bool,
+    /// 失败后清除 Cookie 重试
+    pub clear_cookies_on_failure: bool,
 }
 
 /// 防爬机制类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AntiCrawlerType {
+    #[default]
     /// 无已知防爬
     None,
     /// Cloudflare保护
@@ -72,7 +245,7 @@ impl WebsiteProfile {
             adaptive_threads: true,
             min_threads: 2,
             max_threads: 8,
-            speed_threshold_bps: 500 * 1024, // 500KB/s
+            speed_threshold_bps: 500 * 1024,
             avg_speed_bps: 0,
             success_count: 0,
             failure_count: 0,
@@ -83,6 +256,16 @@ impl WebsiteProfile {
             requires_auth: false,
             recommended_delay_ms: 0,
             rotate_user_agent: false,
+            use_accept_language: false,
+            use_referer: false,
+            referer_domain: None,
+            use_chrome_headers: false,
+            tls_fingerprint: "normal".to_string(),
+            use_proxy_rotation: false,
+            proxy_rotation_interval_s: 60,
+            requires_js_rendering: false,
+            detect_js_fingerprint: false,
+            clear_cookies_on_failure: false,
         }
     }
 
@@ -123,19 +306,6 @@ impl WebsiteProfile {
         }
     }
 
-    /// 检测速度限制
-    pub fn detect_speed_limit(&mut self, measured_bps: u64) {
-        // 如果测量速度远低于平均速度，可能被限速
-        if self.avg_speed_bps > 0 && measured_bps < self.avg_speed_bps / 3 {
-            self.has_speed_limit = true;
-            self.speed_threshold_bps = ((measured_bps as f64 * 0.8) as u64).max(1024);
-            info!("网站 {} 检测到速度限制，阈值调整为 {:.1} KB/s",
-                self.domain,
-                self.speed_threshold_bps as f64 / 1024.0
-            );
-        }
-    }
-
     /// 获取推荐配置
     pub fn recommended_config(&self) -> (u32, u32, u64) {
         let threads = if self.has_thread_limit {
@@ -157,519 +327,67 @@ impl WebsiteProfile {
     }
 }
 
-/// 默认网站特征表（已知网站的推荐配置）
-fn get_default_profiles() -> HashMap<String, WebsiteProfile> {
-    let mut defaults = HashMap::new();
+/// 根据域名获取默认配置（懒加载）
+fn get_profile_for_domain(domain: &str) -> Option<WebsiteProfile> {
+    let template = match domain {
+        // ===== 社交媒体视频 =====
+        "video.twimg.com" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
+        "api.fxtwitter.com" => return Some(WebsiteProfile {
+            domain: domain.to_string(),
+            adaptive_threads: false,
+            min_threads: 1,
+            max_threads: 2,
+            speed_threshold_bps: 1024 * 1024,
+            ..Default::default()
+        }),
+        "v.redd.it" | "preview.redd.it" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
 
-    // ===== 社交媒体视频 =====
-    // Twitter/X video CDN - Cloudflare保护
-    defaults.insert("video.twimg.com".to_string(), WebsiteProfile {
-        domain: "video.twimg.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: true,
-        has_speed_limit: true,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
+        // ===== 代码托管社区 =====
+        "github.com" => ProfileTemplate::RateLimit { delay_ms: 1000 },
+        "githubusercontent.com" => ProfileTemplate::None,
 
-    // FxTwitter API - 无防爬
-    defaults.insert("api.fxtwitter.com".to_string(), WebsiteProfile {
-        domain: "api.fxtwitter.com".to_string(),
-        adaptive_threads: false,
-        min_threads: 1,
-        max_threads: 2,
-        speed_threshold_bps: 1024 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
+        // ===== 博客平台 =====
+        "medium.com" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
+        "substack.com" | "wordpress.com" | "blogspot.com" => ProfileTemplate::None,
+        "tumblr.com" => ProfileTemplate::Auth { delay_ms: 1000 },
 
-    // Reddit视频 - Cloudflare + RateLimit
-    defaults.insert("v.redd.it".to_string(), WebsiteProfile {
-        domain: "v.redd.it".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: true,
-        has_speed_limit: true,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
+        // ===== 视频平台 =====
+        "youtube.com" | "youtu.be" => ProfileTemplate::RateLimit { delay_ms: 500 },
+        "twitch.tv" => ProfileTemplate::Cloudflare { delay_ms: 1000, thread_limit: true },
+        "vimeo.com" | "dailymotion.com" => ProfileTemplate::None,
 
-    defaults.insert("preview.redd.it".to_string(), WebsiteProfile {
-        domain: "preview.redd.it".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: true,
-        has_speed_limit: true,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
+        // ===== 社区论坛 =====
+        "reddit.com" => ProfileTemplate::Auth { delay_ms: 1000 },
+        "stackoverflow.com" => ProfileTemplate::None,
+        "disqus.com" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false },
 
-    // ===== 代码托管社区 =====
-    // GitHub - 基本无防爬，但有RateLimit
-    defaults.insert("github.com".to_string(), WebsiteProfile {
-        domain: "github.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 6,
-        speed_threshold_bps: 800 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::RateLimit,
-        requires_auth: false,
-        recommended_delay_ms: 1000,
-        rotate_user_agent: false,
-    });
+        // ===== 新闻媒体 =====
+        "bbc.com" => ProfileTemplate::None,
+        "cnn.com" | "theguardian.com" | "washingtonpost.com" => {
+            ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false }
+        }
+        "nytimes.com" => ProfileTemplate::Auth { delay_ms: 1000 },
 
-    defaults.insert("githubusercontent.com".to_string(), WebsiteProfile {
-        domain: "githubusercontent.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 6,
-        speed_threshold_bps: 800 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
+        // ===== 社交平台（通配符匹配） =====
+        s if s.ends_with(".facebook.com") => ProfileTemplate::Auth { delay_ms: 1000 },
+        s if s.ends_with(".instagram.com") => ProfileTemplate::Auth { delay_ms: 1000 },
+        s if s.ends_with(".youtube.com") => ProfileTemplate::RateLimit { delay_ms: 500 },
+        s if s.ends_with(".tiktok.com") => ProfileTemplate::JavaScript,
+        s if s.ends_with(".pinterest.com") => {
+            ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false }
+        }
+        s if s.ends_with(".linkedin.com") => ProfileTemplate::Auth { delay_ms: 1000 },
+        s if s.ends_with(".x.com") => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
 
-    // ===== 博客平台 =====
-    // Medium - Cloudflare + JS挑战
-    defaults.insert("medium.com".to_string(), WebsiteProfile {
-        domain: "medium.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: true,
-        has_speed_limit: true,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
+        // ===== 通配符（默认配置） =====
+        s if s.ends_with(".com") || s.ends_with(".org") || s.ends_with(".net") => {
+            ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false }
+        }
 
-    defaults.insert("substack.com".to_string(), WebsiteProfile {
-        domain: "substack.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
-
-    defaults.insert("wordpress.com".to_string(), WebsiteProfile {
-        domain: "wordpress.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 400 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
-
-    defaults.insert("blogspot.com".to_string(), WebsiteProfile {
-        domain: "blogspot.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 400 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
-
-    defaults.insert("tumblr.com".to_string(), WebsiteProfile {
-        domain: "tumblr.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 400 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: true,
-        recommended_delay_ms: 1000,
-        rotate_user_agent: true,
-    });
-
-    // ===== 视频平台 =====
-    // YouTube - 无防爬但有RateLimit
-    defaults.insert("youtube.com".to_string(), WebsiteProfile {
-        domain: "youtube.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 8,
-        speed_threshold_bps: 1024 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::RateLimit,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: false,
-    });
-
-    defaults.insert("youtu.be".to_string(), WebsiteProfile {
-        domain: "youtu.be".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 8,
-        speed_threshold_bps: 1024 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::RateLimit,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: false,
-    });
-
-    // Twitch - Cloudflare + RateLimit
-    defaults.insert("twitch.tv".to_string(), WebsiteProfile {
-        domain: "twitch.tv".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 6,
-        speed_threshold_bps: 800 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: true,
-        has_speed_limit: true,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 1000,
-        rotate_user_agent: true,
-    });
-
-    defaults.insert("vimeo.com".to_string(), WebsiteProfile {
-        domain: "vimeo.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 6,
-        speed_threshold_bps: 800 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
-
-    defaults.insert("dailymotion.com".to_string(), WebsiteProfile {
-        domain: "dailymotion.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    // ===== 社区论坛 =====
-    // Reddit - Cloudflare + RateLimit + 需要Cookie
-    defaults.insert("reddit.com".to_string(), WebsiteProfile {
-        domain: "reddit.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: true,
-        has_speed_limit: true,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: true,
-        recommended_delay_ms: 1000,
-        rotate_user_agent: true,
-    });
-
-    // StackOverflow - 基本无防爬
-    defaults.insert("stackoverflow.com".to_string(), WebsiteProfile {
-        domain: "stackoverflow.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 400 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
-
-    // Disqus - Cloudflare
-    defaults.insert("disqus.com".to_string(), WebsiteProfile {
-        domain: "disqus.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 400 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    // ===== 新闻媒体 =====
-    // BBC - 基本无防爬
-    defaults.insert("bbc.com".to_string(), WebsiteProfile {
-        domain: "bbc.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 600 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::None,
-        requires_auth: false,
-        recommended_delay_ms: 0,
-        rotate_user_agent: false,
-    });
-
-    // CNN - Cloudflare
-    defaults.insert("cnn.com".to_string(), WebsiteProfile {
-        domain: "cnn.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 600 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    // NYTimes - Cloudflare + 需要Cookie
-    defaults.insert("nytimes.com".to_string(), WebsiteProfile {
-        domain: "nytimes.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: true,
-        has_speed_limit: true,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: true,
-        recommended_delay_ms: 1000,
-        rotate_user_agent: true,
-    });
-
-    // The Guardian - Cloudflare
-    defaults.insert("theguardian.com".to_string(), WebsiteProfile {
-        domain: "theguardian.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    // Washington Post - Cloudflare
-    defaults.insert("washingtonpost.com".to_string(), WebsiteProfile {
-        domain: "washingtonpost.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 500 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    // ===== 通配符（默认配置） =====
-    defaults.insert("*.com".to_string(), WebsiteProfile {
-        domain: "*.com".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 300 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    defaults.insert("*.org".to_string(), WebsiteProfile {
-        domain: "*.org".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 300 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    defaults.insert("*.net".to_string(), WebsiteProfile {
-        domain: "*.net".to_string(),
-        adaptive_threads: true,
-        min_threads: 2,
-        max_threads: 4,
-        speed_threshold_bps: 300 * 1024,
-        avg_speed_bps: 0,
-        success_count: 0,
-        failure_count: 0,
-        last_visited: 0,
-        has_thread_limit: false,
-        has_speed_limit: false,
-        anti_crawler_type: AntiCrawlerType::Cloudflare,
-        requires_auth: false,
-        recommended_delay_ms: 500,
-        rotate_user_agent: true,
-    });
-
-    defaults
+        // 未知域名，返回 None（将使用默认配置）
+        _ => return None,
+    };
+    Some(template.build(domain))
 }
 
 /// 获取当前时间戳
@@ -702,27 +420,24 @@ impl WebsiteProfileStore {
         self.profiles.read().unwrap().get(domain).cloned()
     }
 
-    /// 获取或创建特征
+    /// 获取或创建特征（懒加载方式）- 使用双检查锁定避免 TOCTOU 竞态
     pub fn get_or_create(&self, domain: &str) -> WebsiteProfile {
-        // 先精确匹配
+        // 先精确匹配（检查内存中是否已有）- 第一次检查
         if let Some(profile) = self.profiles.read().unwrap().get(domain) {
             return profile.clone();
         }
 
-        // 再尝试通配符匹配
-        let profiles = self.profiles.read().unwrap();
-        for (key, profile) in profiles.iter() {
-            if key.starts_with("*.") {
-                let suffix = &key[1..];
-                if domain.ends_with(suffix) {
-                    return profile.clone();
-                }
-            }
-        }
+        // 获取默认配置
+        let new_profile = get_profile_for_domain(domain)
+            .unwrap_or_else(|| WebsiteProfile::from_domain(domain));
 
-        // 没有匹配，创建新特征
-        drop(profiles);
-        WebsiteProfile::from_domain(domain)
+        // 使用写锁插入 - 第二次检查（在写锁内）
+        let mut profiles = self.profiles.write().unwrap();
+        if let Some(existing) = profiles.get(domain) {
+            return existing.clone();
+        }
+        profiles.insert(domain.to_string(), new_profile.clone());
+        new_profile
     }
 
     /// 更新特征
@@ -751,13 +466,6 @@ impl WebsiteProfileStore {
         self.update(profile);
     }
 
-    /// 检测速度限制
-    pub fn check_speed_limit(&self, domain: &str, measured_bps: u64) {
-        let mut profile = self.get_or_create(domain);
-        profile.detect_speed_limit(measured_bps);
-        self.update(profile);
-    }
-
     /// 从URL提取域名
     pub fn extract_domain(url: &str) -> String {
         // 简单提取域名
@@ -783,18 +491,16 @@ impl WebsiteProfileStore {
 
     /// 从磁盘加载
     fn load(&mut self) {
-        // 先加载默认配置
-        let defaults = get_default_profiles();
-        *self.profiles.write().unwrap() = defaults;
+        // 初始化空 HashMap，配置将在访问时懒加载
+        *self.profiles.write().unwrap() = HashMap::new();
 
         if !self.store_path.exists() {
-            info!("使用默认网站特征配置");
+            info!("网站特征库为空，首次访问时将自动加载默认配置");
             return;
         }
 
         if let Ok(json) = std::fs::read_to_string(&self.store_path) {
             if let Ok(profiles) = serde_json::from_str::<HashMap<String, WebsiteProfile>>(&json) {
-                // 合并：用户配置覆盖默认配置
                 let mut store = self.profiles.write().unwrap();
                 for (domain, profile) in profiles {
                     store.insert(domain, profile);
@@ -802,21 +508,6 @@ impl WebsiteProfileStore {
                 info!("已加载网站特征: {} 个网站", store.len());
             }
         }
-    }
-
-    /// 列出所有已知网站
-    pub fn list_domains(&self) -> Vec<String> {
-        self.profiles.read().unwrap().keys().cloned().collect()
-    }
-
-    /// 获取统计信息
-    pub fn stats(&self) -> (usize, usize) {
-        let profiles = self.profiles.read().unwrap();
-        let known = profiles.len();
-        let with_limits = profiles.values()
-            .filter(|p| p.has_thread_limit || p.has_speed_limit)
-            .count();
-        (known, with_limits)
     }
 }
 
@@ -851,19 +542,19 @@ pub fn get_recommended_config(url: &str) -> (bool, u32, u32, u64) {
     let domain = WebsiteProfileStore::extract_domain(url);
     let store = get_profile_store();
 
-    let profile = store.read().unwrap().get(&domain);
+    // 使用 get_or_create 实现懒加载
+    let profile = store.read().unwrap().get(&domain)
+        .or_else(|| get_profile_for_domain(&domain))
+        .unwrap_or_else(|| WebsiteProfile::from_domain(&domain));
 
-    match profile {
-        Some(p) if p.confidence() > 0.5 => {
-            let (min, max, threshold) = p.recommended_config();
-            info!("使用已知配置 {}: min={}, max={}, threshold={:.1}KB/s, 可信度={:.1}%",
-                domain, min, max, threshold as f64 / 1024.0, p.confidence() * 100.0);
-            (p.adaptive_threads, min, max, threshold)
-        }
-        _ => {
-            info!("使用默认配置: {}", domain);
-            (true, 2, 8, 500 * 1024)
-        }
+    if profile.confidence() > 0.5 {
+        let (min, max, threshold) = profile.recommended_config();
+        info!("使用已知配置 {}: min={}, max={}, threshold={:.1}KB/s, 可信度={:.1}%",
+            domain, min, max, threshold as f64 / 1024.0, profile.confidence() * 100.0);
+        (profile.adaptive_threads, min, max, threshold)
+    } else {
+        info!("使用默认配置: {}", domain);
+        (true, 2, 8, 500 * 1024)
     }
 }
 

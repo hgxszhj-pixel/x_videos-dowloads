@@ -185,3 +185,77 @@ src/
 **核心洞见**: 过度复杂的代码往往遵循设计模式和最佳实践。问题在于**时机**：在需要之前添加复杂性会导致代码更难理解、引入更多 bug、花更长时间实现、更难测试。
 
 **好代码是简单解决今天问题的代码，而非提前解决明天问题的代码。**
+
+---
+
+# Slint GUI 进度条开发禁则
+
+## 进度回调架构
+
+| 错误做法 | 正确做法 |
+|----------|----------|
+| `download_segment()` 直接发送回调 | 只更新 `total_downloaded`，由后台任务统一计算 |
+| 回调中使用 `percent * 10000.0` 存储 | 使用 `percent * 100.0` 存储到 `AtomicU32` |
+| UI 线程用 `10000` 作为终止条件 | UI 线程用 `100` 作为终止条件 |
+| 进度计算用 `segment_size * 4` | 后台任务用 `total_downloaded` 和 `total_size` |
+
+## Slint UI 编写
+
+| 错误做法 | 正确做法 |
+|----------|----------|
+| `font-family: "PingFang SC, Microsoft YaHei"` | `font-family: "PingFang SC"` (单个字体) |
+| 同时使用 `width: 700px` 和 `min_width: 500px` | 只用 `min_width` 或只改 `width` |
+| `Rectangle { width: root.download-progress * parent.width }` | 用 `HorizontalLayout { alignment: start }` 包裹 |
+
+## 验证清单
+
+修改 GUI 进度代码后必须验证：
+1. `download_segment()` 只更新 `total_downloaded`，不发回调
+2. 存储格式：`progress_arc.store((p.percent * 100.0) as u32)`
+3. UI 更新：`progress_arc.load() as f32 / 100.0`
+4. 终止条件：`while progress_arc_for_update.load(...) < 100`
+5. 进度条容器使用 `HorizontalLayout { alignment: start }`
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **x_videos-dowloads** (1292 symbols, 2827 relationships, 113 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/x_videos-dowloads/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/x_videos-dowloads/clusters` | All functional areas |
+| `gitnexus://repo/x_videos-dowloads/processes` | All execution flows |
+| `gitnexus://repo/x_videos-dowloads/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

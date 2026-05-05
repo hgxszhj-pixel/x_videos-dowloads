@@ -1,7 +1,9 @@
 export component AppWindow inherits Window {
     title: "X Video Downloader";
-    width: 700px;
-    height: 650px;
+    min_width: 500px;
+    max_width: 1200px;
+    min_height: 500px;
+    max_height: 900px;
 
     in-out property <string> url: "";
     in-out property <string> output-dir: "";
@@ -13,27 +15,69 @@ export component AppWindow inherits Window {
     in-out property <bool> is-fetching: false;
     in-out property <bool> is-downloading: false;
     in-out property <float> download-progress: 0.0;
+    in-out property <string> download-speed: "";
+    in-out property <string> download-eta: "";
+    in-out property <string> download-threads: "";
     in-out property <string> status-message: "Enter video URL";
+    in-out property <string> network-status: "离线";
     in-out property <string> error-message: "";
+    in-out property <string> error-action: "";
     in-out property <bool> has-video-info: false;
 
     callback fetch-info();
     callback start-download();
+    callback cancel-download();
     callback save-config();
     callback browse-cookie();
+    callback clear-url();
     callback tick();
+    callback check-network();
 
     VerticalLayout {
         padding: 24px;
         spacing: 16px;
-        alignment: start;
 
-        // Header
-        Text {
-            text: "X Video Downloader";
-            font-size: 28px;
-            font-weight: 700;
-            horizontal-alignment: center;
+        // Header with Network Status
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                text: "X Video Downloader";
+                font-size: 28px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            // Network Status Indicator (fixed size)
+            Rectangle {
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.network-status == "Online" ? #34a853 : (root.network-status == "Checking" ? #f9a825 : #c62828);
+                background: root.network-status == "Online" ? #e8f5e9 : (root.network-status == "Checking" ? #fff8e1 : #ffebee);
+                height: 36px;
+                width: 120px;
+                horizontal-stretch: 0;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    alignment: center;
+                    // Status Icon
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 6px;
+                        background: root.network-status == "Online" ? #34a853 : (root.network-status == "Checking" ? #f9a825 : #c62828);
+                    }
+                    // Status Text
+                    Text {
+                        text: root.network-status;
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: root.network-status == "Online" ? #2e7d32 : (root.network-status == "Checking" ? #f57f17 : #c62828);
+                        vertical-alignment: center;
+                    }
+                }
+            }
         }
 
         // URL Section
@@ -74,7 +118,8 @@ export component AppWindow inherits Window {
             Rectangle {
                 background: root.is-fetching ? #cccccc : #4285f4;
                 border-radius: 6px;
-                horizontal-stretch: 1;
+                width: 140px;
+                horizontal-stretch: 0;
                 Text {
                     text: root.is-fetching ? "Fetching..." : "Fetch Info";
                     color: white;
@@ -92,7 +137,8 @@ export component AppWindow inherits Window {
             Rectangle {
                 background: root.is-downloading || !root.has-video-info ? #cccccc : #34a853;
                 border-radius: 6px;
-                horizontal-stretch: 1;
+                width: 140px;
+                horizontal-stretch: 0;
                 Text {
                     text: root.is-downloading ? "Downloading..." : "Download";
                     color: white;
@@ -106,15 +152,48 @@ export component AppWindow inherits Window {
                     enabled: !root.is-downloading && root.has-video-info;
                 }
             }
+
+            Rectangle {
+                background: #4285f4;
+                border-radius: 6px;
+                width: 120px;
+                horizontal-stretch: 0;
+                TouchArea { clicked => { root.save-config(); } }
+                Text {
+                    text: "Save";
+                    color: white;
+                    font-size: 14px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle {
+                background: #666666;
+                border-radius: 6px;
+                width: 80px;
+                horizontal-stretch: 0;
+                TouchArea { clicked => { root.clear-url(); } }
+                Text {
+                    text: "Clear";
+                    color: white;
+                    font-size: 14px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
         }
 
         // Video Info Section
-        if root.has-video-info: Rectangle {
+        Rectangle {
+            visible: root.has-video-info;
             background: #f8f9fa;
             border-radius: 8px;
-            padding: 16px;
             VerticalLayout {
                 spacing: 8px;
+                padding: 16px;
                 Text {
                     text: "Video Information";
                     font-size: 16px;
@@ -125,27 +204,31 @@ export component AppWindow inherits Window {
                     text: "Title: " + root.video-title;
                     font-size: 13px;
                     color: #555;
+                    font-family: "PingFang SC";
                 }
                 Text {
                     text: "Uploader: " + root.video-uploader;
                     font-size: 13px;
                     color: #555;
+                    font-family: "PingFang SC";
                 }
                 Text {
                     text: "Duration: " + root.video-duration;
                     font-size: 13px;
                     color: #555;
+                    font-family: "PingFang SC";
                 }
             }
         }
 
         // Progress Section
-        if root.is-downloading: Rectangle {
+        Rectangle {
+            visible: root.is-downloading;
             background: #e8f5e9;
             border-radius: 8px;
-            padding: 16px;
             VerticalLayout {
                 spacing: 12px;
+                padding: 16px;
                 Text {
                     text: "Downloading... " + root.download-progress * 100 + "%";
                     font-size: 14px;
@@ -155,12 +238,49 @@ export component AppWindow inherits Window {
                 Rectangle {
                     background: #ddd;
                     border-radius: 4px;
-                    height: 24px;
-                    Rectangle {
-                        background: #34a853;
-                        border-radius: 4px;
-                        width: root.download-progress * parent.width;
-                        height: parent.height;
+                    height: 14px;
+                    HorizontalLayout {
+                        alignment: start;
+                        Rectangle {
+                            background: #34a853;
+                            border-radius: 4px;
+                            width: root.download-progress * parent.width;
+                            height: parent.height;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    Text {
+                        text: "Speed: " + root.download-speed;
+                        font-size: 12px;
+                        color: #555;
+                    }
+                    Text {
+                        text: "ETA: " + root.download-eta;
+                        font-size: 12px;
+                        color: #555;
+                    }
+                    Text {
+                        text: "Threads: " + root.download-threads;
+                        font-size: 12px;
+                        color: #555;
+                    }
+                }
+                // Cancel Button
+                Rectangle {
+                    background: #c62828;
+                    border-radius: 6px;
+                    height: 36px;
+                    width: 100px;
+                    TouchArea { clicked => { root.cancel-download(); } }
+                    Text {
+                        text: "Cancel";
+                        color: white;
+                        font-size: 14px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }
@@ -175,14 +295,23 @@ export component AppWindow inherits Window {
         }
 
         // Error Message
-        if root.error-message != "": Rectangle {
+        Rectangle {
+            visible: root.error-message != "";
             background: #ffebee;
             border-radius: 6px;
-            padding: 12px;
-            Text {
-                text: root.error-message;
-                font-size: 13px;
-                color: #c62828;
+            VerticalLayout {
+                spacing: 6px;
+                padding: 12px;
+                Text {
+                    text: root.error-message;
+                    font-size: 13px;
+                    color: #c62828;
+                }
+                if root.error-action != "": Text {
+                    text: "Tip: " + root.error-action;
+                    font-size: 12px;
+                    color: #1976d2;
+                }
             }
         }
 
@@ -190,9 +319,9 @@ export component AppWindow inherits Window {
         Rectangle {
             background: #f5f5f5;
             border-radius: 8px;
-            padding: 16px;
             VerticalLayout {
                 spacing: 12px;
+                padding: 16px;
                 Text {
                     text: "Settings";
                     font-size: 16px;
@@ -262,21 +391,6 @@ export component AppWindow inherits Window {
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }
-                    }
-                }
-
-                Rectangle {
-                    background: #4285f4;
-                    border-radius: 6px;
-                    height: 40px;
-                    TouchArea { clicked => { root.save-config(); } }
-                    Text {
-                        text: "Save Settings";
-                        color: white;
-                        font-size: 14px;
-                        font-weight: 600;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
                     }
                 }
             }
