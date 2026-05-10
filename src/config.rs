@@ -58,6 +58,14 @@ pub struct AppConfig {
     /// 日志级别
     #[serde(default = "default_log_level")]
     pub log_level: String,
+
+    /// DouYin msToken (从浏览器登录后获取)
+    #[serde(default)]
+    pub douyin_ms_token: Option<String>,
+
+    /// DouYin Cookie 文件路径 (用于完整登录认证)
+    #[serde(default)]
+    pub douyin_cookie_file: Option<PathBuf>,
 }
 
 fn default_output_dir() -> PathBuf {
@@ -105,6 +113,8 @@ impl Default for AppConfig {
             server_addr: default_server_addr(),
             device_name: default_device_name(),
             log_level: default_log_level(),
+            douyin_ms_token: None,
+            douyin_cookie_file: None,
         }
     }
 }
@@ -116,21 +126,40 @@ impl AppConfig {
             .map(|proj| proj.config_dir().join("config.toml"))
     }
 
-    /// 从配置文件加载
+    /// 从配置文件和环境变量加载
+    /// 环境变量优先级: DOUYIN_MS_TOKEN > 配置文件
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path();
 
         if let Some(path) = config_path {
             if path.exists() {
                 let content = std::fs::read_to_string(&path)?;
-                let config: AppConfig = toml::from_str(&content)?;
+                let mut config: AppConfig = toml::from_str(&content)?;
                 tracing::debug!("已加载配置文件: {:?}", path);
+
+                // 环境变量覆盖配置文件
+                if let Ok(token) = std::env::var("DOUYIN_MS_TOKEN") {
+                    if !token.is_empty() {
+                        config.douyin_ms_token = Some(token);
+                        tracing::info!("已从环境变量加载 DouYin msToken");
+                    }
+                }
+
                 return Ok(config);
             }
         }
 
+        // 无配置文件时，也检查环境变量
+        let mut config = Self::default();
+        if let Ok(token) = std::env::var("DOUYIN_MS_TOKEN") {
+            if !token.is_empty() {
+                config.douyin_ms_token = Some(token);
+                tracing::info!("已从环境变量加载 DouYin msToken");
+            }
+        }
+
         tracing::debug!("未找到配置文件，使用默认配置");
-        Ok(Self::default())
+        Ok(config)
     }
 
     /// 保存配置到文件

@@ -8,6 +8,8 @@ mod downloader;
 mod fxtwitter;
 mod gui;
 mod history;
+mod i18n;
+mod resolvers;
 mod scrapling_client;
 mod scrapling_extractor;
 mod types;
@@ -23,6 +25,7 @@ use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
+use crate::resolvers::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver};
 use crate::collaboration::server::ws::WsServer;
 use crate::collaboration::CollaborationClient;
 use crate::config::AppConfig;
@@ -283,7 +286,7 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
             // 直接下载模式
             None
         } else {
-            Some(get_video_info(&ytdlp, url, &cli).await?)
+            Some(get_video_info(&ytdlp, url, &cli, &config).await?)
         };
 
         // 显示格式列表
@@ -300,14 +303,14 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
             let result = download_direct(url, &cli, start_time).await?;
             // 记录到历史
             if result.success {
-                history.add_entry(url.clone(), None, Some(result.output_path.clone()), Some(result.file_size), None)?;
+                history.add_entry(url.clone(), None, Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
             }
         } else if let Some(ref info) = video_info {
             // 使用 yt-dlp 下载
             download_with_ytdlp(&ytdlp, info, &cli, &config, start_time).await?;
             // 记录到历史（duration 转换为 f64）
             let duration_secs = info.duration.map(|d| d as f64);
-            history.add_entry(url.clone(), Some(info.title.clone()), None, None, duration_secs)?;
+            history.add_entry(url.clone(), Some(info.title.clone()), None, None, duration_secs, history::DownloadStatus::Completed, None)?;
         }
     }
 
@@ -317,11 +320,44 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
     Ok(())
 }
 
-/// 获取视频信息（尝试 yt-dlp，失败则使用 FxTwitter，最后尝试 Scrapling）
-async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo> {
+/// 获取视频信息（使用 ResolverRegistry 统一调度）
+async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig) -> Result<VideoInfo> {
+    // 创建 ResolverRegistry 并注册所有解析器
+    let mut registry = ResolverRegistry::new();
+
+    // 创建 DouYinResolver 并注入 msToken
+    let mut douyin_resolver = DouYinResolver::new();
+    if let Some(ref ms_token) = config.douyin_ms_token {
+        let mut tokens = std::collections::HashMap::new();
+        tokens.insert("msToken".to_string(), ms_token.clone());
+        douyin_resolver = douyin_resolver.with_tokens(tokens);
+    }
+    registry.register(douyin_resolver);
+
+    // 优先使用 DouYin cookie 文件（如果配置了）
+    let dy_cookie_file = config.douyin_cookie_file.clone();
+
+    registry.register(TikTokResolver::new());
+    registry.register(BilibiliResolver::new());
+
+    // 使用 ResolverRegistry 选择合适的解析器
+    let resolver = registry.select_resolver(url);
+    info!("使用解析器: {:?}", resolver.platform());
+
+    // 尝试解析器获取视频信息
+    match resolver.get_video_info(url) {
+        Ok(info) => {
+            info!("Resolver 解析成功!");
+            return Ok(info);
+        }
+        Err(e) => {
+            info!("Resolver 解析失败: {}，尝试 yt-dlp...", e);
+        }
+    }
+
+    // yt-dlp 作为 fallback
     let mut yt = ytdlp.clone();
 
-    // 应用自定义配置
     if let Some(ref ua) = cli.user_agent {
         yt = yt.with_user_agent(ua.clone());
     }
@@ -330,16 +366,25 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo
         yt = yt.with_cookie_file(cookie.clone());
     }
 
+    // 抖音 URL 使用 DouYin cookie 文件（如果配置了）
+    if url.contains("douyin.com") && dy_cookie_file.is_some() {
+        if let Some(ref dy_cookie) = dy_cookie_file {
+            if dy_cookie.exists() {
+                info!("使用 DouYin cookie 文件: {:?}", dy_cookie);
+                yt = yt.with_cookie_file(dy_cookie.clone());
+            }
+        }
+    }
+
     if let Some(ref proxy) = cli.proxy {
         yt = yt.with_proxy(proxy.clone());
     }
 
-    // 首先尝试使用 yt-dlp 获取视频信息
     match yt.get_video_info(url) {
         Ok(info) => Ok(info),
         Err(e) => {
-            info!("yt-dlp 解析失败: {}，尝试 FxTwitter API...", e);
-            // yt-dlp 失败时，尝试使用 FxTwitter API
+            info!("yt-dlp 也失败: {}", e);
+            // 最后尝试 FxTwitter
             let fxtwitter = if let Some(ref proxy) = cli.proxy {
                 FxTwitterResolver::with_proxy(proxy)?
             } else {
@@ -351,8 +396,7 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo
                     Ok(info)
                 }
                 Err(fx_err) => {
-                    // FxTwitter 也失败，尝试 Scrapling（绕过 Cloudflare）
-                    info!("FxTwitter 也失败: {}，尝试 Scrapling (Cloudflare bypass)...", fx_err);
+                    info!("FxTwitter 也失败: {}，尝试 Scrapling...", fx_err);
                     match scrapling_client::ScraplingClient::new() {
                         Ok(client) => {
                             match client.get_video_info(url).await {
@@ -361,13 +405,12 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli) -> Result<VideoInfo
                                     Ok(info)
                                 }
                                 Err(scrapling_err) => {
-                                    Err(anyhow::anyhow!("{} | FxTwitter 失败: {} | Scrapling 也失败: {}", e, fx_err, scrapling_err))
+                                    Err(anyhow::anyhow!("Resolver 失败: {} | yt-dlp 失败: {} | FxTwitter 失败: {} | Scrapling 失败: {}", e, e, fx_err, scrapling_err))
                                 }
                             }
                         }
-                        Err(_sc_client_err) => {
-                            // Scrapling 初始化失败，返回原始错误
-                            Err(anyhow::anyhow!("{} | FxTwitter 也失败: {}", e, fx_err))
+                        Err(_) => {
+                            Err(anyhow::anyhow!("Resolver 失败: {} | yt-dlp 失败: {} | FxTwitter 失败: {}", e, e, fx_err))
                         }
                     }
                 }
@@ -411,7 +454,7 @@ async fn download_with_ytdlp(
     _start_time: Instant,
 ) -> Result<()> {
     // 确定输出路径（CLI参数 > 配置文件 > 默认值）
-    let output_dir = if cli.output == PathBuf::from(".") {
+    let output_dir = if cli.output.as_os_str() == "." {
         config.output_dir.clone()
     } else {
         cli.output.clone()
@@ -454,7 +497,7 @@ async fn download_with_ytdlp(
 
         // 从 URL 本身提取扩展名（最可靠，因为 API 返回的 container 字段可能不准确）
         let ext = info.url.split('?').next()
-            .and_then(|s| s.rsplit('/').next()?.split('.').last())
+            .and_then(|s| s.rsplit('/').next()?.split('.').next_back())
             .unwrap_or("mp4");
         let final_output_path = output_dir.join(format!("{}.{}", filename, ext));
 
@@ -556,11 +599,14 @@ async fn download_direct(url: &str, cli: &Cli, _start_time: Instant) -> Result<D
     let downloader = VideoDownloader::with_config(config)?;
 
     // 确定输出路径
-    let output_dir = if cli.output == PathBuf::from(".") {
+    let output_dir = if cli.output.as_os_str() == "." {
         get_default_output_dir()
     } else {
         cli.output.clone()
     };
+
+    // 验证并规范化输出目录为绝对路径
+    let output_dir = validate_output_dir(&output_dir)?;
 
     // 验证并规范化输出目录为绝对路径
     let output_dir = validate_output_dir(&output_dir)?;
