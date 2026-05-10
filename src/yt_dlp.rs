@@ -268,6 +268,9 @@ impl YtDlp {
         let mut args = vec![
             "--no-warnings".to_string(),
             "--newline".to_string(),
+            // Force progress output even in non-TTY mode
+            "--progress-template".to_string(),
+            "download:%(progress.downloaded_bytes)s/%(progress.total_bytes)s %(progress.percent)s%%".to_string(),
             "-o".to_string(),
             output_path.to_string(),
             "--concurrent-fragments".to_string(),

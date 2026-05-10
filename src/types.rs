@@ -2,7 +2,6 @@
 //!
 //! 项目中使用的核心数据类型定义
 
-use anyhow;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -350,6 +349,8 @@ pub struct DownloadProgress {
     pub speed: f64,
     /// 预计剩余时间 (秒)
     pub eta_secs: Option<f64>,
+    /// 当前活动线程数
+    pub active_threads: u32,
     /// 当前状态
     pub status: DownloadStatus,
 }
@@ -364,6 +365,7 @@ impl DownloadProgress {
             percent: 0.0,
             speed: 0.0,
             eta_secs: None,
+            active_threads: 0,
             status: DownloadStatus::Pending,
         }
     }
@@ -381,9 +383,10 @@ impl DownloadProgress {
     }
 
     /// 更新进度
-    pub fn update(&mut self, bytes_downloaded: u64, speed: f64) {
+    pub fn update(&mut self, bytes_downloaded: u64, speed: f64, active_threads: u32) {
         self.bytes_downloaded = bytes_downloaded;
         self.speed = speed;
+        self.active_threads = active_threads;
 
         if self.total_bytes > 0 {
             self.percent = (bytes_downloaded as f64 / self.total_bytes as f64).min(1.0);
@@ -559,12 +562,12 @@ mod tests {
             .with_total_bytes(1000)
             .with_status(DownloadStatus::Downloading);
 
-        progress.update(500, 100.0);
+        progress.update(500, 100.0, 4);
         assert_eq!(progress.bytes_downloaded, 500);
         assert!((progress.percent - 0.5).abs() < 0.001);
         assert!(progress.eta_secs.is_some());
 
-        progress.update(1000, 100.0);
+        progress.update(1000, 100.0, 4);
         assert!((progress.percent - 1.0).abs() < 0.001);
     }
 
@@ -633,7 +636,7 @@ mod tests {
     #[test]
     fn test_download_progress() {
         let mut p = DownloadProgress::new("t1".to_string()).with_total_bytes(1000);
-        p.update(500, 100.0);
+        p.update(500, 100.0, 1);
         assert!((p.percent - 0.5).abs() < 0.001);
     }
 }

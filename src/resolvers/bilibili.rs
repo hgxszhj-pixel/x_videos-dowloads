@@ -103,7 +103,7 @@ pub fn extract_bilibili_video_id(url: &str) -> anyhow::Result<(String, bool)> {
     if url.contains("/video/BV") {
         let parts: Vec<&str> = url.split("/video/BV").collect();
         if parts.len() >= 2 {
-            let bv = parts[1].split(['?', '/']).next().unwrap_or(&parts[1]);
+            let bv = parts[1].split(['?', '/']).next().unwrap_or(parts[1]);
             return Ok((bv.to_string(), false));
         }
     }

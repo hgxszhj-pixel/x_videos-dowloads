@@ -2,7 +2,9 @@
 
 @andrej-karpathy-skills:karpathy-guidelines
 
-Rust x.com 视频下载器，使用 yt-dlp 后端，支持 CLI 和 GUI。
+# Rust x.com Video Downloader
+
+视频下载器，支持 x.com (Twitter), TikTok, 抖音, Bilibili 等平台。
 
 ## 构建
 
@@ -14,7 +16,7 @@ cargo build --release    # 发行版
 
 ## 依赖
 
-- yt-dlp, reqwest, tokio, iced, rfd
+- yt-dlp, reqwest, tokio, slint, rfd
 
 ## 项目结构
 
@@ -26,20 +28,23 @@ src/
 ├── types.rs             # 类型定义
 ├── downloader.rs        # 直接下载器
 ├── yt_dlp.rs            # yt-dlp 集成
-├── gui.rs               # GUI (iced)
+├── gui.rs               # GUI (slint)
 ├── history.rs           # 下载历史/书签
-├── theme.rs             # 主题
+├── resolvers/            # 平台解析器
+│   ├── mod.rs           # ResolverRegistry
+│   ├── tiktok.rs        # TikTok 解析器
+│   ├── douyin.rs        # 抖音解析器
+│   ├── bilibili.rs      # Bilibili 解析器
+│   ├── douyin_api.rs    # 抖音 API 客户端
+│   ├── xbogus.rs        # X-Bogus 签名
+│   ├── abogus.rs        # A-Bogus 签名 (SM3)
+│   └── token_manager.rs # Token 管理
 └── collaboration/       # 分布式协作
-    ├── client/          # WebSocket 客户端 (ws.rs, queue.rs, discovery.rs)
-    ├── server/          # 服务端 (handler.rs, db.rs, ws.rs)
-    ├── crypto/          # 一致性哈希 (hashring.rs)
-    ├── transfer/        # 文件传输 (http_server.rs, downloader.rs)
-    └── types.rs         # 共享类型
 ```
 
 ---
 
-# 编程理念 (Karpathy Guidelines)
+# 编程理念
 
 **核心原则**: 谨慎优于速度，简单优于复杂，直接解决当前问题而非预判未来需求。
 
@@ -73,7 +78,6 @@ src/
 - 不要"改进"相邻代码、注释或格式。
 - 不要重构没坏的东西。
 - 匹配现有风格，即使你可能用不同方式写。
-- 如果发现无关的死代码，提出来——不要删除。
 
 你的修改造成的孤儿代码：
 - 移除因你的修改而未使用的 import/变量/函数。
@@ -99,98 +103,149 @@ src/
 
 强有力的成功标准让你能独立循环。弱标准("让它工作")需要不断确认。
 
+## 5. 避免重复命名
+
+**不要在变量名中重复已知的类型信息。**
+
+```rust
+// 错误
+let user_name: String = "Alice".to_string();
+let user_name_string: String = user_name;
+
+// 正确
+let name: String = "Alice".to_string();
+```
+
+## 6. 避免嵌套回调
+
+**优先使用 async/await 而不是深层嵌套的闭包。**
+
+```rust
+// 错误
+do_something_async(|result| {
+    do_another_async(result, |another| {
+        do_third_async(another, |_| {});
+    });
+});
+
+// 正确
+let result = do_something_async().await;
+let another = do_another_async(result).await;
+do_third_async(another).await;
+```
+
+## 7. 错误时快速失败
+
+**不要吞掉错误。传播或记录它们。失败要响亮。**
+
+```rust
+// 错误
+fn parse(value: &str) -> Config {
+    match parse_impl(value) {
+        Ok(c) => c,
+        Err(_) => Config::default(),
+    }
+}
+
+// 正确
+fn parse(value: &str) -> Result<Config, ParseError> {
+    parse_impl(value).context("failed to parse config")
+}
+```
+
+## 8. 最小化依赖
+
+**只引入你使用的依赖。不要为小功能引入大型库。**
+
+检查：
+- 这个库提供什么？
+- 我们需要它多少？
+- 能否自己实现或用标准库替代？
+
+## 9. 优先组合而非继承
+
+**用组合代替继承来复用代码。**
+
+```rust
+// 错误
+struct AdvancedParser extends Parser { ... }
+
+// 正确
+struct AdvancedParser {
+    parser: Parser,
+    extra_state: ExtraState,
+}
+```
+
+## 10. 保持函数短小
+
+**每个函数应该能做一件事，且做得清楚。**
+
+- 目标：每个函数少于30行
+- 警告：如果函数超过50行，考虑拆分
+- 允许例外：复杂的业务逻辑或数据转换
+
+## 11. 命名要表达意图
+
+**变量名和函数名应该清晰表达它们的用途。**
+
+```rust
+// 错误
+let d = SystemTime::now().duration_since(created).unwrap().as_secs();
+
+// 正确
+let age_seconds = now.duration_since(created).unwrap().as_secs();
+```
+
+## 12. 测试关键路径
+
+**不要追求100%覆盖率。测试真正的关键路径。**
+
+关键路径：
+- 用户认证流程
+- 支付/交易逻辑
+- 数据持久化
+- 错误处理路径
+
 ---
 
-# 模块特定规则
+# AI 辅助原则
 
-## 核心下载模块 (downloader.rs, yt_dlp.rs)
+## T5. 模型仅用于判断调用
 
-- 使用 `reqwest` 进行 HTTP 请求，`tokio::process::Command` 执行 yt-dlp
-- 下载进度通过回调报告，使用 `Arc<dyn Fn(DownloadProgress) + Send + Sync>`
-- 直接下载模式用于 video.twimg.com 等直接 URL
-- yt-dlp 模式用于复杂页面，自动选择最佳格式
+用于：分类、起草、总结、提取。不用于：路由、重试、确定性转换。如果代码能回答，让代码回答。
 
-## GUI 模块 (gui.rs)
+## T6. Token 预算不是建议
 
-- 使用 `iced` 库构建 GUI
-- 状态通过 `Subscription` 和 `Command` 管理
-- 不会直接修改 `Message` 枚举的变体，除非添加新功能
+每任务 4,000 tokens，每会话 30,000 tokens。如果接近预算，总结并重新开始。
 
-## 配置模块 (config.rs)
+## T7. 暴露冲突，不要平均它们
 
-- 使用 `toml` 序列化配置
-- 配置文件路径通过 `AppConfig::config_path()` 获取
-- `AppConfig::load()` 在启动时调用，失败则退出
+如果两个模式矛盾，选择一个（更新/更测试的）。不要混合冲突的模式。
 
-## 历史模块 (history.rs)
+## T8. 写入前先阅读
 
-- 使用 JSON 文件持久化 `history.json` 和 `bookmarks.json`
-- `History::new()` 加载历史，`save()` 持久化
-- `#[derive(Serialize, Deserialize)]` 用于 JSON 序列化
+添加代码前，阅读导出、调用者、共享工具。"看起来正交"是危险的。
 
-## 协作模块 (collaboration/)
+## T9. 测试验证意图
 
-### 客户端 (client/)
+测试必须编码为什么行为重要，不只是做什么。当业务逻辑改变时，不能失败的测试是错误的。
 
-- WebSocket 客户端使用 `tokio-tungstenite`
-- `CollaborationClient` 通过 `connect()` 创建
-- `subscribe()` 返回广播接收器用于消息监听
-- `#[allow(dead_code)]` 保留公共 API
+## T10. 每步后检查点
 
-### 服务端 (server/)
+总结完成什么，验证什么，还剩什么。不要从无法描述的状态继续。
 
-- SQLite 数据库使用 `rusqlite`，WAL 模式
-- `Database` 封装连接，方法都是 public API
-- `MessageHandler` 处理 WebSocket 消息
-- `#[allow(dead_code)]` 保留未使用的方法
+## T11. 匹配代码库约定
 
-### 加密模块 (crypto/hashring.rs)
-
-- 一致性哈希环使用 `BTreeMap<u64, Uuid>` 存储节点
-- `get_owner(url)` 返回 URL 对应的设备 ID
-- `add_device()` / `remove_device()` 管理环中设备
-- `#[allow(dead_code)]` 保留公共 API
-
-### 传输模块 (transfer/)
-
-- `FileServer` 提供 HTTP 范围请求服务
-- `ChunkedDownloader` 支持分块下载
-- `#[allow(dead_code)]` 保留未使用的传输功能
-
-## 类型定义 (types.rs)
-
-- `DownloadRequest`, `DownloadResult`, `DownloadProgress` 用于下载流程
-- `VideoInfo` 包含视频元数据
-- `format_bytes()` 将字节数转为人类可读格式
+代码库内：一致性 > 个人喜好。如果真的认为约定有害，暴露它。不要静默分叉。
 
 ---
 
-# 测试要求
+# 项目特定规则
 
-- 所有新功能必须添加单元测试
-- 使用 `#[cfg(test)]` 模块编写测试
-- 运行 `cargo test` 验证所有测试通过
-- 运行 `cargo check` 确保无编译警告
+## Slint GUI 进度条禁则
 
----
-
-**反模式警示**:
-| 原则 | 反模式 | 正确做法 |
-|------|--------|----------|
-| 编码前思考 | 静默假设文件格式、字段、范围 | 列出假设并请求澄清 |
-| 简单优先 | 为单一折扣计算使用策略模式 | 一个函数解决问题直到确实需要复杂性 |
-| 精准修改 | 修复 bug 时改格式、加类型提示 | 只改修复问题所必需的行 |
-| 目标驱动 | "我会审查并改进代码" | "为 bug X 写测试 → 修复 → 验证无回归" |
-
-**核心洞见**: 过度复杂的代码往往遵循设计模式和最佳实践。问题在于**时机**：在需要之前添加复杂性会导致代码更难理解、引入更多 bug、花更长时间实现、更难测试。
-
-**好代码是简单解决今天问题的代码，而非提前解决明天问题的代码。**
-
----
-
-# Slint GUI 进度条开发禁则
-
-## 进度回调架构
+### 进度回调架构
 
 | 错误做法 | 正确做法 |
 |----------|----------|
@@ -199,7 +254,7 @@ src/
 | UI 线程用 `10000` 作为终止条件 | UI 线程用 `100` 作为终止条件 |
 | 进度计算用 `segment_size * 4` | 后台任务用 `total_downloaded` 和 `total_size` |
 
-## Slint UI 编写
+### Slint UI 编写
 
 | 错误做法 | 正确做法 |
 |----------|----------|
@@ -207,7 +262,7 @@ src/
 | 同时使用 `width: 700px` 和 `min_width: 500px` | 只用 `min_width` 或只改 `width` |
 | `Rectangle { width: root.download-progress * parent.width }` | 用 `HorizontalLayout { alignment: start }` 包裹 |
 
-## 验证清单
+### 验证清单
 
 修改 GUI 进度代码后必须验证：
 1. `download_segment()` 只更新 `total_downloaded`，不发回调
@@ -216,38 +271,39 @@ src/
 4. 终止条件：`while progress_arc_for_update.load(...) < 100`
 5. 进度条容器使用 `HorizontalLayout { alignment: start }`
 
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+---
 
-This project is indexed by GitNexus as **x_videos-dowloads** (1292 symbols, 2827 relationships, 113 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+## 测试要求
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+- 所有新功能必须添加单元测试
+- 使用 `#[cfg(test)]` 模块编写测试
+- 运行 `cargo test` 验证所有测试通过
+- 运行 `cargo check` 确保无编译警告
 
-## Always Do
+## 调试流程
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+问题排查：
+1. 检查 `cargo build` 是否通过
+2. 运行 `cargo test` 验证测试
+3. 使用 `RUST_LOG=debug cargo run -- "URL"` 查看详细日志
 
-## Never Do
+---
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+## Agent Skills
 
-## Resources
+### Issue tracker
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/x_videos-dowloads/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/x_videos-dowloads/clusters` | All functional areas |
-| `gitnexus://repo/x_videos-dowloads/processes` | All execution flows |
-| `gitnexus://repo/x_videos-dowloads/process/{name}` | Step-by-step execution trace |
+GitHub Issues via `gh` CLI. See `docs/agents/issue-tracker.md`.
 
-## CLI
+### Triage labels
+
+Standard labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout. See `docs/agents/domain.md`.
+
+### GitNexus 集成
 
 | Task | Read this skill file |
 |------|---------------------|
@@ -258,4 +314,8 @@ This project is indexed by GitNexus as **x_videos-dowloads** (1292 symbols, 2827
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
-<!-- gitnexus:end -->
+---
+
+**核心洞见**: 过度复杂的代码往往遵循设计模式和最佳实践。问题在于**时机**：在需要之前添加复杂性会导致代码更难理解、引入更多 bug、花更长时间实现、更难测试。
+
+**好代码是简单解决今天问题的代码，而非提前解决明天问题的代码。**

@@ -88,6 +88,16 @@ hex = "0.4"
 # 本地 IP
 local-ip-address = "0.6"
 
+# shell 命令参数转义
+shell-words = "1.0"
+
+# X-Bogus 签名
+md5 = "0.7"
+rc4 = "0.1"
+
+# SM3 国密哈希
+sm3 = "0.5"
+
 # STUN (NAT穿透)
 stun = "0.3"
 slint = "1.15.1"

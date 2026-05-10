@@ -170,23 +170,17 @@ impl FxTwitterResolver {
 
         // 调用 FxTwitter API
         let api_url = format!("https://api.fxtwitter.com/status/{}", tweet_id);
-        eprintln!("DEBUG FxTwitter: Calling API: {}", api_url);
 
         let response = self.client
             .get(&api_url)
             .header("Accept", "application/json")
             .send().await.map_err(|e| {
-            eprintln!("DEBUG FxTwitter: request send error: {}", e);
-            eprintln!("DEBUG FxTwitter: url was: {}", api_url);
             if e.is_timeout() {
-                eprintln!("DEBUG FxTwitter: error is a timeout");
             } else if e.is_connect() {
-                eprintln!("DEBUG FxTwitter: error is a connection error");
             }
             anyhow!("FxTwitter 请求失败: {}", e)
         })?;
 
-        eprintln!("DEBUG FxTwitter: Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow!("FxTwitter API 请求失败: HTTP {}", response.status()));
@@ -209,7 +203,6 @@ impl FxTwitterResolver {
         let mut video_info = VideoInfo::new(title, video_url.clone());
 
         video_info.uploader = Some(tweet.author.name.clone());
-        eprintln!("DEBUG FxTwitter: author.name = '{}', screen_name = '{}'", tweet.author.name, tweet.author.screen_name);
         video_info.description = Some(tweet.text.clone());
 
         // 解析媒体信息

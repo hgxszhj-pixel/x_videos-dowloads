@@ -6,6 +6,71 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// 下载状态
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadStatus {
+    Completed,
+    Failed,
+    InProgress,
+    Bookmarked,
+}
+
+/// 平台来源
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    X,
+    YouTube,
+    TikTok,
+    DouYin,
+    Bilibili,
+    Instagram,
+    Facebook,
+    Weibo,
+    Other,
+}
+
+impl Platform {
+    pub fn from_url(url: &str) -> Self {
+        let url_lower = url.to_lowercase();
+
+        if url_lower.contains("x.com") || url_lower.contains("twitter.com") {
+            Platform::X
+        } else if url_lower.contains("youtube.com") || url_lower.contains("youtu.be") {
+            Platform::YouTube
+        } else if url_lower.contains("tiktok.com") || url_lower.contains("vm.tiktok.com") {
+            Platform::TikTok
+        } else if url_lower.contains("douyin.com") || url_lower.contains("v.douyin.com") {
+            Platform::DouYin
+        } else if url_lower.contains("bilibili.com") || url_lower.contains("bilivideo.com") || url_lower.contains("b23.tv") {
+            Platform::Bilibili
+        } else if url_lower.contains("instagram.com") {
+            Platform::Instagram
+        } else if url_lower.contains("facebook.com") || url_lower.contains("fb.com") {
+            Platform::Facebook
+        } else if url_lower.contains("weibo.com") {
+            Platform::Weibo
+        } else {
+            Platform::Other
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Platform::X => "X/Twitter",
+            Platform::YouTube => "YouTube",
+            Platform::TikTok => "TikTok",
+            Platform::DouYin => "DouYin",
+            Platform::Bilibili => "Bilibili",
+            Platform::Instagram => "Instagram",
+            Platform::Facebook => "Facebook",
+            Platform::Weibo => "Weibo",
+            Platform::Other => "Other",
+        }
+    }
+}
+
 /// 下载历史条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
@@ -16,6 +81,9 @@ pub struct HistoryEntry {
     pub file_size: Option<u64>,
     pub downloaded_at: DateTime<Utc>,
     pub duration_secs: Option<f64>,
+    pub status: DownloadStatus,
+    pub platform: Platform,
+    pub error_message: Option<String>,
 }
 
 /// 书签条目
@@ -75,15 +143,19 @@ impl History {
     }
 
     /// 添加下载历史
-    pub fn add_entry(&mut self, url: String, title: Option<String>, file_path: Option<PathBuf>, file_size: Option<u64>, duration_secs: Option<f64>) -> Result<()> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_entry(&mut self, url: String, title: Option<String>, file_path: Option<PathBuf>, file_size: Option<u64>, duration_secs: Option<f64>, status: DownloadStatus, error_message: Option<String>) -> Result<()> {
         let entry = HistoryEntry {
             id: Uuid::new_v4(),
-            url,
+            url: url.clone(),
             title,
             file_path,
             file_size,
             downloaded_at: Utc::now(),
             duration_secs,
+            status,
+            platform: Platform::from_url(&url),
+            error_message,
         };
         self.entries.insert(0, entry); // 最近的在前面
         self.save()?;
@@ -166,6 +238,23 @@ impl History {
         self.entries.len()
     }
 
+    /// 按状态筛选历史
+    #[allow(dead_code)]
+    pub fn filter_by_status(&self, status: DownloadStatus) -> Vec<&HistoryEntry> {
+        self.entries.iter().filter(|e| e.status == status).collect()
+    }
+
+    /// 按平台筛选历史
+    #[allow(dead_code)]
+    pub fn filter_by_platform(&self, platform: Platform) -> Vec<&HistoryEntry> {
+        self.entries.iter().filter(|e| e.platform == platform).collect()
+    }
+
+    /// 获取所有历史
+    pub fn get_all(&self) -> &[HistoryEntry] {
+        &self.entries
+    }
+
     /// 获取书签条数
     #[allow(dead_code)]
     pub fn bookmark_count(&self) -> usize {
@@ -187,6 +276,8 @@ mod tests {
             Some("Video 1".to_string()),
             Some(PathBuf::from("/path/video1.mp4")),
             Some(1024),
+            None,
+            DownloadStatus::Completed,
             None,
         ).unwrap();
 

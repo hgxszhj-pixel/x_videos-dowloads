@@ -170,9 +170,7 @@ impl VideoDownloader {
 
             // 大于10MB且启用了分段下载时使用并行下载
             if let Some(size) = total_size {
-                eprintln!("DEBUG: File size: {} bytes, parallel_segments: {}", size, self.config.parallel_segments);
                 if self.config.parallel_segments > 0 && size > 10 * 1024 * 1024 {
-                    eprintln!("DEBUG: Using parallel_download");
                     match self.parallel_download(request, size, progress_callback.clone()).await {
                         Ok(result) => return Ok(result),
                         Err(e) => {
@@ -185,7 +183,6 @@ impl VideoDownloader {
             }
 
             // 普通下载
-            eprintln!("DEBUG: Using do_download");
             match self.do_download(request, progress_callback.clone()).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
@@ -285,6 +282,13 @@ impl VideoDownloader {
         let callback_clone = progress_callback.clone();
         let start_time_clone = start_time;
 
+        // 克隆自适应线程配置值
+        let adaptive = self.config.adaptive_threads;
+        let min_threads = self.config.min_threads;
+        let max_threads = self.config.max_threads;
+        let speed_threshold = self.config.speed_threshold_bps;
+        let mut current_threads = segments;
+
         // 启动后台进度报告任务（每 0.5 秒更新一次）
         let progress_task = tokio::spawn(async move {
             while download_active_clone.load(Ordering::Relaxed) {
@@ -298,8 +302,18 @@ impl VideoDownloader {
                     0.0
                 };
 
+                // 动态计算推荐线程数
+                if adaptive {
+                    let speed_bps = speed as u64;
+                    if speed_bps < speed_threshold && current_threads < max_threads {
+                        current_threads = (current_threads + 1).min(max_threads);
+                    } else if speed_bps > speed_threshold * 3 && current_threads > min_threads {
+                        current_threads = (current_threads - 1).max(min_threads);
+                    }
+                }
+
                 let mut progress = progress_clone.lock().await;
-                progress.update(downloaded, speed);
+                progress.update(downloaded, speed, current_threads);
 
                 if let Some(ref callback) = callback_clone {
                     callback(progress.clone());
@@ -522,7 +536,7 @@ impl VideoDownloader {
                 0.0
             };
 
-            progress.update(downloaded, speed);
+            progress.update(downloaded, speed, 1);
 
             // 每次chunk都触发回调（不再等待时间间隔），确保UI实时更新
             if let Some(ref callback) = progress_callback {
@@ -564,9 +578,7 @@ impl VideoDownloader {
 
     /// 获取内容长度
     async fn get_content_length(&self, url: &str) -> Result<Option<u64>> {
-        eprintln!("DEBUG: get_content_length HEAD request to: {}", url);
         let response = self.client.head(url).send().await?;
-        eprintln!("DEBUG: get_content_length response status: {}", response.status());
 
         if response.status().is_success() {
             let length = response
@@ -639,7 +651,7 @@ impl VideoDownloader {
                     .with_total_bytes(total_size)
                     .with_status(DownloadStatus::Downloading);
 
-                progress.update(downloaded, speed);
+                progress.update(downloaded, speed, 1);
                 callback(progress);
             }
         }
@@ -792,6 +804,7 @@ fn parse_ytdlp_progress(line: &str) -> Option<DownloadProgress> {
         percent,
         speed,
         eta_secs: None,
+        active_threads: 0,
         status: DownloadStatus::Downloading,
     })
 }

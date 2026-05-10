@@ -3,9 +3,13 @@
 //! 提供 x.com 视频下载的核心功能
 
 pub mod collaboration;
+pub mod config;
 pub mod downloader;
 pub mod fxtwitter;
 pub mod gui;
+pub mod history;
+pub mod i18n;
+pub mod resolvers;
 pub mod types;
 pub mod website_profile;
 pub mod yt_dlp;

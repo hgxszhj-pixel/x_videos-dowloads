@@ -195,7 +195,7 @@ fn extract_video_variants(html: &str) -> Option<Vec<(String, u64)>> {
     }
 
     // 按 bitrate 降序排序
-    variants.sort_by(|a, b| b.1.cmp(&a.1));
+    variants.sort_by_key(|b| std::cmp::Reverse(b.1));
     Some(variants)
 }
 

@@ -5,6 +5,8 @@ export component AppWindow inherits Window {
     min_height: 500px;
     max_height: 900px;
 
+    // Global font property that child elements can reference
+    in-out property <string> ui-font: "PingFang SC";
     in-out property <string> url: "";
     in-out property <string> output-dir: "";
     in-out property <string> cookie-file: "";
@@ -19,10 +21,17 @@ export component AppWindow inherits Window {
     in-out property <string> download-eta: "";
     in-out property <string> download-threads: "";
     in-out property <string> status-message: "Enter video URL";
-    in-out property <string> network-status: "离线";
+    in-out property <string> network-status: "Checking";
     in-out property <string> error-message: "";
     in-out property <string> error-action: "";
     in-out property <bool> has-video-info: false;
+
+    // History/Bookmark list
+    in-out property <string> selected-tab: "history";
+    in-out property <string> filter-status: "all";
+    in-out property <string> filter-platform: "all";
+    in-out property <string> history-list: "";
+    in-out property <string> selected-history-id: "";
 
     callback fetch-info();
     callback start-download();
@@ -32,6 +41,9 @@ export component AppWindow inherits Window {
     callback clear-url();
     callback tick();
     callback check-network();
+    callback select-history(id: string);
+    callback add-bookmark();
+    callback remove-history(id: string);
 
     VerticalLayout {
         padding: 24px;
@@ -47,7 +59,7 @@ export component AppWindow inherits Window {
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
-            // Network Status Indicator (fixed size)
+            // Network Status Indicator
             Rectangle {
                 border-radius: 12px;
                 border-width: 1px;
@@ -61,14 +73,12 @@ export component AppWindow inherits Window {
                     padding-right: 10px;
                     spacing: 8px;
                     alignment: center;
-                    // Status Icon
                     Rectangle {
                         width: 12px;
                         height: 12px;
                         border-radius: 6px;
                         background: root.network-status == "Online" ? #34a853 : (root.network-status == "Checking" ? #f9a825 : #c62828);
                     }
-                    // Status Text
                     Text {
                         text: root.network-status;
                         font-size: 14px;
@@ -204,19 +214,16 @@ export component AppWindow inherits Window {
                     text: "Title: " + root.video-title;
                     font-size: 13px;
                     color: #555;
-                    font-family: "PingFang SC";
                 }
                 Text {
                     text: "Uploader: " + root.video-uploader;
                     font-size: 13px;
                     color: #555;
-                    font-family: "PingFang SC";
                 }
                 Text {
                     text: "Duration: " + root.video-duration;
                     font-size: 13px;
                     color: #555;
-                    font-family: "PingFang SC";
                 }
             }
         }
@@ -239,7 +246,7 @@ export component AppWindow inherits Window {
                     background: #ddd;
                     border-radius: 4px;
                     height: 14px;
-                    HorizontalLayout {
+                    VerticalLayout {
                         alignment: start;
                         Rectangle {
                             background: #34a853;
@@ -267,7 +274,6 @@ export component AppWindow inherits Window {
                         color: #555;
                     }
                 }
-                // Cancel Button
                 Rectangle {
                     background: #c62828;
                     border-radius: 6px;
@@ -311,6 +317,22 @@ export component AppWindow inherits Window {
                     text: "Tip: " + root.error-action;
                     font-size: 12px;
                     color: #1976d2;
+                }
+            }
+        }
+
+        // History/Bookmark List Display
+        if root.history-list != "" && root.history-list != "No items": Rectangle {
+            background: #f8f9fa;
+            border-radius: 6px;
+            height: 80px;
+            VerticalLayout {
+                padding: 8px;
+                Text {
+                    text: root.history-list;
+                    font-size: 11px;
+                    color: #555;
+                    wrap: word-wrap;
                 }
             }
         }

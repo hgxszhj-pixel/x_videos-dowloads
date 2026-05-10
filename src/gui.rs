@@ -81,7 +81,6 @@ pub fn run_gui() {
     }
 
     log_to_file(&log_file_path, "=== GUI Started ===");
-    eprintln!("DEBUG: GUI started, log file: {:?}", log_file_path);
 
     if !YtDlp::new().is_available() {
         log_to_file(&log_file_path, "ERROR: yt-dlp not found");
@@ -105,7 +104,6 @@ pub fn run_gui() {
     // 初始化 i18n 并设置字体
     i18n::init();
     let font = i18n::get_font_family();
-    eprintln!("DEBUG: i18n font: {}", font);
 
     // 初始化 History
     let data_dir = directories::ProjectDirs::from("com", "x-video-downloader", "X Video Downloader")
@@ -204,7 +202,6 @@ pub fn run_gui() {
             let cookie = app.get_cookie_file().to_string();
             let output_dir = app.get_output_dir().to_string();
 
-            eprintln!("DEBUG: fetch-info - url='{}'", url);
 
             if validate_url(&url).is_err() {
                 app.set_error_message("Please enter a valid URL".into());
@@ -236,7 +233,6 @@ pub fn run_gui() {
 
             // 在后台线程执行
             std::thread::spawn(move || {
-                eprintln!("DEBUG: background thread started");
 
                 // 使用 ResolverRegistry 选择合适的解析器
                 let mut registry = ResolverRegistry::new();
@@ -255,11 +251,9 @@ pub fn run_gui() {
                 registry.register(douyin_resolver);
 
                 let resolver = registry.select_resolver(&url_clone);
-                eprintln!("DEBUG: selected resolver for platform: {:?}", resolver.platform());
 
                 // 同步调用 get_video_info
                 let result = resolver.get_video_info(&url_clone);
-                eprintln!("DEBUG: resolver result: {:?}", result.is_ok());
 
                 let final_result = match result {
                     Ok(info) => Ok(info),
@@ -302,14 +296,11 @@ pub fn run_gui() {
                 };
 
                 // 使用 invoke_from_event_loop 更新 UI
-                eprintln!("DEBUG: about to call invoke_from_event_loop");
                 let app_weak_clone = app_weak.clone();
                 let _final_result_clone = final_result.clone();
                 let _shared_clone = shared.clone();
                 let _invoke_result = slint::invoke_from_event_loop(move || {
-                    eprintln!("DEBUG: inside invoke_from_event_loop");
                     if let Some(app) = app_weak_clone.upgrade() {
-                        eprintln!("DEBUG: app upgraded successfully");
                         match &final_result {
                             Ok(info) => {
                                 app.set_video_title(info.title.clone().into());
@@ -322,7 +313,6 @@ pub fn run_gui() {
                                 app.set_status_message(format!("Fetched: {}", info.title).into());
                             }
                             Err(e) => {
-                                eprintln!("DEBUG: setting error message: {}", e);
                                 app.set_error_message(e.clone().into());
                                 app.set_status_message("Failed to fetch video info".into());
                             }
@@ -448,7 +438,6 @@ pub fn run_gui() {
                     let download_result: Result<String, String>;
 
                     if is_direct_url {
-                        eprintln!("DEBUG: Using direct URL download path: {}", video_url);
                         let output_file = output_path.join(format!("{}.mp4", filename));
 
                         let config = DownloaderConfig {
@@ -514,7 +503,6 @@ pub fn run_gui() {
                             Ok(c) => c,
                             Err(e) => {
                                 // script 命令不可用时，回退到直接调用 yt-dlp
-                                eprintln!("DEBUG: script not available, using fallback: {}", e);
                                 match std::process::Command::new(&ytdlp.executable)
                                     .args(&args)
                                     .stdout(std::process::Stdio::piped())
@@ -539,7 +527,6 @@ pub fn run_gui() {
                             if let Some(stderr) = stderr_handle {
                                 let reader = BufReader::new(stderr);
                                 for line in reader.lines().map_while(Result::ok) {
-                                    eprintln!("DEBUG yt-dlp stderr: {}", line);
                                     if let Some(percent) = parse_ytdlp_progress(&line) {
                                         progress_for_ytdlp_clone.store(percent as u32, Ordering::Relaxed);
                                     }
@@ -549,7 +536,6 @@ pub fn run_gui() {
                             if let Some(stdout) = stdout_handle {
                                 let reader = BufReader::new(stdout);
                                 for line in reader.lines().map_while(Result::ok) {
-                                    eprintln!("DEBUG yt-dlp stdout: {}", line);
                                     if let Some(percent) = parse_ytdlp_progress(&line) {
                                         progress_for_ytdlp_clone.store(percent as u32, Ordering::Relaxed);
                                     }
@@ -784,7 +770,6 @@ pub fn run_gui() {
             // 检查网络状态 - 使用百度作为检测点(国内可访问)
             let baidu_ip = std::net::SocketAddr::from(([120, 46, 59, 242], 443));
             let is_online = std::net::TcpStream::connect_timeout(&baidu_ip, std::time::Duration::from_secs(2)).is_ok();
-            eprintln!("DEBUG: network check to {} = {}", baidu_ip, is_online);
             let network_status = if is_online { "Online" } else { "Offline" };
             app.set_network_status(network_status.into());
 
