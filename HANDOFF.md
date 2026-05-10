@@ -99,9 +99,9 @@ cargo build --release
 ## 最近提交
 
 ```
+877e253 - chore: remove DEBUG eprintln statements from codebase
+5261836 - feat: add DouYin cookie file support and improve feed URL handling
 be38f5b - docs: update README and HANDOFF
-0a4a4e7 - feat: GUI improvements and network status indicator
-4e8fa4f - fix: use map_while for yt-dlp progress parsing
 ```
 
 ---
@@ -126,6 +126,28 @@ be38f5b - docs: update README and HANDOFF
 
 5. **窗口调整限制** - Slint Window 的 min-width/max-width 属性
 6. **可拖动分隔条** - 需要自定义 MouseArea 实现 Splitter
+
+---
+
+## 抖音 Cookie 问题
+
+**问题描述:**
+- yt-dlp 和 lux 都报错 "Fresh cookies (not necessarily logged in) are needed"
+- DouYin API 返回 HTTP 200 但 body 为空
+- sessionid cookies 被 DouYin 服务器标记/封锁
+
+**解决方案:**
+1. 退出浏览器中的抖音登录
+2. 清除浏览器中所有 douyin.com cookies
+3. 重新登录抖音账号
+4. 立即导出新的 Netscape 格式 cookies
+5. 保存到 `~/.cookies/douyin_cookies.txt`
+
+**配置文件位置:**
+```
+~/.config/x-video-downloader/config.toml
+douyin_cookie_file = "~/cookies/douyin_cookies.txt"
+```
 
 ---
 
