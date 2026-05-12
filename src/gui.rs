@@ -103,7 +103,7 @@ pub fn run_gui() {
 
     // 初始化 i18n 并设置字体
     i18n::init();
-    let font = i18n::get_font_family();
+    let _font = i18n::get_font_family();
 
     // 初始化 History
     let data_dir = directories::ProjectDirs::from("com", "x-video-downloader", "X Video Downloader")
@@ -184,8 +184,8 @@ pub fn run_gui() {
     update_history_list(&app, &history_gui);
 
     // 创建单一的 tokio runtime (由 slint 的回调内部使用)
-    let rt = Runtime::new().expect("Failed to create tokio runtime");
-    let rt = Arc::new(rt);
+    let _rt = Runtime::new().expect("Failed to create tokio runtime");
+    let _rt = Arc::new(_rt);
 
     // Fetch Info 回调
     app.on_fetch_info(move || {

@@ -83,7 +83,7 @@ impl PlatformResolver for TikTokResolver {
     }
 
     fn requires_auth(&self) -> bool {
-        self.tokens.get("msToken").is_some()
+        self.tokens.contains_key("msToken")
     }
 
     fn required_tokens(&self) -> Vec<&'static str> {

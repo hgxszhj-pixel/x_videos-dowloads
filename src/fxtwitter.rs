@@ -174,12 +174,13 @@ impl FxTwitterResolver {
         let response = self.client
             .get(&api_url)
             .header("Accept", "application/json")
-            .send().await.map_err(|e| {
-            if e.is_timeout() {
-            } else if e.is_connect() {
-            }
-            anyhow!("FxTwitter 请求失败: {}", e)
-        })?;
+            .send().await.map_err(|e: reqwest::Error| -> anyhow::Error {
+                if e.is_timeout() || e.is_connect() {
+                    anyhow!("FxTwitter connection failed: {}", e)
+                } else {
+                    anyhow!("FxTwitter 请求失败: {}", e)
+                }
+            })?;
 
 
         if !response.status().is_success() {

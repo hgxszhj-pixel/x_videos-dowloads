@@ -160,7 +160,7 @@ impl YtDlp {
         // Log only non-sensitive parts (args may contain cookie file paths and proxy URLs)
         let safe_args: Vec<String> = args.iter()
             .filter(|a| !a.contains("cookie") && !a.contains("proxy"))
-            .map(|s| s.clone())
+            .cloned()
             .collect();
         debug!("执行命令: {:?} {:?}", self.executable, safe_args);
 
