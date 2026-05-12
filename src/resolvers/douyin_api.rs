@@ -45,10 +45,12 @@ impl DouYinApiClient {
 
     /// 生成 Netscape 格式 cookie 字符串
     fn build_cookie_string(&self) -> Option<String> {
-        self.ms_token.as_ref()?;
-        let mut lines = String::from("# Netscape HTTP Cookie File\n");
+        let token = self.ms_token.as_ref()?;
+        // Pre-allocate: header (30) + domain line (~60) + newline
+        let mut lines = String::with_capacity(100);
+        lines.push_str("# Netscape HTTP Cookie File\n");
         lines.push_str(".douyin.com\tTRUE\t/\tTRUE\t0\tmsToken\t");
-        lines.push_str(self.ms_token.as_ref().unwrap());
+        lines.push_str(token);
         lines.push('\n');
         Some(lines)
     }
@@ -101,7 +103,12 @@ impl DouYinApiClient {
 
         // 添加 msToken cookie
         if let Some(token) = &self.ms_token {
-            request = request.header("Cookie", format!("msToken={}", token));
+            // 直接构建字符串，避免 format! 的格式化开销
+            let cookie_len = 8 + token.len(); // "msToken=" (8) + token
+            let mut cookie = String::with_capacity(cookie_len);
+            cookie.push_str("msToken=");
+            cookie.push_str(token);
+            request = request.header("Cookie", cookie);
         }
 
         let response = request.send().await?;

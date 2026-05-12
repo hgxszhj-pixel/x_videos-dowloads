@@ -5,7 +5,6 @@
 //! 使用 SM3 国密哈希算法
 
 use sm3::Digest;
-use std::collections::HashMap;
 
 /// A-Bogus 签名生成器
 pub struct ABogus {
@@ -118,35 +117,34 @@ impl ABogus {
             .unwrap()
             .as_millis() as i64;
 
-        // 5. 构建 directory map
-        let mut dir_map: HashMap<String, f64> = HashMap::new();
-        dir_map.insert("clientU".to_string(), 64.0);
-        dir_map.insert("clientV".to_string(), 1.0);
-        dir_map.insert("ts".to_string(), (timestamp % 1000000) as f64 / 1000000.0);
-
-        // 添加 aid 和 page_id
-        dir_map.insert("aid".to_string(), aid.parse::<f64>().unwrap_or(6383.0));
-        dir_map.insert("pageId".to_string(), page_id.parse::<f64>().unwrap_or(1.0));
+        // 5. 构建 directory values 数组
+        let mut dir_values = [
+            64.0,                      // clientU
+            1.0,                       // clientV
+            (timestamp % 1000000) as f64 / 1000000.0, // ts
+            aid.parse::<f64>().unwrap_or(6383.0),     // aid
+            page_id.parse::<f64>().unwrap_or(1.0),    // pageId
+        ];
 
         // 添加 params SM3 哈希的部分字节
         if params_sm3_2.len() >= 16 {
-            dir_map.insert("dp1".to_string(), params_sm3_2[0] as f64 / 255.0);
-            dir_map.insert("dp2".to_string(), params_sm3_2[1] as f64 / 255.0);
-            dir_map.insert("dp3".to_string(), params_sm3_2[14] as f64 / 255.0);
-            dir_map.insert("dp4".to_string(), params_sm3_2[15] as f64 / 255.0);
+            dir_values[5] = params_sm3_2[0] as f64 / 255.0;
+            dir_values[6] = params_sm3_2[1] as f64 / 255.0;
+            dir_values[7] = params_sm3_2[14] as f64 / 255.0;
+            dir_values[8] = params_sm3_2[15] as f64 / 255.0;
         }
 
         // 添加 body SM3 哈希的部分字节
         if body_sm3_2.len() >= 16 {
-            dir_map.insert("db1".to_string(), body_sm3_2[0] as f64 / 255.0);
-            dir_map.insert("db2".to_string(), body_sm3_2[1] as f64 / 255.0);
-            dir_map.insert("db3".to_string(), body_sm3_2[14] as f64 / 255.0);
-            dir_map.insert("db4".to_string(), body_sm3_2[15] as f64 / 255.0);
+            dir_values[9] = body_sm3_2[0] as f64 / 255.0;
+            dir_values[10] = body_sm3_2[1] as f64 / 255.0;
+            dir_values[11] = body_sm3_2[14] as f64 / 255.0;
+            dir_values[12] = body_sm3_2[15] as f64 / 255.0;
         }
 
         // 6. 计算 XOR checksum
         let mut checksum: u8 = 0;
-        for (_, v) in &dir_map {
+        for &v in &dir_values {
             checksum ^= ((v * 255.0) as u8);
         }
         for &b in &ua_encrypted {

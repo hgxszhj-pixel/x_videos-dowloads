@@ -7,13 +7,15 @@ use crate::resolvers::{PlatformResolver, ResolverError, build_cookie_string};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
 /// TikTok 解析器
 pub struct TikTokResolver {
     tokens: HashMap<String, String>,
     token_manager: Option<Arc<Mutex<crate::resolvers::TokenManager>>>,
+    /// 重用 temp dir 避免每次请求都创建新的
+    cookie_temp_dir: OnceLock<tempfile::TempDir>,
 }
 
 impl TikTokResolver {
@@ -22,6 +24,7 @@ impl TikTokResolver {
         Self {
             tokens: HashMap::new(),
             token_manager: None,
+            cookie_temp_dir: OnceLock::new(),
         }
     }
 
@@ -44,7 +47,13 @@ impl TikTokResolver {
         }
 
         let cookie_content = build_cookie_string(&self.tokens);
-        let temp_dir = tempfile::TempDir::new().ok()?;
+
+        // 重用或创建 temp dir
+        if self.cookie_temp_dir.get().is_none() {
+            let temp_dir = tempfile::TempDir::new().ok()?;
+            let _ = self.cookie_temp_dir.set(temp_dir);
+        }
+        let temp_dir = self.cookie_temp_dir.get()?;
         let cookie_file = temp_dir.path().join("tiktok_cookies.txt");
 
         std::fs::write(&cookie_file, cookie_content).ok()?;
