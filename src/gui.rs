@@ -831,9 +831,27 @@ fn validate_url(url: &str) -> Result<String, String> {
     if url.is_empty() {
         return Err("URL cannot be empty".to_string());
     }
+
+    // Must start with http:// or https://
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("URL must start with http:// or https://".to_string());
     }
+
+    // Parse and validate URL components
+    if let Ok(parsed) = url::Url::parse(url) {
+        // Check for dangerous schemes
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            return Err("Only http and https schemes are allowed".to_string());
+        }
+
+        // Check host is not empty
+        if parsed.host_str().is_none() {
+            return Err("URL must have a valid host".to_string());
+        }
+    } else {
+        return Err("Invalid URL format".to_string());
+    }
+
     Ok(url.to_string())
 }
 

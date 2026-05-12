@@ -157,7 +157,12 @@ impl YtDlp {
             }
         }
 
-        debug!("执行命令: {:?} {:?}", self.executable, args);
+        // Log only non-sensitive parts (args may contain cookie file paths and proxy URLs)
+        let safe_args: Vec<String> = args.iter()
+            .filter(|a| !a.contains("cookie") && !a.contains("proxy"))
+            .map(|s| s.clone())
+            .collect();
+        debug!("执行命令: {:?} {:?}", self.executable, safe_args);
 
         let output = Command::new(&self.executable)
             .args(&args)

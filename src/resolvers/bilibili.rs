@@ -2,7 +2,7 @@
 //!
 //! 使用 yt-dlp 作为主要方式，支持 cookies 认证
 
-use crate::resolvers::{PlatformResolver, ResolverError};
+use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use std::collections::HashMap;
@@ -10,6 +10,7 @@ use std::collections::HashMap;
 /// Bilibili 解析器
 pub struct BilibiliResolver {
     cookies: HashMap<String, String>,
+    cookie_manager: CookieFileManager,
 }
 
 impl BilibiliResolver {
@@ -17,6 +18,7 @@ impl BilibiliResolver {
     pub fn new() -> Self {
         Self {
             cookies: HashMap::new(),
+            cookie_manager: CookieFileManager::new(),
         }
     }
 
@@ -24,6 +26,11 @@ impl BilibiliResolver {
     pub fn with_cookies(mut self, cookies: HashMap<String, String>) -> Self {
         self.cookies = cookies;
         self
+    }
+
+    /// 获取 cookie 文件路径
+    fn get_cookie_file(&self) -> Option<std::path::PathBuf> {
+        self.cookie_manager.get_cookie_file(&self.cookies, "bilibili")
     }
 }
 
@@ -46,11 +53,8 @@ impl PlatformResolver for BilibiliResolver {
         let mut ytdlp = crate::yt_dlp::YtDlp::new();
 
         // 如果有 cookies，设置 cookie 文件
-        if !self.cookies.is_empty() {
-            // 将 cookies 转换为 Netscape 格式cookie文件
-            if let Ok(cookie_file) = create_cookie_file(&self.cookies) {
-                ytdlp = ytdlp.with_cookie_file(cookie_file);
-            }
+        if let Some(cookie_file) = self.get_cookie_file() {
+            ytdlp = ytdlp.with_cookie_file(cookie_file);
         }
 
         // 使用 yt-dlp 获取视频信息
@@ -73,26 +77,6 @@ impl PlatformResolver for BilibiliResolver {
     fn required_tokens(&self) -> Vec<&'static str> {
         vec!["SESSDATA", "bili_jct", "buvid3"]
     }
-}
-
-/// 创建临时 cookie 文件（Netscape 格式）
-fn create_cookie_file(cookies: &HashMap<String, String>) -> anyhow::Result<std::path::PathBuf> {
-    let temp_dir = tempfile::TempDir::new()?;
-    let cookie_file = temp_dir.path().join("cookies.txt");
-
-    let mut content = String::new();
-    content.push_str("# Netscape HTTP Cookie File\n");
-    content.push_str(".bilibili.com\tTRUE\t/\tTRUE\t0\tSESSDATA\t{}\n");
-
-    for (name, value) in cookies {
-        content.push_str(&format!(
-            ".bilibili.com\tTRUE\t/\tTRUE\t0\t{}\t{}\n",
-            name, value
-        ));
-    }
-
-    std::fs::write(&cookie_file, content)?;
-    Ok(cookie_file)
 }
 
 /// 提取 Bilibili 视频 ID (BV号 或 av号)

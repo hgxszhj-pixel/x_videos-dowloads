@@ -8,6 +8,7 @@ mod douyin;
 mod bilibili;
 mod xbogus;
 mod douyin_api;
+mod cookie_utils;
 
 pub use token_manager::TokenManager;
 pub use tiktok::TikTokResolver;
@@ -15,6 +16,7 @@ pub use douyin::DouYinResolver;
 pub use bilibili::BilibiliResolver;
 pub use xbogus::build_cookie_string;
 pub use douyin_api::{DouYinApiClient, extract_modal_id};
+pub use cookie_utils::CookieFileManager;
 
 use crate::types::VideoInfo;
 use crate::history::Platform;

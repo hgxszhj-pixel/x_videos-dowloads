@@ -3,19 +3,17 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持信息流 URL (jingxuan/sports) 和 modal_id 解析
 
-use crate::resolvers::{PlatformResolver, ResolverError, build_cookie_string, DouYinApiClient, extract_modal_id};
+use crate::resolvers::{PlatformResolver, ResolverError, DouYinApiClient, extract_modal_id, CookieFileManager};
 use crate::types::{VideoInfo, VideoFormat};
 use crate::history::Platform;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// 抖音解析器
 pub struct DouYinResolver {
     tokens: HashMap<String, String>,
     token_manager: Option<Arc<Mutex<crate::resolvers::TokenManager>>>,
-    /// 重用 temp dir 避免每次请求都创建新的
-    cookie_temp_dir: OnceLock<tempfile::TempDir>,
+    cookie_manager: CookieFileManager,
 }
 
 impl DouYinResolver {
@@ -24,7 +22,7 @@ impl DouYinResolver {
         Self {
             tokens: HashMap::new(),
             token_manager: None,
-            cookie_temp_dir: OnceLock::new(),
+            cookie_manager: CookieFileManager::new(),
         }
     }
 
@@ -42,22 +40,7 @@ impl DouYinResolver {
 
     /// 获取 cookie 文件路径（从 tokens 创建临时 cookie 文件）
     fn get_cookie_file(&self) -> Option<std::path::PathBuf> {
-        if self.tokens.is_empty() {
-            return None;
-        }
-
-        let cookie_content = build_cookie_string(&self.tokens);
-
-        // 重用或创建 temp dir
-        if self.cookie_temp_dir.get().is_none() {
-            let temp_dir = tempfile::TempDir::new().ok()?;
-            let _ = self.cookie_temp_dir.set(temp_dir);
-        }
-        let temp_dir = self.cookie_temp_dir.get()?;
-        let cookie_file = temp_dir.path().join("douyin_cookies.txt");
-
-        std::fs::write(&cookie_file, cookie_content).ok()?;
-        Some(cookie_file)
+        self.cookie_manager.get_cookie_file(&self.tokens, "douyin")
     }
 }
 
@@ -91,20 +74,12 @@ impl PlatformResolver for DouYinResolver {
                 let ms_token = self.tokens.get("msToken").cloned();
                 let api_result = std::thread::spawn(move || {
                     let rt = tokio::runtime::Runtime::new()?;
-                    rt.block_on(async {
-                        let client = if let Some(token) = ms_token {
-                            DouYinApiClient::new().with_ms_token(token)
-                        } else {
-                            DouYinApiClient::new()
-                        };
-                        match client.get_video_by_modal_id(&modal_id_clone).await {
-                            Ok(resp) => Ok(resp),
-                            Err(e) => {
-                                tracing::warn!("DouYin API error: {}", e);
-                                Err(e)
-                            }
-                        }
-                    })
+                    let client = if let Some(token) = ms_token {
+                        DouYinApiClient::new().with_ms_token(token)
+                    } else {
+                        DouYinApiClient::new()
+                    };
+                    rt.block_on(client.get_video_by_modal_id(&modal_id_clone))
                 }).join();
 
                 match api_result {

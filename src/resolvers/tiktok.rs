@@ -3,19 +3,18 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持 TokenManager 自动token生成和注入
 
-use crate::resolvers::{PlatformResolver, ResolverError, build_cookie_string};
+use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// TikTok 解析器
 pub struct TikTokResolver {
     tokens: HashMap<String, String>,
     token_manager: Option<Arc<Mutex<crate::resolvers::TokenManager>>>,
-    /// 重用 temp dir 避免每次请求都创建新的
-    cookie_temp_dir: OnceLock<tempfile::TempDir>,
+    cookie_manager: CookieFileManager,
 }
 
 impl TikTokResolver {
@@ -24,7 +23,7 @@ impl TikTokResolver {
         Self {
             tokens: HashMap::new(),
             token_manager: None,
-            cookie_temp_dir: OnceLock::new(),
+            cookie_manager: CookieFileManager::new(),
         }
     }
 
@@ -42,22 +41,7 @@ impl TikTokResolver {
 
     /// 获取 cookie 文件路径（从 tokens 创建临时 cookie 文件）
     fn get_cookie_file(&self) -> Option<std::path::PathBuf> {
-        if self.tokens.is_empty() {
-            return None;
-        }
-
-        let cookie_content = build_cookie_string(&self.tokens);
-
-        // 重用或创建 temp dir
-        if self.cookie_temp_dir.get().is_none() {
-            let temp_dir = tempfile::TempDir::new().ok()?;
-            let _ = self.cookie_temp_dir.set(temp_dir);
-        }
-        let temp_dir = self.cookie_temp_dir.get()?;
-        let cookie_file = temp_dir.path().join("tiktok_cookies.txt");
-
-        std::fs::write(&cookie_file, cookie_content).ok()?;
-        Some(cookie_file)
+        self.cookie_manager.get_cookie_file(&self.tokens, "tiktok")
     }
 }
 
