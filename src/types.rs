@@ -469,6 +469,34 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// 验证输出目录是否安全（防止路径遍历攻击）
+pub fn validate_output_dir(dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let canonical = dir.canonicalize()
+        .map_err(|e| format!("Invalid output directory: {}", e))?;
+
+    // Check for path traversal patterns in original path
+    let dir_str = dir.to_string_lossy();
+    if dir_str.contains("..") {
+        return Err("Output directory cannot contain '..' path traversal".to_string());
+    }
+
+    Ok(canonical)
+}
+
+/// 验证输出文件路径是否在允许的目录内
+pub fn validate_output_path(output_path: &std::path::Path, allowed_dir: &std::path::Path) -> Result<(), String> {
+    let canonical_output = output_path.canonicalize()
+        .map_err(|_| format!("Invalid output path: {:?}", output_path))?;
+    let canonical_allowed = allowed_dir.canonicalize()
+        .map_err(|e| format!("Invalid allowed directory: {}", e))?;
+
+    if !canonical_output.starts_with(&canonical_allowed) {
+        return Err("Output path escapes allowed directory".to_string());
+    }
+
+    Ok(())
+}
+
 /// 清理文件名，移除非法字符，防止路径遍历
 pub fn sanitize_filename(name: &str) -> String {
     // 先检查原始名称是否包含路径遍历特征

@@ -1,10 +1,32 @@
 //! Token 管理模块
 //!
 //! 集中管理各平台所需的认证 token
+//!
+//! # Security Warning
+//! Tokens are stored with simple XOR obfuscation, not real encryption.
+//! This prevents casual file reading but does not provide real security.
+//! For production use, consider OS keychain integration (Keychain on macOS,
+//! kdewallet on Linux, or Credential Manager on Windows).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// XOR obfuscation key - simple obfuscation, not real encryption
+const XOR_KEY: &[u8] = b"x_video_downloader_v1";
+
+/// Obfuscate data using XOR with repeating key
+fn obfuscate(data: &[u8]) -> Vec<u8> {
+    data.iter()
+        .enumerate()
+        .map(|(i, &b)| b ^ XOR_KEY[i % XOR_KEY.len()])
+        .collect()
+}
+
+/// Deobfuscate data using XOR (same as obfuscate, XOR is symmetric)
+fn deobfuscate(data: &[u8]) -> Vec<u8> {
+    obfuscate(data)
+}
 
 /// 平台 Token 配置
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -38,8 +60,12 @@ impl TokenManager {
     pub fn new(data_dir: &Path) -> Self {
         let token_file = data_dir.join("tokens.json");
         let tokens = if token_file.exists() {
-            std::fs::read_to_string(&token_file)
+            std::fs::read(&token_file)
                 .ok()
+                .and_then(|data| {
+                    let deobfuscated = deobfuscate(&data);
+                    String::from_utf8(deobfuscated).ok()
+                })
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default()
         } else {
@@ -49,15 +75,14 @@ impl TokenManager {
         Self { tokens, token_file }
     }
 
-    /// 保存 tokens 到文件
+    /// 保存 tokens 到文件 (使用 XOR obfuscation)
     pub fn save(&self) -> anyhow::Result<()> {
         if let Some(parent) = self.token_file.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(
-            &self.token_file,
-            serde_json::to_string_pretty(&self.tokens)?,
-        )?;
+        let json = serde_json::to_string_pretty(&self.tokens)?;
+        let obfuscated = obfuscate(json.as_bytes());
+        std::fs::write(&self.token_file, obfuscated)?;
         Ok(())
     }
 

@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, DEFAULT_USER_AGENT};
+use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, DEFAULT_USER_AGENT, validate_output_path};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
@@ -393,6 +393,10 @@ impl VideoDownloader {
         // 合并分段文件（同步复制，性能优化）
         use std::fs::{File as StdFile, OpenOptions};
         use std::io::{copy as io_copy, Seek, SeekFrom};
+
+        // Validate output path to prevent path traversal
+        validate_output_path(&output_path, &temp_dir_path)
+            .map_err(|e| anyhow!("Path traversal detected: {}", e))?;
 
         // 打开输出文件（不截断，支持追加写入）
         let mut output = OpenOptions::new()

@@ -480,34 +480,22 @@ pub fn run_gui() {
                             false,
                         );
 
-                        // 使用 script 命令创建 PTY，强制 yt-dlp 输出进度（yt-dlp 检测 TTY 决定是否输出进度）
-                        let mut cmd = std::process::Command::new("script");
-                        cmd.args(["-q", "-c", &format!("{} {}", ytdlp.executable.display(), shell_words::join(&args)), "/dev/null"])
-                           .stdout(std::process::Stdio::piped())
-                           .stderr(std::process::Stdio::piped());
-
-                        let progress_for_ytdlp = progress_arc.clone();
-                        let mut child = match cmd.spawn() {
+                        // 直接调用 yt-dlp，不使用 script 命令包装（避免 shell 注入风险）
+                        let mut child = match std::process::Command::new(&ytdlp.executable)
+                            .args(&args)
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .spawn()
+                        {
                             Ok(c) => c,
                             Err(e) => {
-                                // script 命令不可用时，回退到直接调用 yt-dlp
-                                match std::process::Command::new(&ytdlp.executable)
-                                    .args(&args)
-                                    .stdout(std::process::Stdio::piped())
-                                    .stderr(std::process::Stdio::piped())
-                                    .spawn()
-                                {
-                                    Ok(c) => c,
-                                    Err(e2) => {
-                                        eprintln!("ERROR: Failed to spawn yt-dlp: {}", e2);
-                                        return;
-                                    }
-                                }
+                                eprintln!("ERROR: Failed to spawn yt-dlp: {}", e);
+                                return;
                             }
                         };
 
                         // 异步读取 stderr 以实时获取进度
-                        let progress_for_ytdlp_clone = progress_for_ytdlp.clone();
+                        let progress_arc_clone = progress_arc.clone();
                         let stderr_handle = child.stderr.take();
                         let stdout_handle = child.stdout.take();
                         std::thread::spawn(move || {
@@ -516,7 +504,7 @@ pub fn run_gui() {
                                 let reader = BufReader::new(stderr);
                                 for line in reader.lines().map_while(Result::ok) {
                                     if let Some(percent) = parse_ytdlp_progress(&line) {
-                                        progress_for_ytdlp_clone.store(percent as u32, Ordering::Relaxed);
+                                        progress_arc_clone.store(percent as u32, Ordering::Relaxed);
                                     }
                                 }
                             }
@@ -525,7 +513,7 @@ pub fn run_gui() {
                                 let reader = BufReader::new(stdout);
                                 for line in reader.lines().map_while(Result::ok) {
                                     if let Some(percent) = parse_ytdlp_progress(&line) {
-                                        progress_for_ytdlp_clone.store(percent as u32, Ordering::Relaxed);
+                                        progress_arc_clone.store(percent as u32, Ordering::Relaxed);
                                     }
                                 }
                             }
