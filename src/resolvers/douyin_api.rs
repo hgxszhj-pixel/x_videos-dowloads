@@ -4,7 +4,16 @@
 //! 参考 F2 的 DouYinAPI 实现
 
 use crate::resolvers::xbogus::XBogus;
+use once_cell::sync::Lazy;
+use reqwest::Client;
 use serde::Deserialize;
+
+static FEED_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("Failed to create FEED_CLIENT")
+});
 
 /// 抖音 API 客户端
 pub struct DouYinApiClient {
@@ -125,11 +134,7 @@ impl DouYinApiClient {
 
     /// 从 feed 页面 HTML 提取视频 ID
     pub async fn extract_video_id_from_feed(url: &str) -> anyhow::Result<String> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
-
-        let response = client.get(url)
+        let response = FEED_CLIENT.get(url)
             .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .header("Referer", "https://www.douyin.com/")
             .send()
