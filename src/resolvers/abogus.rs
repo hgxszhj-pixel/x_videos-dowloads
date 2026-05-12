@@ -4,8 +4,7 @@
 //! 参考 F2 (Python) abogus.py 实现
 //! 使用 SM3 国密哈希算法
 
-use sm3::sm3_hash;
-use sm3::func::bytes_to_list;
+use sm3::Digest;
 use std::collections::HashMap;
 
 /// A-Bogus 签名生成器
@@ -24,12 +23,10 @@ impl ABogus {
 
     /// 计算 SM3 哈希并返回字节数组
     fn sm3_to_array(&self, input: &[u8]) -> Vec<u8> {
-        let hash = sm3_hash(bytes_to_list(input));
-        // 将十六进制字符串转换为字节数组
-        (0..hash.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hash[i..i + 2], 16).unwrap_or(0))
-            .collect()
+        let mut hasher = sm3::Digest::new();
+        hasher.update(input);
+        let result: [u8; 32] = hasher.finalize();
+        result.to_vec()
     }
 
     /// RC4 加密

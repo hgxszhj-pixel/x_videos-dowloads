@@ -183,12 +183,9 @@ pub fn run_gui() {
     // 更新历史列表
     update_history_list(&app, &history_gui);
 
-    // 创建单一的 tokio runtime (避免每次回调创建新 runtime 的开销)
+    // 创建单一的 tokio runtime (由 slint 的回调内部使用)
     let rt = Runtime::new().expect("Failed to create tokio runtime");
     let rt = Arc::new(rt);
-    // 使用 Mutex 包装以支持 FnMut 回调 (回调可能被调用多次)
-    let rt_fetch = Arc::clone(&rt);
-    let rt_download = Arc::clone(&rt);
 
     // Fetch Info 回调
     app.on_fetch_info(move || {
@@ -228,11 +225,9 @@ pub fn run_gui() {
 
             let url_clone = url.clone();
             let cookie_clone = cookie.clone();
-            // 克隆 runtime 以在后台线程中使用
-            let rt = rt_fetch.clone();
 
-            // 在后台线程执行
-            std::thread::spawn(move || {
+            // 直接使用 tokio::spawn 在现有 runtime 中执行，避免 std::thread 开销
+            tokio::spawn(async move {
 
                 // 使用 ResolverRegistry 选择合适的解析器
                 let mut registry = ResolverRegistry::new();
@@ -275,9 +270,7 @@ pub fn run_gui() {
                                 // 最后尝试 FxTwitter (仅对 Twitter/X 有效)
                                 if url_clone.contains("twitter.com") || url_clone.contains("x.com") {
                                     let url_fx = url_clone.clone();
-                                    let fx_result = rt.block_on(async {
-                                        FxTwitterResolver::new().get_video_info(&url_fx).await
-                                    });
+                                    let fx_result = FxTwitterResolver::new().get_video_info(&url_fx).await;
                                     match fx_result {
                                         Ok(info) => {
                                             warn!("FxTwitter fallback succeeded");
@@ -424,11 +417,8 @@ pub fn run_gui() {
                     }
                 });
 
-                // 克隆 runtime 以在下载线程中使用
-                let rt_for_download = rt_download.clone();
-                std::thread::spawn(move || {
-                    let rt = rt_for_download;
-
+                // 使用 tokio::spawn 在现有 runtime 中执行下载
+                tokio::spawn(async move {
                     let output_path = std::path::Path::new(&output_dir_clone);
                     if !output_path.exists() {
                         let _ = std::fs::create_dir_all(output_path);
@@ -461,9 +451,7 @@ pub fn run_gui() {
                                 });
 
                             // 使用预创建的 runtime 执行下载，避免每次创建新 runtime
-                            let result = rt.block_on(async {
-                                downloader.download(&request, Some(progress_callback)).await
-                            });
+                            let result = downloader.download(&request, Some(progress_callback)).await;
 
                             match result {
                                 Ok(r) if r.success => {
