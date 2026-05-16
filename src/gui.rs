@@ -570,6 +570,7 @@ pub fn run_gui() {
                                                 crate::history::Platform::Instagram => "[IG]",
                                                 crate::history::Platform::Facebook => "[FB]",
                                                 crate::history::Platform::Weibo => "[WB]",
+                                                Platform::ZhiXueYun => "[ZX]",
                                                 crate::history::Platform::Other => "[*]",
                                             };
                                             format!("{} {} - {}", platform, title, e.downloaded_at.format("%m-%d %H:%M"))
@@ -725,6 +726,7 @@ pub fn run_gui() {
                                     crate::history::Platform::Instagram => "[IG]",
                                     crate::history::Platform::Facebook => "[FB]",
                                     crate::history::Platform::Weibo => "[WB]",
+                                                Platform::ZhiXueYun => "[ZX]",
                                     crate::history::Platform::Other => "[*]",
                                 };
                                 format!("{} {} - {}", platform, title, e.downloaded_at.format("%m-%d %H:%M"))
@@ -879,6 +881,7 @@ fn update_history_list(app: &AppWindow, history: &Arc<Mutex<History>>) {
             Platform::Instagram => "[IG]",
             Platform::Facebook => "[FB]",
             Platform::Weibo => "[WB]",
+                                                Platform::ZhiXueYun => "[ZX]",
             Platform::Other => "[*]",
         };
         format!("{} {} - {}", platform, title, e.downloaded_at.format("%m-%d %H:%M"))

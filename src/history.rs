@@ -28,6 +28,7 @@ pub enum Platform {
     Instagram,
     Facebook,
     Weibo,
+    ZhiXueYun,
     Other,
 }
 
@@ -66,6 +67,7 @@ impl Platform {
             Platform::Instagram => "Instagram",
             Platform::Facebook => "Facebook",
             Platform::Weibo => "Weibo",
+            Platform::ZhiXueYun => "智学云",
             Platform::Other => "Other",
         }
     }
