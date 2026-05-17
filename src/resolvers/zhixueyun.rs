@@ -1,6 +1,7 @@
 //! ZhiXueYun 平台解析器
 //!
-//! 支持 kc.zhixueyun.com 智学云平台的 PDF 文档下载
+//! 支持 kc.zhixueyun.com 智学云平台的视频和文档下载
+//! sectionType: 6 = 视频 (mp4), 10 = 文档 (pdf)
 
 use crate::resolvers::{CookiePool, PlatformResolver, ResolverError};
 use crate::types::VideoInfo;
@@ -8,7 +9,46 @@ use crate::history::Platform;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderName};
 use std::sync::Arc;
-use tracing::{info, debug, warn};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::channel;
+use std::thread;
+use tracing::{info, debug};
+
+/// 下载进度回调
+pub type ProgressCallback = Arc<dyn Fn(u64, u64, &str) + Send + Sync>;
+
+/// 下载结果
+#[derive(Debug, Clone)]
+pub struct DownloadResult {
+    pub filename: String,
+    pub success: bool,
+    pub error: Option<String>,
+    pub size: u64,
+}
+
+/// 课程信息
+#[derive(Debug, Clone)]
+pub struct CourseInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// 文档信息
+#[derive(Debug, Clone)]
+pub struct DocumentInfo {
+    pub id: String,
+    pub name: String,
+    pub chapter_name: String,
+    pub file_ext: String,
+}
+
+/// 文件预览信息
+#[derive(Debug, Clone)]
+pub struct FilePreview {
+    pub secure_url: String,
+    pub filename: String,
+    pub file_size: u64,
+}
 
 /// ZhiXueYun 解析器
 pub struct ZhiXueYunResolver {
@@ -22,29 +62,26 @@ impl ZhiXueYunResolver {
         Self {
             cookie_pool,
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_default(),
         }
     }
 
-    /// 从 URL 中提取 course ID
+    /// 从 URL 中提取 course/category ID (支持两种格式)
     fn extract_course_id(url: &str) -> Option<String> {
+        if let Some(fragment) = url.split('#').nth(1) {
+            let parts: Vec<&str> = fragment.split('/').collect();
+            if parts.len() >= 5 && parts[1] == "study" && parts[2] == "subject" && parts[3] == "detail" {
+                return Some(parts[4].to_string());
+            }
+        }
         url.split("courseId=")
             .nth(1)
             .and_then(|s| s.split('&').next())
             .map(|s| s.to_string())
     }
 
-    /// 从 URL 中提取 resource ID (文档 ID)
-    fn extract_resource_id(url: &str) -> Option<String> {
-        url.split("resourceId=")
-            .nth(1)
-            .and_then(|s| s.split('&').next())
-            .map(|s| s.to_string())
-    }
-
-    /// 获取认证头
     fn get_auth_headers(&self, token: Option<&str>) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(reqwest::header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36".parse().unwrap());
@@ -59,138 +96,391 @@ impl ZhiXueYunResolver {
         headers
     }
 
-    /// 从课程信息获取文档资源
-    fn get_document_info(&self, course_id: &str, token: &str) -> anyhow::Result<DocumentInfo> {
-        // 首先获取课程章节信息，其中包含文档列表
-        let api_url = format!(
+    /// 获取分类下的所有课程ID
+    fn get_courses_by_category(&self, category_id: &str, token: &str) -> anyhow::Result<Vec<CourseInfo>> {
+        let url = format!(
             "https://kc.zhixueyun.com/api/v1/course-study/subject/chapter-progress?courseId={}&knowledgePaymentEnable=false",
-            course_id
+            category_id
         );
 
         let headers = self.get_auth_headers(Some(token));
-
         let response = self.client
-            .get(&api_url)
+            .get(&url)
             .headers(headers.clone())
             .send()
-            .map_err(|e| anyhow::anyhow!("网络请求失败: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("课程查询 API 请求失败: {}", e))?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().unwrap_or_default();
-            warn!("API 返回错误状态 {}: {}", status, body);
-            anyhow::bail!("API 请求失败: {}", status);
+            anyhow::bail!("课程查询 API 返回错误: {}", response.status());
         }
 
         let body = response.text()
-            .map_err(|e| anyhow::anyhow!("读取响应失败: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("读取课程响应失败: {}", e))?;
 
-        debug!("Chapter progress response: {}", body);
-
-        // 解析 JSON 响应获取文档信息
-        // 响应是数组: [{ courseChapterSections: [{ resourceId, name, sectionType }] }]
         let json: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| anyhow::anyhow!("JSON 解析失败: {} - body: {}", e, &body[..body.len().min(500)]))?;
+            .map_err(|e| anyhow::anyhow!("课程 JSON 解析失败: {}", e))?;
 
-        // 找到第一个 PDF 类型的章节 (sectionType == 10)
-        // 注意: id 字段才是 file-cloud/preview API 需要的 preview ID
-        let mut document_id = None;
-        let mut document_name = None;
+        let mut courses = Vec::new();
 
         if let Some(chapters) = json.as_array() {
             for chapter in chapters {
                 if let Some(sections) = chapter.get("courseChapterSections").and_then(|s| s.as_array()) {
                     for section in sections {
-                        // sectionType 10 = PDF 文档
                         if section.get("sectionType").and_then(|v| v.as_i64()) == Some(10) {
-                            // 使用 id 字段作为 preview ID (不是 resourceId 或 attachmentId)
-                            document_id = section.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                            document_name = section.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                            break;
+                            if let Some(id) = section.get("resourceId").and_then(|v| v.as_str()) {
+                                let name = section.get("name").and_then(|v| v.as_str())
+                                    .unwrap_or("未知课程").to_string();
+                                courses.push(CourseInfo { id: id.to_string(), name });
+                            }
                         }
                     }
-                }
-                if document_id.is_some() {
-                    break;
                 }
             }
         }
 
-        let document_id = document_id.ok_or_else(|| anyhow::anyhow!("未找到 PDF 文档"))?;
-        let document_name = document_name.unwrap_or_else(|| format!("课程文档_{}", &document_id[..8]));
-
-        Ok(DocumentInfo {
-            id: document_id,
-            name: document_name,
-            file_size: None, // API 响应中无文件大小，需额外获取
-        })
+        Ok(courses)
     }
 
-    /// 从 preview API 获取文件信息
-    fn get_file_preview(&self, resource_id: &str, token: &str) -> anyhow::Result<FilePreview> {
+    /// 获取课程的所有文档/视频
+    fn get_all_documents(&self, course_id: &str, token: &str) -> anyhow::Result<Vec<DocumentInfo>> {
         let url = format!(
-            "https://kc.zhixueyun.com/api/v1/tools-center-v2/file-cloud/preview?id={}",
-            resource_id
+            "https://kc.zhixueyun.com/api/v1/course-study/subject/chapter-progress?courseId={}&knowledgePaymentEnable=false",
+            course_id
         );
 
         let headers = self.get_auth_headers(Some(token));
-
         let response = self.client
             .get(&url)
             .headers(headers.clone())
             .send()
-            .map_err(|e| anyhow::anyhow!("预览 API 请求失败: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("网络请求失败: {}", e))?;
 
         if !response.status().is_success() {
-            anyhow::bail!("预览 API 返回错误: {}", response.status());
+            anyhow::bail!("API 请求失败: {}", response.status());
         }
 
         let body = response.text()
-            .map_err(|e| anyhow::anyhow!("读取预览响应失败: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("读取响应失败: {}", e))?;
 
-        let json: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| anyhow::anyhow!("预览 JSON 解析失败: {}", e))?;
+        let json: serde_json::Value = serde_json::from_str(&body)?;
 
-        let url = json.get("url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("预览响应中未找到 URL"))?;
+        let mut documents = Vec::new();
 
-        let filename = json.get("filename")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "document.pdf".to_string());
+        if let Some(chapters) = json.as_array() {
+            for chapter in chapters {
+                let chapter_name = chapter.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("未知章节")
+                    .to_string();
 
-        let file_size = json.get("size")
-            .and_then(|v| v.as_u64());
+                if let Some(sections) = chapter.get("courseChapterSections").and_then(|s| s.as_array()) {
+                    for section in sections {
+                        let section_type = section.get("sectionType").and_then(|v| v.as_i64());
+                        if section_type == Some(10) || section_type == Some(6) {
+                            let doc_id = section.get("resourceId")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .or_else(|| section.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
 
-        Ok(FilePreview {
-            secure_url: url,
-            filename,
-            file_size,
-        })
+                            let doc_name = section.get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("未知文档")
+                                .to_string();
+
+                            let file_ext = if section_type == Some(10) { "pdf" } else { "mp4" };
+
+                            if let Some(id) = doc_id {
+                                documents.push(DocumentInfo {
+                                    id,
+                                    name: doc_name,
+                                    chapter_name: chapter_name.clone(),
+                                    file_ext: file_ext.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(documents)
     }
 
-    /// 获取 PDF 下载链接
-    fn get_pdf_url(&self, _document_id: &str, _token: &str) -> String {
-        // PDF URL 通过 preview API 获取，不是直接构造
-        String::new()
+    /// 获取文件预览信息（带重试）
+    fn get_file_preview_with_retry(&self, resource_id: &str, token: &str, max_retries: u32) -> anyhow::Result<FilePreview> {
+        let mut last_error = None;
+
+        for attempt in 0..max_retries {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            let url = format!(
+                "https://kc.zhixueyun.com/api/v1/tools-center/file-cloud/preview-new?id={}&_={}",
+                resource_id, timestamp
+            );
+
+            let headers = self.get_auth_headers(Some(token));
+
+            match self.client.get(&url).headers(headers.clone()).send() {
+                Ok(response) if response.status().is_success() => {
+                    if let Ok(body) = response.text() {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                            let file_url = json.get("previewUrl")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .or_else(|| json.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()));
+
+                            if let Some(url_str) = file_url {
+                                let extention = json.get("extention").and_then(|v| v.as_str()).unwrap_or("mp4");
+                                let filename = json.get("filename").and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| format!("document.{}", extention));
+                                let file_size = json.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                                return Ok(FilePreview {
+                                    secure_url: url_str,
+                                    filename,
+                                    file_size,
+                                });
+                            }
+                        }
+                    }
+                }
+                Ok(response) => {
+                    last_error = Some(format!("HTTP {}", response.status()));
+                }
+                Err(e) => {
+                    last_error = Some(e.to_string());
+                }
+            }
+
+            if attempt < max_retries - 1 {
+                debug!("Preview retry {} for {}", attempt + 1, resource_id);
+            }
+        }
+
+        anyhow::bail!("获取预览失败 (重试 {} 次): {}", max_retries, last_error.unwrap_or_default())
     }
 
-    /// 获取 PDF 文档信息
-    pub fn fetch_pdf_info(&self, url: &str, token: &str) -> anyhow::Result<VideoInfo> {
+    /// 下载文件（带重试）
+    fn download_file_with_retry(&self, url: &str, output_path: &std::path::Path, max_retries: u32) -> anyhow::Result<u64> {
+        let mut last_error = None;
+
+        for attempt in 0..max_retries {
+            let headers = self.get_auth_headers(None);
+
+            match self.client.get(url).headers(headers.clone()).send() {
+                Ok(response) if response.status().is_success() => {
+                    match response.bytes() {
+                        Ok(bytes) => {
+                            let size = bytes.len() as u64;
+                            std::fs::write(output_path, bytes)?;
+                            return Ok(size);
+                        }
+                        Err(e) => last_error = Some(format!("读取失败: {}", e)),
+                    }
+                }
+                Ok(response) => {
+                    last_error = Some(format!("HTTP {}", response.status()));
+                }
+                Err(e) => {
+                    last_error = Some(e.to_string());
+                }
+            }
+
+            if attempt < max_retries - 1 {
+                debug!("Download retry {} for {}", attempt + 1, url);
+            }
+        }
+
+        anyhow::bail!("下载失败 (重试 {} 次): {}", max_retries, last_error.unwrap_or_default())
+    }
+
+    /// 下载单个文件
+    pub fn download_file(&self, url: &str, token: &str, output_path: &std::path::Path) -> anyhow::Result<u64> {
         let course_id = Self::extract_course_id(url)
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
 
-        debug!("Fetching PDF info for course: {}", course_id);
+        let docs = self.get_all_documents(&course_id, token)?;
+        let doc = docs.into_iter().next()
+            .ok_or_else(|| anyhow::anyhow!("未找到文档"))?;
 
-        let doc_info = self.get_document_info(&course_id, token)?;
+        let preview = self.get_file_preview_with_retry(&doc.id, token, 3)?;
+        info!("下载: {} ({} bytes)", preview.filename, preview.file_size);
 
-        info!("Found document: {} (ID: {})", doc_info.name, doc_info.id);
+        let size = self.download_file_with_retry(&preview.secure_url, output_path, 3)?;
+        info!("已保存到: {:?}", output_path);
+        Ok(size)
+    }
+
+    /// 批量下载（带进度回调）
+    pub fn download_all_with_progress(
+        &self,
+        url: &str,
+        token: &str,
+        output_dir: &std::path::Path,
+        progress: Option<ProgressCallback>,
+        parallel: usize,
+    ) -> anyhow::Result<Vec<DownloadResult>> {
+        let category_id = Self::extract_course_id(url)
+            .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 categoryId"))?;
+
+        info!("获取分类 {} 下的所有课程", category_id);
+        let courses = self.get_courses_by_category(&category_id, token)?;
+        info!("找到 {} 个课程", courses.len());
+
+        std::fs::create_dir_all(output_dir)?;
+
+        // 收集所有需要下载的文件
+        let mut all_files = Vec::new();
+        for course in &courses {
+            let docs = self.get_all_documents(&course.id, token)?;
+            for doc in docs {
+                all_files.push((course.clone(), doc));
+            }
+        }
+
+        info!("共有 {} 个文件需要下载", all_files.len());
+
+        let total_files = all_files.len();
+        let completed = Arc::new(AtomicU64::new(0));
+        let total_bytes = Arc::new(AtomicU64::new(0));
+        let (tx, rx) = channel::<DownloadResult>();
+
+        // 并行下载
+        let tx = Arc::new(tx);
+        let progress = progress.clone();
+        thread::scope(|s| {
+            for (course, doc) in all_files {
+                let tx = tx.clone();
+                let completed = completed.clone();
+                let total_bytes = total_bytes.clone();
+                let progress = progress.clone();
+                s.spawn(move || {
+                    let result = self.download_single_file(&course, &doc, output_dir, token, progress.as_ref(), &completed, &total_bytes);
+                    let _ = tx.send(result);
+                });
+            }
+        });
+
+        let mut results = Vec::new();
+        while let Ok(result) = rx.try_recv() {
+            results.push(result);
+            if results.len() >= total_files {
+                break;
+            }
+        }
+
+        info!("下载完成: {} / {} 个文件", results.len(), total_files);
+        Ok(results)
+    }
+
+    /// 下载单个文件（内部使用）
+    fn download_single_file(
+        &self,
+        course: &CourseInfo,
+        doc: &DocumentInfo,
+        output_dir: &std::path::Path,
+        token: &str,
+        progress: Option<&ProgressCallback>,
+        completed: &Arc<AtomicU64>,
+        total_bytes: &Arc<AtomicU64>,
+    ) -> DownloadResult {
+        let course_dir = output_dir.join(sanitize_filename(&course.name));
+
+        match self.get_file_preview_with_retry(&doc.id, token, 3) {
+            Ok(preview) => {
+                // 生成文件名: {课程名称}/{章节名称}/{文档名称}.{扩展名}
+                let ext = preview.filename.split('.').last().unwrap_or("mp4");
+                let file_name = format!("{}/{}/{}.{}",
+                    sanitize_filename(&course.name),
+                    sanitize_filename(&doc.chapter_name),
+                    sanitize_filename(&doc.name),
+                    ext
+                );
+                let output_path = course_dir.join(&file_name);
+
+                // 创建子目录
+                if let Some(parent) = output_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+
+                match self.download_file_with_retry(&preview.secure_url, &output_path, 3) {
+                    Ok(size) => {
+                        let _ = total_bytes.fetch_add(size, Ordering::Relaxed);
+                        let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                        if let Some(cb) = progress {
+                            cb(n as u64, 0, &file_name);
+                        }
+                        return DownloadResult {
+                            filename: file_name,
+                            success: true,
+                            error: None,
+                            size,
+                        };
+                    }
+                    Err(e) => {
+                        return DownloadResult {
+                            filename: doc.name.clone(),
+                            success: false,
+                            error: Some(e.to_string()),
+                            size: 0,
+                        };
+                    }
+                }
+            }
+            Err(e) => {
+                return DownloadResult {
+                    filename: doc.name.clone(),
+                    success: false,
+                    error: Some(e.to_string()),
+                    size: 0,
+                };
+            }
+        }
+    }
+
+    /// 下载单个文件（公开接口，返回 DownloadResult）
+    pub fn download_single(&self, url: &str, token: &str, output_path: &std::path::Path) -> anyhow::Result<DownloadResult> {
+        let course_id = Self::extract_course_id(url)
+            .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
+
+        let docs = self.get_all_documents(&course_id, token)?;
+        let doc = docs.into_iter().next()
+            .ok_or_else(|| anyhow::anyhow!("未找到文档"))?;
+
+        let course = CourseInfo { id: course_id.clone(), name: "Unknown".to_string() };
+
+        let result = self.download_single_file(
+            &course,
+            &doc,
+            output_path.parent().unwrap_or(std::path::Path::new(".")),
+            token,
+            None,
+            &Arc::new(AtomicU64::new(0)),
+            &Arc::new(AtomicU64::new(0)),
+        );
+
+        if result.success {
+            Ok(result)
+        } else {
+            anyhow::bail!(result.error.unwrap_or_default())
+        }
+    }
+
+    /// 获取视频信息
+    pub fn fetch_video_info(&self, url: &str, token: &str) -> anyhow::Result<VideoInfo> {
+        let course_id = Self::extract_course_id(url)
+            .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
+
+        let docs = self.get_all_documents(&course_id, token)?;
+        let doc = docs.into_iter().next()
+            .ok_or_else(|| anyhow::anyhow!("未找到文档"))?;
 
         Ok(VideoInfo {
             url: url.to_string(),
-            title: doc_info.name,
+            title: doc.name,
             description: None,
             uploader: None,
             duration: None,
@@ -200,62 +490,25 @@ impl ZhiXueYunResolver {
         })
     }
 
-    /// 直接下载 PDF 文件
-    pub fn download_pdf(&self, url: &str, token: &str, output_path: &std::path::Path) -> anyhow::Result<()> {
-        let course_id = Self::extract_course_id(url)
-            .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
+    /// 下载课程的所有文档
+    #[allow(dead_code)]
+    pub fn download_all_documents(&self, url: &str, token: &str, output_dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
+        let results = self.download_all_with_progress(url, token, output_dir, None, 4)?;
+        Ok(results.into_iter().filter(|r| r.success).map(|r| r.filename).collect())
+    }
 
-        info!("Downloading PDF for course: {}", course_id);
-
-        // 1. 先获取章节信息
-        let doc_info = self.get_document_info(&course_id, token)?;
-
-        // 2. 调用 preview API 获取下载 URL
-        let preview = self.get_file_preview(&doc_info.id, token)?;
-        info!("File: {} ({} bytes)", preview.filename, preview.file_size.unwrap_or(0));
-
-        // 3. 下载文件
-        let full_url = if preview.secure_url.starts_with("/") {
-            format!("https://kc.zhixueyun.com{}", preview.secure_url)
-        } else {
-            preview.secure_url.clone()
-        };
-
-        debug!("Downloading from: {}", full_url);
-
-        let headers = self.get_auth_headers(Some(token));
-
-        let response = self.client
-            .get(&full_url)
-            .headers(headers.clone())
-            .send()
-            .map_err(|e| anyhow::anyhow!("下载请求失败: {}", e))?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("下载失败: {} - {}", response.status(), response.text().unwrap_or_default());
-        }
-
-        let bytes = response.bytes()
-            .map_err(|e| anyhow::anyhow!("读取下载内容失败: {}", e))?;
-
-        std::fs::write(output_path, bytes)?;
-        info!("PDF 已下载到: {:?}", output_path);
-        Ok(())
+    /// 使用分类ID批量下载
+    #[allow(dead_code)]
+    pub fn download_all_by_category(&self, url: &str, token: &str, output_dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
+        self.download_all_documents(url, token, output_dir)
     }
 }
 
-/// 文档信息
-struct DocumentInfo {
-    id: String,
-    name: String,
-    file_size: Option<u64>,
-}
-
-/// 文件预览信息
-struct FilePreview {
-    secure_url: String,
-    filename: String,
-    file_size: Option<u64>,
+/// 清理文件名中的非法字符
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
+        .collect()
 }
 
 impl PlatformResolver for ZhiXueYunResolver {
@@ -273,7 +526,7 @@ impl PlatformResolver for ZhiXueYunResolver {
             .or_else(|| Some("d452ee129814c2549a2d7b4448a48ea9".to_string()))
             .ok_or_else(|| ResolverError::AuthenticationRequired)?;
 
-        self.fetch_pdf_info(url, &token).map_err(ResolverError::from)
+        self.fetch_video_info(url, &token).map_err(ResolverError::from)
     }
 
     fn requires_auth(&self) -> bool {

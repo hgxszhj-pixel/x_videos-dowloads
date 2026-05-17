@@ -118,6 +118,12 @@ pub fn run_gui() {
     };
     let history = Arc::new(Mutex::new(history));
 
+    // 创建 tokio runtime handle (wrapped in Arc for cheap cloning)
+    let rt = Arc::new(Runtime::new().expect("Failed to create tokio runtime"));
+    let rt_handle = rt.handle().clone();
+    let rt_for_fetch = Arc::new(rt_handle.clone());
+    let rt_for_download = Arc::new(rt_handle.clone());
+
     // 创建 Weak 引用给后台线程使用
     let app_weak_fetch = app.as_weak();
     let app_weak_download = app.as_weak();
@@ -183,12 +189,9 @@ pub fn run_gui() {
     // 更新历史列表
     update_history_list(&app, &history_gui);
 
-    // 创建单一的 tokio runtime (由 slint 的回调内部使用)
-    let _rt = Runtime::new().expect("Failed to create tokio runtime");
-    let _rt = Arc::new(_rt);
-
     // Fetch Info 回调
     app.on_fetch_info(move || {
+        let rt = rt_for_fetch.clone();
         let app_weak = app_weak_fetch_clone.clone();
         let shared = shared_fetch.clone();
         let _history = history_fetch.clone();
@@ -227,7 +230,7 @@ pub fn run_gui() {
             let cookie_clone = cookie.clone();
 
             // 直接使用 tokio::spawn 在现有 runtime 中执行，避免 std::thread 开销
-            tokio::spawn(async move {
+            rt.spawn(async move {
 
                 // 使用 ResolverRegistry 选择合适的解析器
                 let mut registry = ResolverRegistry::new();
@@ -328,6 +331,7 @@ pub fn run_gui() {
 
     // Start Download 回调
     app.on_start_download(move || {
+        let rt = rt_for_download.clone();
         let app_weak = app_weak_download.clone();
         let shared = shared_download.clone();
         let history = history_download.clone();
@@ -418,7 +422,7 @@ pub fn run_gui() {
                 });
 
                 // 使用 tokio::spawn 在现有 runtime 中执行下载
-                tokio::spawn(async move {
+                rt.spawn(async move {
                     let output_path = std::path::Path::new(&output_dir_clone);
                     if !output_path.exists() {
                         let _ = std::fs::create_dir_all(output_path);
