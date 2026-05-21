@@ -527,9 +527,11 @@ impl PlatformResolver for ZhiXueYunResolver {
     }
 
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
-        let token = self.cookie_pool.get()
-            .and_then(|cookies| cookies.get("authorization").cloned())
-            .or(None)
+        let token = std::env::var("ZHIXUEYUN_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())
+            .or_else(|| self.cookie_pool.get()
+                .and_then(|cookies| cookies.get("authorization").cloned()))
             .unwrap_or_else(|| "d452ee129814c2549a2d7b4448a48ea9".to_string());
 
         self.fetch_video_info(url, &token).map_err(ResolverError::from)
