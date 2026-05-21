@@ -15,7 +15,7 @@ use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadRes
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -269,8 +269,8 @@ impl VideoDownloader {
     /// 合并分段文件
     async fn merge_segments(
         &self,
-        output_path: &PathBuf,
-        temp_dir_path: &PathBuf,
+        output_path: &Path,
+        temp_dir_path: &Path,
         segments: u32,
         total_size: u64,
         chunk_size: u64,

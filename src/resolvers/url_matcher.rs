@@ -107,7 +107,7 @@ pub fn url_matches_platform(url: &str, platform: Platform) -> bool {
 pub fn get_platform_patterns(platform: Platform) -> &'static [&'static str] {
     for pattern in URL_PATTERNS {
         if pattern.platform == platform {
-            return &pattern.patterns;
+            return pattern.patterns;
         }
     }
     &[]

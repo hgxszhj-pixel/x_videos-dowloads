@@ -393,7 +393,7 @@ impl ZhiXueYunResolver {
         match self.get_file_preview_with_retry(&doc.id, token, 3) {
             Ok(preview) => {
                 // 生成文件名: {课程名称}/{章节名称}/{文档名称}.{扩展名}
-                let ext = preview.filename.split('.').last().unwrap_or("mp4");
+                let ext = preview.filename.rsplit('.').next().unwrap_or("mp4");
                 let file_name = format!("{}/{}/{}.{}",
                     sanitize_filename(&course.name),
                     sanitize_filename(&doc.chapter_name),
@@ -412,32 +412,28 @@ impl ZhiXueYunResolver {
                         let _ = total_bytes.fetch_add(size, Ordering::Relaxed);
                         let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
                         if let Some(cb) = progress {
-                            cb(n as u64, 0, &file_name);
+                            cb(n, 0, &file_name);
                         }
-                        return DownloadResult {
+                        DownloadResult {
                             filename: file_name,
                             success: true,
                             error: None,
                             size,
-                        };
+                        }
                     }
-                    Err(e) => {
-                        return DownloadResult {
-                            filename: doc.name.clone(),
-                            success: false,
-                            error: Some(e.to_string()),
-                            size: 0,
-                        };
+                    Err(e) => DownloadResult {
+                        filename: doc.name.clone(),
+                        success: false,
+                        error: Some(e.to_string()),
+                        size: 0,
                     }
                 }
             }
-            Err(e) => {
-                return DownloadResult {
-                    filename: doc.name.clone(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    size: 0,
-                };
+            Err(e) => DownloadResult {
+                filename: doc.name.clone(),
+                success: false,
+                error: Some(e.to_string()),
+                size: 0,
             }
         }
     }
@@ -525,8 +521,8 @@ impl PlatformResolver for ZhiXueYunResolver {
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
         let token = self.cookie_pool.get()
             .and_then(|cookies| cookies.get("authorization").cloned())
-            .or_else(|| Some("d452ee129814c2549a2d7b4448a48ea9".to_string()))
-            .ok_or_else(|| ResolverError::AuthenticationRequired)?;
+            .or(None)
+            .unwrap_or_else(|| "d452ee129814c2549a2d7b4448a48ea9".to_string());
 
         self.fetch_video_info(url, &token).map_err(ResolverError::from)
     }
