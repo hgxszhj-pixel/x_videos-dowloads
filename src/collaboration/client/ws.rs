@@ -35,7 +35,20 @@ const BACKOFF_BASE_SECS: u64 = 1;
 /// 最大退避时间（秒）
 const MAX_BACKOFF_SECS: u64 = 30;
 
-/// WebSocket 客户端
+/// WebSocket client for collaboration
+///
+/// Manages connection to collaboration server, handles authentication,
+/// message sending/receiving, and automatic reconnection with exponential backoff.
+///
+/// # Example
+/// ```ignore
+/// let client = CollaborationClient::connect(
+///     "ws://localhost:8080",
+///     team_id,
+///     device_id,
+///     "My Device"
+/// ).await?;
+/// ```
 #[allow(dead_code)]
 pub struct CollaborationClient {
     device_id: Uuid,
@@ -53,6 +66,16 @@ pub struct CollaborationClient {
 }
 
 impl ConnectionState {
+    /// Convert from a u64 value to ConnectionState
+    ///
+    /// # Arguments
+    /// * `val` - u64 value (0=Disconnected, 1=Connecting, 2=Connected, 3=Failed, 4+=Reconnecting)
+    ///
+    /// # Example
+    /// ```
+    /// let state = ConnectionState::from_u64(2);
+    /// assert_eq!(state, ConnectionState::Connected);
+    /// ```
     pub fn from_u64(val: u64) -> Self {
         match val {
             0 => ConnectionState::Disconnected,
@@ -78,8 +101,30 @@ pub struct CollaborationClientWithFileHandler {
 
 #[allow(dead_code)]
 impl CollaborationClient {
+    /// Connect to a collaboration server
+    ///
+    /// Establishes a WebSocket connection with authentication and registration.
+    ///
+    /// # Arguments
+    /// * `server_url` - WebSocket server URL (e.g., "ws://localhost:8080")
+    /// * `team_id` - UUID of the team to join
+    /// * `device_id` - UUID of this device
+    /// * `device_name` - Human-readable name for this device
+    ///
+    /// # Returns
+    /// * `Ok(Self)` - Connected client instance
+    /// * `Err(anyhow::Error)` - Connection failed
+    ///
+    /// # Example
+    /// ```ignore
+    /// let client = CollaborationClient::connect(
+    ///     "ws://localhost:8080",
+    ///     team_id,
+    ///     device_id,
+    ///     "My Device"
+    /// ).await?;
+    /// ```
     #[allow(dead_code)]
-    /// 连接服务器
     pub async fn connect(
         server_url: &str,
         team_id: Uuid,
@@ -222,7 +267,10 @@ impl CollaborationClient {
         }
     }
 
-    /// 获取当前连接状态
+    /// Get current connection state
+    ///
+    /// # Returns
+    /// Current [ConnectionState] (Connected, Connecting, Disconnected, etc.)
     pub fn connection_state(&self) -> ConnectionState {
         ConnectionState::from_u64(self.state.load(Ordering::SeqCst))
     }
@@ -235,19 +283,32 @@ impl CollaborationClient {
         *self.on_failure.lock().unwrap() = Some(Box::new(f));
     }
 
-    /// 发送消息
+    /// Send a message to the server
+    ///
+    /// # Arguments
+    /// * `msg` - [ClientMessage] to send
+    ///
+    /// # Returns
+    /// * `Ok(())` - Message sent successfully
+    /// * `Err(anyhow::Error)` - Send failed
     pub async fn send(&self, msg: ClientMessage) -> Result<()> {
         let json = serde_json::to_string(&msg)?;
         self.write_tx.send(json).await?;
         Ok(())
     }
 
-    /// 订阅消息
+    /// Subscribe to server messages
+    ///
+    /// # Returns
+    /// [broadcast::Receiver] for [ServerMessage] stream
     pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
         self.msg_tx.subscribe()
     }
 
-    /// 添加任务
+    /// Add a new download task
+    ///
+    /// # Arguments
+    /// * `url` - Video URL to download
     pub async fn add_task(&self, url: &str) -> Result<()> {
         let msg = ClientMessage::AddTask {
             url: url.to_string(),
@@ -255,19 +316,31 @@ impl CollaborationClient {
         self.send(msg).await
     }
 
-    /// 认领任务
+    /// Claim a task for download
+    ///
+    /// # Arguments
+    /// * `task_id` - UUID of the task to claim
     pub async fn claim_task(&self, task_id: Uuid) -> Result<()> {
         let msg = ClientMessage::ClaimTask { task_id };
         self.send(msg).await
     }
 
-    /// 更新进度
+    /// Update task download progress
+    ///
+    /// # Arguments
+    /// * `task_id` - UUID of the task
+    /// * `progress` - Progress value between 0.0 and 1.0
     pub async fn update_progress(&self, task_id: Uuid, progress: f64) -> Result<()> {
         let msg = ClientMessage::UpdateProgress { task_id, progress };
         self.send(msg).await
     }
 
-    /// 任务完成
+    /// Notify that task download is complete
+    ///
+    /// # Arguments
+    /// * `task_id` - UUID of the completed task
+    /// * `local_path` - Local file path where the video was saved
+    /// * `file_size` - Size of the file in bytes
     pub async fn task_complete(
         &self,
         task_id: Uuid,
@@ -282,13 +355,16 @@ impl CollaborationClient {
         self.send(msg).await
     }
 
-    /// 请求文件
+    /// Request file download from peer device
+    ///
+    /// # Arguments
+    /// * `task_id` - UUID of the task whose file to request
     pub async fn request_file(&self, task_id: Uuid) -> Result<()> {
         let msg = ClientMessage::RequestFile { task_id };
         self.send(msg).await
     }
 
-    /// 离开团队
+    /// Leave the current team
     pub async fn leave_team(&self) -> Result<()> {
         let msg = ClientMessage::LeaveTeam {
             device_id: self.device_id,
@@ -296,7 +372,10 @@ impl CollaborationClient {
         self.send(msg).await
     }
 
-    /// 创建团队
+    /// Create a new team
+    ///
+    /// # Arguments
+    /// * `name` - Team name
     pub async fn create_team(&self, name: &str) -> Result<()> {
         let msg = ClientMessage::CreateTeam {
             name: name.to_string(),
@@ -304,7 +383,10 @@ impl CollaborationClient {
         self.send(msg).await
     }
 
-    /// 加入团队
+    /// Join a team using invite code
+    ///
+    /// # Arguments
+    /// * `invite_code` - Team invite code
     pub async fn join_team(&self, invite_code: &str) -> Result<()> {
         let msg = ClientMessage::JoinTeam {
             invite_code: invite_code.to_string(),
@@ -312,12 +394,12 @@ impl CollaborationClient {
         self.send(msg).await
     }
 
-    /// 获取设备ID
+    /// Get this device's UUID
     pub fn device_id(&self) -> Uuid {
         self.device_id
     }
 
-    /// 获取团队ID
+    /// Get current team UUID
     pub fn team_id(&self) -> Uuid {
         self.team_id
     }
@@ -325,9 +407,17 @@ impl CollaborationClient {
 
 #[allow(dead_code)]
 impl CollaborationClientWithFileHandler {
-    /// 创建带文件处理功能的客户端
+    /// Create a file-handling client with a new file server
     ///
-    /// 内部创建独立文件服务器，默认端口 8080
+    /// Starts an internal HTTP file server on the specified port.
+    ///
+    /// # Arguments
+    /// * `server_url` - WebSocket server URL
+    /// * `team_id` - Team UUID
+    /// * `device_id` - Device UUID
+    /// * `device_name` - Human-readable device name
+    /// * `download_dir` - Directory to save downloaded files
+    /// * `file_server_port` - HTTP file server port (default 8080)
     pub async fn new(
         server_url: &str,
         team_id: Uuid,
@@ -361,9 +451,17 @@ impl CollaborationClientWithFileHandler {
         })
     }
 
-    /// 创建带文件处理功能的客户端（使用已有的 FileServer）
+    /// Create a file-handling client with an existing file server
     ///
-    /// 适用于需要复用现有文件服务器的场景
+    /// Use this when you need to reuse an existing [FileServer] instance.
+    ///
+    /// # Arguments
+    /// * `server_url` - WebSocket server URL
+    /// * `team_id` - Team UUID
+    /// * `device_id` - Device UUID
+    /// * `device_name` - Human-readable device name
+    /// * `download_dir` - Directory to save downloaded files
+    /// * `file_server`` - Existing [FileServer] instance to reuse
     pub async fn with_file_server(
         server_url: &str,
         team_id: Uuid,
@@ -386,7 +484,10 @@ impl CollaborationClientWithFileHandler {
         })
     }
 
-    /// 设置连接失败回调
+    /// Set callback for connection failure
+    ///
+    /// # Arguments
+    /// * `f` - Callback function invoked after max reconnection attempts are exceeded
     pub fn on_connection_failed<F>(&self, f: F)
     where
         F: Fn() + Send + Sync + 'static,
@@ -394,16 +495,16 @@ impl CollaborationClientWithFileHandler {
         self.client.on_connection_failed(f);
     }
 
-    /// 获取连接状态
+    /// Get connection state
     pub fn connection_state(&self) -> ConnectionState {
         self.client.connection_state()
     }
 
-    /// 启动消息监听循环
+    /// Start the file handler background task
     ///
-    /// 在后台任务中自动处理：
-    /// - 收到 FileAvailable 时自动下载文件
-    /// - 其他消息转发给订阅者
+    /// Automatically handles:
+    /// - [ServerMessage::FileAvailable] events to download files
+    /// - Other messages are forwarded to subscribers
     pub async fn start_file_handler(&self) {
         let mut rx = self.client.subscribe();
         let downloader = self.downloader.clone();
@@ -442,10 +543,14 @@ impl CollaborationClientWithFileHandler {
         });
     }
 
-    /// 注册文件到文件服务器（任务完成时调用）
+    /// Register a completed file with the file server
     ///
-    /// 当本地任务完成下载后，调用此方法将文件注册到文件服务器，
-    /// 以便其他对等设备可以请求此文件
+    /// Call this after a download task completes to make the file
+    /// available for other peers to request.
+    ///
+    /// # Arguments
+    /// * `task_id` - UUID of the completed task
+    /// * `local_path` - Local path where the file is stored
     pub async fn register_completed_file(&self, task_id: Uuid, local_path: PathBuf) -> Result<()> {
         if let Some(ref server) = self.file_server {
             if let Err(e) = server.register_file(task_id, local_path).await {
@@ -457,12 +562,12 @@ impl CollaborationClientWithFileHandler {
         Ok(())
     }
 
-    /// 获取内部的协作客户端（用于发送消息）
+    /// Get the inner [CollaborationClient] for sending messages
     pub fn client(&self) -> &CollaborationClient {
         &self.client
     }
 
-    /// 获取文件服务器实例
+    /// Get the [FileServer] instance if available
     pub fn file_server(&self) -> Option<&Arc<crate::collaboration::transfer::http_server::FileServer>> {
         self.file_server.as_ref()
     }

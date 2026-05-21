@@ -303,14 +303,14 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
             let result = download_direct(url, &cli, start_time).await?;
             // 记录到历史
             if result.success {
-                history.add_entry(url.clone(), None, Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
+                history.add_entry_with_all(url.clone(), None, Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
             }
         } else if let Some(ref info) = video_info {
             // 使用 yt-dlp 下载
             download_with_ytdlp(&ytdlp, info, &cli, &config, start_time).await?;
             // 记录到历史（duration 转换为 f64）
             let duration_secs = info.duration.map(|d| d as f64);
-            history.add_entry(url.clone(), Some(info.title.clone()), None, None, duration_secs, history::DownloadStatus::Completed, None)?;
+            history.add_entry_with_all(url.clone(), Some(info.title.clone()), None, None, duration_secs, history::DownloadStatus::Completed, None)?;
         }
     }
 

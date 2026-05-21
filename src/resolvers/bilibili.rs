@@ -2,12 +2,13 @@
 //!
 //! 使用 yt-dlp 作为主要方式，支持 cookies 认证
 
-use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager};
+use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use std::collections::HashMap;
 
 /// Bilibili 解析器
+#[allow(dead_code)]
 pub struct BilibiliResolver {
     cookies: HashMap<String, String>,
     cookie_manager: CookieFileManager,
@@ -23,6 +24,7 @@ impl BilibiliResolver {
     }
 
     /// 设置 cookies
+    #[allow(dead_code)]
     pub fn with_cookies(mut self, cookies: HashMap<String, String>) -> Self {
         self.cookies = cookies;
         self
@@ -46,7 +48,7 @@ impl PlatformResolver for BilibiliResolver {
     }
 
     fn supported_url_patterns(&self) -> Vec<&'static str> {
-        vec!["bilibili.com", "bilivideo.com", "b23.tv"]
+        url_matcher::get_platform_patterns(Platform::Bilibili).to_vec()
     }
 
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
@@ -79,30 +81,6 @@ impl PlatformResolver for BilibiliResolver {
     }
 }
 
-/// 提取 Bilibili 视频 ID (BV号 或 av号)
-pub fn extract_bilibili_video_id(url: &str) -> anyhow::Result<(String, bool)> {
-    // BV 号: https://www.bilibili.com/video/BV1xx411c7XD
-    // av 号: https://www.bilibili.com/video/av170001
-
-    if url.contains("/video/BV") {
-        let parts: Vec<&str> = url.split("/video/BV").collect();
-        if parts.len() >= 2 {
-            let bv = parts[1].split(['?', '/']).next().unwrap_or(parts[1]);
-            return Ok((bv.to_string(), false));
-        }
-    }
-
-    if url.contains("/video/av") {
-        let parts: Vec<&str> = url.split("/video/av").collect();
-        if parts.len() >= 2 {
-            let av = parts[1].split(['?', '/']).next().unwrap_or(parts[1]);
-            return Ok((av.to_string(), true));
-        }
-    }
-
-    anyhow::bail!("无法从 URL 提取 Bilibili 视频 ID")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,21 +93,4 @@ mod tests {
         assert!(!resolver.supports_url("https://youtube.com/watch"));
     }
 
-    #[test]
-    fn test_extract_bv_id() {
-        let id = extract_bilibili_video_id("https://www.bilibili.com/video/BV1xx411c7XD");
-        assert!(id.is_ok());
-        let (bv, is_av) = id.unwrap();
-        assert_eq!(bv, "1xx411c7XD");
-        assert!(!is_av);
-    }
-
-    #[test]
-    fn test_extract_av_id() {
-        let id = extract_bilibili_video_id("https://www.bilibili.com/video/av170001");
-        assert!(id.is_ok());
-        let (av, is_av) = id.unwrap();
-        assert_eq!(av, "170001");
-        assert!(is_av);
-    }
 }

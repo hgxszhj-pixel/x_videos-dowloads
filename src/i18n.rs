@@ -107,6 +107,7 @@ impl LanguagePack {
     }
 
     /// 加载语言包
+    #[allow(dead_code)]
     pub fn load_from_file(path: &PathBuf) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read file: {}", e))?;
@@ -134,14 +135,15 @@ impl LanguagePack {
 }
 
 /// 获取翻译文本
+#[allow(dead_code)]
 pub fn tr(key: &str) -> String {
-    let lang = CURRENT_LANG.lock().unwrap();
+    let lang = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG for translation");
     lang.texts.get(key).cloned().unwrap_or_else(|| key.to_string())
 }
 
 /// 获取当前字体列表（用于 Slint）
 pub fn get_font_family() -> String {
-    let lang = CURRENT_LANG.lock().unwrap();
+    let lang = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG for font family");
     let fonts = &lang.fonts;
 
     if fonts.enable_fallback {
@@ -156,13 +158,14 @@ pub fn get_font_family() -> String {
 
 /// 切换语言
 pub fn set_language(lang: &str) {
-    let mut current = CURRENT_LANG.lock().unwrap();
+    let mut current = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG for language switch");
     *current = LanguagePack::load_builtin(lang);
 }
 
 /// 获取当前语言代码
+#[allow(dead_code)]
 pub fn get_current_lang() -> String {
-    let lang = CURRENT_LANG.lock().unwrap();
+    let lang = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG to get current language");
     lang.lang.clone()
 }
 
@@ -186,6 +189,7 @@ pub fn init() {
 }
 
 /// 获取所有可用语言
+#[allow(dead_code)]
 pub fn get_available_languages() -> Vec<(&'static str, &'static str)> {
     vec![
         ("en", "English"),

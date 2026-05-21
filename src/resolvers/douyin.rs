@@ -3,13 +3,14 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持信息流 URL (jingxuan/sports) 和 modal_id 解析
 
-use crate::resolvers::{PlatformResolver, ResolverError, DouYinApiClient, extract_modal_id, CookieFileManager};
+use crate::resolvers::{PlatformResolver, ResolverError, DouYinApiClient, extract_modal_id, CookieFileManager, url_matcher};
 use crate::types::{VideoInfo, VideoFormat};
 use crate::history::Platform;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// 抖音解析器
+#[allow(dead_code)]
 pub struct DouYinResolver {
     tokens: HashMap<String, String>,
     token_manager: Option<Arc<Mutex<crate::resolvers::TokenManager>>>,
@@ -27,12 +28,14 @@ impl DouYinResolver {
     }
 
     /// 设置 tokens
+    #[allow(dead_code)]
     pub fn with_tokens(mut self, tokens: HashMap<String, String>) -> Self {
         self.tokens = tokens;
         self
     }
 
     /// 设置 TokenManager 用于自动token生成
+    #[allow(dead_code)]
     pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::resolvers::TokenManager>>) -> Self {
         self.token_manager = Some(tm);
         self
@@ -56,7 +59,7 @@ impl PlatformResolver for DouYinResolver {
     }
 
     fn supported_url_patterns(&self) -> Vec<&'static str> {
-        vec!["douyin.com", "v.douyin.com"]
+        url_matcher::get_platform_patterns(Platform::DouYin).to_vec()
     }
 
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
@@ -204,28 +207,6 @@ impl PlatformResolver for DouYinResolver {
     }
 }
 
-/// 从 URL 提取抖音视频 ID
-pub fn extract_douyin_video_id(url: &str) -> anyhow::Result<String> {
-    // 格式: https://www.douyin.com/video/7231679494828376333
-    // 或: https://v.douyin.com/xxxx
-
-    if url.contains("/video/") {
-        let parts: Vec<&str> = url.split("/video/").collect();
-        if parts.len() >= 2 {
-            let id_part = parts[1].split('?').next().unwrap_or(parts[1]);
-            if !id_part.is_empty() {
-                return Ok(id_part.to_string());
-            }
-        }
-    }
-
-    if url.contains("v.douyin.com") {
-        anyhow::bail!("抖音短链接需要先解析");
-    }
-
-    anyhow::bail!("无法从 URL 提取抖音视频 ID")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,10 +219,4 @@ mod tests {
         assert!(!resolver.supports_url("https://tiktok.com/video"));
     }
 
-    #[test]
-    fn test_extract_video_id() {
-        let id = extract_douyin_video_id("https://www.douyin.com/video/7231679494828376333");
-        assert!(id.is_ok());
-        assert_eq!(id.unwrap(), "7231679494828376333");
-    }
 }

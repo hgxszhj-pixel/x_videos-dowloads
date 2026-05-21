@@ -3,6 +3,7 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 /// A single cookie entry with metadata for LRU eviction
+#[allow(dead_code)]
 pub struct CookieEntry {
     /// The cookie key-value pairs
     pub cookies: HashMap<String, String>,
@@ -33,6 +34,7 @@ impl CookieEntry {
 }
 
 /// Thread-safe cookie pool with LRU eviction and TTL support
+#[allow(dead_code)]
 pub struct CookiePool {
     entries: RwLock<Vec<CookieEntry>>,
     /// Time-to-live for cookie entries
@@ -47,6 +49,7 @@ impl CookiePool {
     /// # Arguments
     /// * `ttl_hours` - Time-to-live in hours for cookie entries
     /// * `max_hits` - Maximum number of times a cookie can be retrieved before being invalidated
+    #[allow(dead_code)]
     pub fn new(ttl_hours: u64, max_hits: u32) -> Self {
         Self {
             entries: RwLock::new(Vec::new()),
@@ -60,6 +63,7 @@ impl CookiePool {
     /// # Arguments
     /// * `cookies` - The cookie key-value pairs
     /// * `account` - The account identifier
+    #[allow(dead_code)]
     pub fn add(&self, cookies: HashMap<String, String>, account: String) {
         let entry = CookieEntry::new(cookies, account);
         if let Ok(mut entries) = self.entries.write() {
@@ -134,6 +138,7 @@ impl CookiePool {
     ///
     /// # Arguments
     /// * `account` - The account identifier to invalidate
+    #[allow(dead_code)]
     pub fn invalidate_by_account(&self, account: &str) {
         if let Ok(mut entries) = self.entries.write() {
             for entry in entries.iter_mut() {
@@ -145,16 +150,19 @@ impl CookiePool {
     }
 
     /// Returns the number of entries in the pool (including invalid ones)
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.read().map(|e| e.len()).unwrap_or(0)
     }
 
     /// Returns true if the pool is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Returns the number of valid entries (respecting TTL and hit count limits)
+    #[allow(dead_code)]
     pub fn valid_count(&self) -> usize {
         self.entries
             .read()
@@ -172,6 +180,7 @@ impl CookiePool {
     }
 
     /// Cleanup expired and invalid entries to free memory
+    #[allow(dead_code)]
     pub fn cleanup(&self) {
         if let Ok(mut entries) = self.entries.write() {
             entries.retain(|e| e.valid);
@@ -365,7 +374,7 @@ mod tests {
         assert!(first.is_some(), "first get should succeed");
         assert!(second.is_some(), "second get should succeed");
 
-        let len_before = pool.len();
+        let _len_before = pool.len();
         let valid_before = pool.valid_count();
 
         pool.cleanup();

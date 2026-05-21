@@ -4,6 +4,13 @@
 
 #![allow(dead_code)]
 
+/// 并行下载常量
+const SEGMENT_SIZE_THRESHOLD: u64 = 10 * 1024 * 1024; // 10MB - 启用并行下载的最小文件大小
+const SEGMENT_TIMEOUT_SECS: u64 = 300; // 5分钟 - 分段下载独立超时
+const SEGMENT_VALIDATION_RATIO: u64 = 90; // 90% - 分段大小验证比例
+const RESUME_MIN_DOWNLOAD_RATIO: u64 = 80; // 80% - 断点续传最小下载比例
+const FILE_SIZE_VALIDATION_RATIO: u64 = 90; // 90% - 最终文件大小验证比例
+
 use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, DEFAULT_USER_AGENT, validate_output_path};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
@@ -170,7 +177,7 @@ impl VideoDownloader {
 
             // 大于10MB且启用了分段下载时使用并行下载
             if let Some(size) = total_size {
-                if self.config.parallel_segments > 0 && size > 10 * 1024 * 1024 {
+                if self.config.parallel_segments > 0 && size > SEGMENT_SIZE_THRESHOLD {
                     match self.parallel_download(request, size, progress_callback.clone()).await {
                         Ok(result) => return Ok(result),
                         Err(e) => {
@@ -193,6 +200,7 @@ impl VideoDownloader {
         }
 
         Err(anyhow!("下载失败，已重试 {} 次: {:?}", self.config.retry_count, last_error))
+            .context("parallel download failed after all retry attempts")
     }
 
     /// 根据速度计算最佳线程数（自适应）
@@ -231,6 +239,101 @@ impl VideoDownloader {
         current_threads
     }
 
+    /// 计算分段范围
+    fn calculate_segment_ranges(&self, segments: u32, total_size: u64, chunk_size: u64) -> Vec<(u64, u64)> {
+        (0..segments)
+            .map(|i| {
+                let start = i as u64 * chunk_size;
+                let end = if i == segments - 1 {
+                    total_size - 1
+                } else {
+                    (i + 1) as u64 * chunk_size - 1
+                };
+                (start, end)
+            })
+            .collect()
+    }
+
+    /// 设置进度跟踪
+    fn setup_progress_tracking(&self, total_size: u64, task_id: &str) -> (Arc<AtomicU64>, Arc<AtomicBool>, Arc<Mutex<DownloadProgress>>) {
+        let total_downloaded = Arc::new(AtomicU64::new(0));
+        let download_active = Arc::new(AtomicBool::new(true));
+        let progress = Arc::new(Mutex::new(
+            DownloadProgress::new(task_id.to_string())
+                .with_total_bytes(total_size)
+                .with_status(DownloadStatus::Downloading)
+        ));
+        (total_downloaded, download_active, progress)
+    }
+
+    /// 合并分段文件
+    async fn merge_segments(
+        &self,
+        output_path: &PathBuf,
+        temp_dir_path: &PathBuf,
+        segments: u32,
+        total_size: u64,
+        chunk_size: u64,
+    ) -> Result<u64> {
+        use std::fs::{File as StdFile, OpenOptions};
+        use std::io::{copy as io_copy, Seek, SeekFrom};
+
+        // Validate output path to prevent path traversal
+        validate_output_path(output_path, temp_dir_path)
+            .map_err(|e| anyhow!("Path traversal detected: {}", e))
+            .context("output path validation failed")?;
+
+        // 打开输出文件（不截断，支持追加写入）
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(output_path)?;
+
+        let mut final_size = 0u64;
+
+        for i in 0..segments {
+            let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
+            let expected_start = i as u64 * chunk_size;
+            let expected_end = if i == segments - 1 {
+                total_size - 1
+            } else {
+                (i + 1) as u64 * chunk_size - 1
+            };
+            let expected_segment_size = expected_end - expected_start + 1;
+
+            // 检查分段文件是否存在且大小合理
+            if let Ok(metadata) = std::fs::metadata(&temp_path) {
+                let actual_size = metadata.len();
+                if actual_size >= expected_segment_size * SEGMENT_VALIDATION_RATIO / 100 {
+                    let mut input = StdFile::open(&temp_path)?;
+
+                    // 移动到正确的写入位置
+                    output.seek(SeekFrom::Start(expected_start))?;
+
+                    // 使用 std::io::copy，操作系统会自动使用大缓冲区
+                    match io_copy(&mut input, &mut output) {
+                        Ok(n) => {
+                            debug!("合并分段 {}: {} bytes", i, n);
+                            final_size += n;
+                        }
+                        Err(e) => {
+                            warn!("合并分段 {} 时出错: {:?}", i, e);
+                        }
+                    }
+                } else {
+                    warn!("分段 {} 大小异常: {} (期望 {})", i, actual_size, expected_segment_size);
+                }
+            }
+
+            if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+                debug!("删除临时文件 {} 失败: {:?}", temp_path.display(), e);
+            }
+        }
+
+        Ok(final_size)
+    }
+
     /// 分段并行下载
     async fn parallel_download(
         &self,
@@ -267,13 +370,11 @@ impl VideoDownloader {
         }
 
         let chunk_size = (total_size as f64 / segments as f64).ceil() as u64;
+        let segment_ranges = self.calculate_segment_ranges(segments, total_size, chunk_size);
 
-        // 创建进度跟踪（使用原子操作支持多线程更新）
-        let total_downloaded = Arc::new(AtomicU64::new(0));
-        let download_active = Arc::new(AtomicBool::new(true));
-        let progress = Arc::new(Mutex::new(DownloadProgress::new("parallel".to_string())
-            .with_total_bytes(total_size)
-            .with_status(DownloadStatus::Downloading)));
+        // 设置进度跟踪
+        let (total_downloaded, download_active, progress) =
+            self.setup_progress_tracking(total_size, "parallel");
 
         // 克隆进度相关数据用于后台进度报告任务
         let total_downloaded_clone = total_downloaded.clone();
@@ -328,12 +429,7 @@ impl VideoDownloader {
             let url = url.clone();
             let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
             let client = self.client.clone();
-            let start = i as u64 * chunk_size;
-            let end = if i == segments - 1 {
-                total_size - 1
-            } else {
-                (i + 1) as u64 * chunk_size - 1
-            };
+            let (start, end) = segment_ranges[i as usize];
             let retry_count = self.config.retry_count;
             let segment_size = chunk_size;
             let td = total_downloaded.clone();
@@ -370,7 +466,8 @@ impl VideoDownloader {
 
         // 所有分段都失败则报错
         if success_count == 0 {
-            return Err(anyhow!("所有分段下载都失败了"));
+            return Err(anyhow!("所有分段下载都失败了"))
+            .context("all parallel segments failed to download")
         }
 
         // 部分成功时，检查是否应该回退到单线程断点续传
@@ -379,7 +476,7 @@ impl VideoDownloader {
 
             // 计算已下载的总大小
             let downloaded_size: u64 = segment_sizes.iter().sum();
-            let expected_min = total_size * success_count as u64 / segments as u64 * 80 / 100;
+            let expected_min = total_size * success_count as u64 / segments as u64 * RESUME_MIN_DOWNLOAD_RATIO / 100;
 
             if downloaded_size >= expected_min {
                 info!("已下载 {} bytes，尝试断点续传下载剩余部分", downloaded_size);
@@ -390,67 +487,15 @@ impl VideoDownloader {
             }
         }
 
-        // 合并分段文件（同步复制，性能优化）
-        use std::fs::{File as StdFile, OpenOptions};
-        use std::io::{copy as io_copy, Seek, SeekFrom};
-
-        // Validate output path to prevent path traversal
-        validate_output_path(&output_path, &temp_dir_path)
-            .map_err(|e| anyhow!("Path traversal detected: {}", e))?;
-
-        // 打开输出文件（不截断，支持追加写入）
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&output_path)?;
-
-        for i in 0..segments {
-            let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
-            let expected_start = i as u64 * chunk_size;
-            let expected_end = if i == segments - 1 {
-                total_size - 1
-            } else {
-                (i + 1) as u64 * chunk_size - 1
-            };
-            let expected_segment_size = expected_end - expected_start + 1;
-
-            // 检查分段文件是否存在且大小合理
-            if let Ok(metadata) = std::fs::metadata(&temp_path) {
-                let actual_size = metadata.len();
-                if actual_size >= expected_segment_size * 90 / 100 {
-                    let mut input = StdFile::open(&temp_path)?;
-
-                    // 移动到正确的写入位置
-                    output.seek(SeekFrom::Start(expected_start))?;
-
-                    // 使用 std::io::copy，操作系统会自动使用大缓冲区
-                    match io_copy(&mut input, &mut output) {
-                        Ok(n) => {
-                            debug!("合并分段 {}: {} bytes", i, n);
-                        }
-                        Err(e) => {
-                            warn!("合并分段 {} 时出错: {:?}", i, e);
-                        }
-                    }
-                } else {
-                    warn!("分段 {} 大小异常: {} (期望 {})", i, actual_size, expected_segment_size);
-                }
-            }
-
-            if let Err(e) = tokio::fs::remove_file(&temp_path).await {
-                debug!("删除临时文件 {} 失败: {:?}", temp_path.display(), e);
-            }
-        }
-
-        drop(output);
+        // 合并分段文件
+        self.merge_segments(&output_path, &temp_dir_path, segments, total_size, chunk_size).await?;
 
         // 验证最终文件大小
         if let Ok(final_metadata) = tokio::fs::metadata(&output_path).await {
             let final_size = final_metadata.len();
             info!("合并完成: {} bytes (期望: {} bytes)", final_size, total_size);
 
-            if final_size < total_size * 90 / 100 {
+            if final_size < total_size * FILE_SIZE_VALIDATION_RATIO / 100 {
                 warn!("最终文件大小异常: {} < {}", final_size, total_size);
             }
         }
@@ -621,7 +666,8 @@ impl VideoDownloader {
         let response = request.send().await?;
 
         if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-            return Err(anyhow!("下载失败: HTTP {}", response.status()));
+            return Err(anyhow!("下载失败: HTTP {}", response.status()))
+                .context("HTTP download request failed");
         }
 
         // 创建/打开文件
@@ -695,7 +741,8 @@ async fn download_segment(
         .await?;
 
     if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-        return Err(anyhow!("分段下载失败: HTTP {}", response.status()));
+        return Err(anyhow!("分段下载失败: HTTP {}", response.status()))
+            .context("segment download request failed");
     }
 
     let mut file = File::create(output_path).await?;
@@ -738,7 +785,7 @@ async fn download_segment_with_retry(
     total_downloaded: Option<Arc<AtomicU64>>,
     progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
 ) -> Result<u64> {
-    let segment_timeout = Duration::from_secs(300); // 5分钟独立超时
+    let segment_timeout = Duration::from_secs(SEGMENT_TIMEOUT_SECS);
     let segment_size = end - start + 1;
 
     for attempt in 0..retry_count {
@@ -751,7 +798,7 @@ async fn download_segment_with_retry(
         match tokio::time::timeout(segment_timeout, download_segment(client, url, output_path, start, end, segment_size, progress_callback.clone(), total_downloaded.clone())).await {
             Ok(Ok(size)) => {
                 // 验证下载大小是否合理
-                if size >= expected_size * 90 / 100 {
+                if size >= expected_size * SEGMENT_VALIDATION_RATIO / 100 {
                     return Ok(size);
                 } else {
                     warn!("分段 [{}-{}] 大小异常: {} (期望 {})", start, end, size, expected_size);
@@ -770,6 +817,7 @@ async fn download_segment_with_retry(
     }
 
     Err(anyhow!("分段 [{}-{}] 下载失败，已重试 {} 次", start, end, retry_count))
+        .context("segment download failed after all retry attempts")
 }
 
 /// 解析 yt-dlp 进度输出

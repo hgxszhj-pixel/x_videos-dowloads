@@ -19,7 +19,11 @@ struct Session {
     tx: broadcast::Sender<String>,
 }
 
-/// 消息处理器
+/// Message handler for WebSocket connections
+///
+/// Manages client sessions, team operations, and task distribution.
+/// Coordinates with database and hash ring for consistent task assignment.
+#[allow(dead_code)]
 pub struct MessageHandler {
     db: Arc<Database>,
     sessions: Arc<RwLock<HashMap<String, Session>>>,
@@ -27,6 +31,10 @@ pub struct MessageHandler {
 }
 
 impl MessageHandler {
+    /// Create a new MessageHandler
+    ///
+    /// # Arguments
+    /// * `db` - Database instance for persistence
     pub fn new(db: Arc<Database>) -> Self {
         Self {
             db,
@@ -35,7 +43,13 @@ impl MessageHandler {
         }
     }
 
-    /// 注册客户端连接
+    /// Register a new client connection
+    ///
+    /// # Arguments
+    /// * `key` - Unique connection key (typically WebSocket subprotocol)
+    /// * `device_id` - UUID of the device
+    /// * `team_id` - UUID of the team
+    /// * `tx` - Channel sender for sending messages to this client
     pub async fn register_client(
         &self,
         key: String,
@@ -67,7 +81,12 @@ impl MessageHandler {
         );
     }
 
-    /// 更新 session 的设备信息
+    /// Update session device and team info
+    ///
+    /// # Arguments
+    /// * `key` - Connection key to update
+    /// * `device_id` - New device UUID
+    /// * `team_id` - New team UUID
     pub async fn update_session(&self, key: &str, device_id: Uuid, team_id: Uuid) {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(key) {
@@ -76,12 +95,23 @@ impl MessageHandler {
         }
     }
 
-    /// 注销客户端
+    /// Unregister a client connection
+    ///
+    /// # Arguments
+    /// * `key` - Connection key to remove
     pub async fn unregister_client_by_key(&self, key: &str) {
         self.sessions.write().await.remove(key);
     }
 
-    /// 通过设备ID发送消息
+    /// Send a message to a specific device
+    ///
+    /// # Arguments
+    /// * `device_id` - Target device UUID
+    /// * `message` - [ServerMessage] to send
+    ///
+    /// # Returns
+    /// * `Ok(())` - Message sent (or client disconnected)
+    /// * `Err(anyhow::Error)` - Serialization failed
     pub async fn send_to_device(&self, device_id: Uuid, message: ServerMessage) -> Result<()> {
         let json = serde_json::to_string(&message)?;
         let sessions = self.sessions.read().await;
@@ -95,7 +125,15 @@ impl MessageHandler {
         Ok(())
     }
 
-    /// 广播给团队所有设备
+    /// Broadcast a message to all devices in a team
+    ///
+    /// # Arguments
+    /// * `team_id` - Target team UUID
+    /// * `message` - [ServerMessage] to broadcast
+    ///
+    /// # Returns
+    /// * `Ok(())` - Message broadcast (or clients disconnected)
+    /// * `Err(anyhow::Error)` - Serialization failed
     pub async fn broadcast_to_team(&self, team_id: Uuid, message: ServerMessage) -> Result<()> {
         let json = serde_json::to_string(&message)?;
         let sessions = self.sessions.read().await;
@@ -108,7 +146,13 @@ impl MessageHandler {
         Ok(())
     }
 
-    /// 处理客户端消息
+    /// Handle an incoming client message
+    ///
+    /// Dispatches to appropriate handler based on message type.
+    ///
+    /// # Arguments
+    /// * `key` - Connection key of the sender
+    /// * `msg` - [ClientMessage] to process
     pub async fn handle_message(&self, key: &str, msg: ClientMessage) {
         let (device_id, team_id) = {
             let sessions = self.sessions.read().await;
@@ -215,7 +259,9 @@ impl MessageHandler {
         }
     }
 
-    /// 处理加入团队消息
+    /// Handle join team request
+    ///
+    /// Looks up team by invite code and registers the device.
     async fn handle_join_team(&self, key: &str, invite_code: String) {
         // 通过邀请码查找团队
         let team = match self.db.get_team_by_code(&invite_code) {
@@ -266,7 +312,7 @@ impl MessageHandler {
         }
     }
 
-    /// 发送错误消息给客户端
+    /// Send error message to client
     async fn send_error(&self, key: &str, message: String) -> Result<(), anyhow::Error> {
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(key) {
@@ -275,7 +321,9 @@ impl MessageHandler {
         Ok(())
     }
 
-    /// 处理添加任务消息
+    /// Handle add task request
+    ///
+    /// Creates a new task and assigns it via consistent hash ring.
     async fn handle_add_task(&self, device_id: Uuid, team_id: Uuid, url: String) {
         // 创建任务（数据库 UNIQUE 约束处理 URL 冲突）
         let mut task = Task::new(url, team_id, device_id);
@@ -318,7 +366,9 @@ impl MessageHandler {
         ).await;
     }
 
-    /// 处理认领任务消息
+    /// Handle claim task request
+    ///
+    /// Claims an available task for the requesting device.
     async fn handle_claim_task(&self, device_id: Uuid, team_id: Uuid, task_id: Uuid) {
         if let Ok(tasks) = self.db.get_tasks_by_team(team_id) {
             if let Some(mut task) = tasks.into_iter().find(|t| t.id == task_id) {
@@ -361,7 +411,9 @@ impl MessageHandler {
         ).await;
     }
 
-    /// 处理更新进度消息
+    /// Handle progress update from a device
+    ///
+    /// Only the device that claimed the task can update progress.
     async fn handle_update_progress(
         &self,
         device_id: Uuid,
@@ -391,7 +443,9 @@ impl MessageHandler {
         }
     }
 
-    /// 处理任务完成消息
+    /// Handle task completion
+    ///
+    /// Marks the task as complete and updates its metadata.
     async fn handle_task_complete(
         &self,
         device_id: Uuid,
@@ -425,7 +479,9 @@ impl MessageHandler {
         }
     }
 
-    /// 处理文件请求消息
+    /// Handle file request
+    ///
+    /// Sends [ServerMessage::FileAvailable] with peer's address and file info.
     async fn handle_request_file(&self, device_id: Uuid, team_id: Uuid, task_id: Uuid) {
         if let Ok(tasks) = self.db.get_tasks_by_team(team_id) {
             if let Some(task) = tasks.iter().find(|t| t.id == task_id) {
@@ -460,7 +516,9 @@ impl MessageHandler {
         }
     }
 
-    /// 处理离开团队消息
+    /// Handle leave team request
+    ///
+    /// Marks device as offline and removes from hash ring.
     async fn handle_leave_team(&self, device_id: Uuid) {
         if let Err(e) = self.db.set_device_offline(device_id) {
             eprintln!("标记设备离线失败: {}", e);
@@ -468,7 +526,10 @@ impl MessageHandler {
         self.hash_ring.write().await.remove_device(&device_id).await;
     }
 
-    /// 检查所有团队的任务超时
+    /// Check all teams for task timeouts
+    ///
+    /// Releases tasks claimed more than 5 minutes ago with < 100% progress.
+    /// Should be called periodically (e.g., every minute).
     pub async fn check_all_task_timeouts(&self) {
         let team_ids = match self.db.get_all_team_ids() {
             Ok(ids) => ids,
@@ -483,7 +544,9 @@ impl MessageHandler {
         }
     }
 
-    /// 检查任务超时（超过5分钟未完成则释放）
+    /// Check for and release timed-out tasks in a team
+    ///
+    /// Tasks claimed > 5 minutes ago with progress < 100% are released.
     async fn check_task_timeouts(&self, team_id: Uuid) {
         let tasks = match self.db.get_claimed_tasks(team_id) {
             Ok(t) => t,

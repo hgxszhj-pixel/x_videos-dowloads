@@ -30,16 +30,15 @@ src/
 ├── yt_dlp.rs            # yt-dlp 集成
 ├── gui.rs               # GUI (slint)
 ├── history.rs           # 下载历史/书签
-├── resolvers/            # 平台解析器
-│   ├── mod.rs           # ResolverRegistry
-│   ├── tiktok.rs        # TikTok 解析器
-│   ├── douyin.rs        # 抖音解析器
-│   ├── bilibili.rs      # Bilibili 解析器
-│   ├── douyin_api.rs    # 抖音 API 客户端
-│   ├── xbogus.rs        # X-Bogus 签名
-│   ├── abogus.rs        # A-Bogus 签名 (SM3)
-│   └── token_manager.rs # Token 管理
-└── collaboration/       # 分布式协作
+└── resolvers/           # 平台解析器
+    ├── mod.rs           # ResolverRegistry
+    ├── tiktok.rs        # TikTok 解析器
+    ├── douyin.rs        # 抖音解析器
+    ├── bilibili.rs      # Bilibili 解析器
+    ├── douyin_api.rs    # 抖音 API 客户端
+    ├── xbogus.rs        # X-Bogus 签名
+    ├── zhixueyun.rs     # 智学云解析器
+    └── cookie_pool.rs   # Cookie 池
 ```
 
 ---
@@ -103,142 +102,6 @@ src/
 
 强有力的成功标准让你能独立循环。弱标准("让它工作")需要不断确认。
 
-## 5. 避免重复命名
-
-**不要在变量名中重复已知的类型信息。**
-
-```rust
-// 错误
-let user_name: String = "Alice".to_string();
-let user_name_string: String = user_name;
-
-// 正确
-let name: String = "Alice".to_string();
-```
-
-## 6. 避免嵌套回调
-
-**优先使用 async/await 而不是深层嵌套的闭包。**
-
-```rust
-// 错误
-do_something_async(|result| {
-    do_another_async(result, |another| {
-        do_third_async(another, |_| {});
-    });
-});
-
-// 正确
-let result = do_something_async().await;
-let another = do_another_async(result).await;
-do_third_async(another).await;
-```
-
-## 7. 错误时快速失败
-
-**不要吞掉错误。传播或记录它们。失败要响亮。**
-
-```rust
-// 错误
-fn parse(value: &str) -> Config {
-    match parse_impl(value) {
-        Ok(c) => c,
-        Err(_) => Config::default(),
-    }
-}
-
-// 正确
-fn parse(value: &str) -> Result<Config, ParseError> {
-    parse_impl(value).context("failed to parse config")
-}
-```
-
-## 8. 最小化依赖
-
-**只引入你使用的依赖。不要为小功能引入大型库。**
-
-检查：
-- 这个库提供什么？
-- 我们需要它多少？
-- 能否自己实现或用标准库替代？
-
-## 9. 优先组合而非继承
-
-**用组合代替继承来复用代码。**
-
-```rust
-// 错误
-struct AdvancedParser extends Parser { ... }
-
-// 正确
-struct AdvancedParser {
-    parser: Parser,
-    extra_state: ExtraState,
-}
-```
-
-## 10. 保持函数短小
-
-**每个函数应该能做一件事，且做得清楚。**
-
-- 目标：每个函数少于30行
-- 警告：如果函数超过50行，考虑拆分
-- 允许例外：复杂的业务逻辑或数据转换
-
-## 11. 命名要表达意图
-
-**变量名和函数名应该清晰表达它们的用途。**
-
-```rust
-// 错误
-let d = SystemTime::now().duration_since(created).unwrap().as_secs();
-
-// 正确
-let age_seconds = now.duration_since(created).unwrap().as_secs();
-```
-
-## 12. 测试关键路径
-
-**不要追求100%覆盖率。测试真正的关键路径。**
-
-关键路径：
-- 用户认证流程
-- 支付/交易逻辑
-- 数据持久化
-- 错误处理路径
-
----
-
-# AI 辅助原则
-
-## T5. 模型仅用于判断调用
-
-用于：分类、起草、总结、提取。不用于：路由、重试、确定性转换。如果代码能回答，让代码回答。
-
-## T6. Token 预算不是建议
-
-每任务 4,000 tokens，每会话 30,000 tokens。如果接近预算，总结并重新开始。
-
-## T7. 暴露冲突，不要平均它们
-
-如果两个模式矛盾，选择一个（更新/更测试的）。不要混合冲突的模式。
-
-## T8. 写入前先阅读
-
-添加代码前，阅读导出、调用者、共享工具。"看起来正交"是危险的。
-
-## T9. 测试验证意图
-
-测试必须编码为什么行为重要，不只是做什么。当业务逻辑改变时，不能失败的测试是错误的。
-
-## T10. 每步后检查点
-
-总结完成什么，验证什么，还剩什么。不要从无法描述的状态继续。
-
-## T11. 匹配代码库约定
-
-代码库内：一致性 > 个人喜好。如果真的认为约定有害，暴露它。不要静默分叉。
-
 ---
 
 # 项目特定规则
@@ -270,22 +133,6 @@ let age_seconds = now.duration_since(created).unwrap().as_secs();
 3. UI 更新：`progress_arc.load() as f32 / 100.0`
 4. 终止条件：`while progress_arc_for_update.load(...) < 100`
 5. 进度条容器使用 `HorizontalLayout { alignment: start }`
-
----
-
-## 测试要求
-
-- 所有新功能必须添加单元测试
-- 使用 `#[cfg(test)]` 模块编写测试
-- 运行 `cargo test` 验证所有测试通过
-- 运行 `cargo check` 确保无编译警告
-
-## 调试流程
-
-问题排查：
-1. 检查 `cargo build` 是否通过
-2. 运行 `cargo test` 验证测试
-3. 使用 `RUST_LOG=debug cargo run -- "URL"` 查看详细日志
 
 ---
 

@@ -1,5 +1,6 @@
 //! 下载历史和书签模块
 
+use crate::resolvers::url_matcher;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -34,29 +35,10 @@ pub enum Platform {
 
 impl Platform {
     pub fn from_url(url: &str) -> Self {
-        let url_lower = url.to_lowercase();
-
-        if url_lower.contains("x.com") || url_lower.contains("twitter.com") {
-            Platform::X
-        } else if url_lower.contains("youtube.com") || url_lower.contains("youtu.be") {
-            Platform::YouTube
-        } else if url_lower.contains("tiktok.com") || url_lower.contains("vm.tiktok.com") {
-            Platform::TikTok
-        } else if url_lower.contains("douyin.com") || url_lower.contains("v.douyin.com") {
-            Platform::DouYin
-        } else if url_lower.contains("bilibili.com") || url_lower.contains("bilivideo.com") || url_lower.contains("b23.tv") {
-            Platform::Bilibili
-        } else if url_lower.contains("instagram.com") {
-            Platform::Instagram
-        } else if url_lower.contains("facebook.com") || url_lower.contains("fb.com") {
-            Platform::Facebook
-        } else if url_lower.contains("weibo.com") {
-            Platform::Weibo
-        } else {
-            Platform::Other
-        }
+        url_matcher::detect_platform(url)
     }
 
+    #[allow(dead_code)]
     pub fn display_name(&self) -> &'static str {
         match self {
             Platform::X => "X/Twitter",
@@ -86,6 +68,78 @@ pub struct HistoryEntry {
     pub status: DownloadStatus,
     pub platform: Platform,
     pub error_message: Option<String>,
+}
+
+/// 历史条目构建器
+#[derive(Debug, Clone, Default)]
+pub struct HistoryEntryBuilder {
+    url: Option<String>,
+    title: Option<String>,
+    file_path: Option<PathBuf>,
+    file_size: Option<u64>,
+    duration_secs: Option<f64>,
+    status: Option<DownloadStatus>,
+    error_message: Option<String>,
+}
+
+impl HistoryEntryBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    pub fn title(mut self, title: Option<String>) -> Self {
+        self.title = title;
+        self
+    }
+
+    pub fn file_path(mut self, file_path: Option<PathBuf>) -> Self {
+        self.file_path = file_path;
+        self
+    }
+
+    pub fn file_size(mut self, file_size: Option<u64>) -> Self {
+        self.file_size = file_size;
+        self
+    }
+
+    pub fn duration_secs(mut self, duration_secs: Option<f64>) -> Self {
+        self.duration_secs = duration_secs;
+        self
+    }
+
+    pub fn status(mut self, status: DownloadStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    pub fn error_message(mut self, error_message: Option<String>) -> Self {
+        self.error_message = error_message;
+        self
+    }
+
+    pub fn build(self) -> Result<HistoryEntry> {
+        let url = self.url.ok_or_else(|| anyhow::anyhow!("url is required"))?;
+        let status = self.status.ok_or_else(|| anyhow::anyhow!("status is required"))?;
+        let platform = Platform::from_url(&url);
+
+        Ok(HistoryEntry {
+            id: Uuid::new_v4(),
+            url,
+            title: self.title,
+            file_path: self.file_path,
+            file_size: self.file_size,
+            downloaded_at: Utc::now(),
+            duration_secs: self.duration_secs,
+            status,
+            platform,
+            error_message: self.error_message,
+        })
+    }
 }
 
 /// 书签条目
@@ -145,8 +199,30 @@ impl History {
     }
 
     /// 添加下载历史
+    pub fn add_entry(&mut self, entry: HistoryEntry) -> Result<()> {
+        let mut entry = entry;
+        entry.id = Uuid::new_v4();
+        entry.downloaded_at = Utc::now();
+        if entry.platform == Platform::Other {
+            entry.platform = Platform::from_url(&entry.url);
+        }
+        self.entries.insert(0, entry); // 最近的在前面
+        self.save()?;
+        Ok(())
+    }
+
+    /// 添加下载历史（兼容旧接口，9参数版本）
     #[allow(clippy::too_many_arguments)]
-    pub fn add_entry(&mut self, url: String, title: Option<String>, file_path: Option<PathBuf>, file_size: Option<u64>, duration_secs: Option<f64>, status: DownloadStatus, error_message: Option<String>) -> Result<()> {
+    pub fn add_entry_with_all(
+        &mut self,
+        url: String,
+        title: Option<String>,
+        file_path: Option<PathBuf>,
+        file_size: Option<u64>,
+        duration_secs: Option<f64>,
+        status: DownloadStatus,
+        error_message: Option<String>,
+    ) -> Result<()> {
         let entry = HistoryEntry {
             id: Uuid::new_v4(),
             url: url.clone(),
@@ -273,7 +349,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut history = History::new(temp_dir.path()).unwrap();
 
-        history.add_entry(
+        history.add_entry_with_all(
             "https://example.com/video1".to_string(),
             Some("Video 1".to_string()),
             Some(PathBuf::from("/path/video1.mp4")),
@@ -324,5 +400,46 @@ mod tests {
         let bookmark = history.get_bookmarks()[0].clone();
         assert!(history.remove_bookmark(bookmark.id));
         assert_eq!(history.bookmark_count(), 0);
+    }
+
+    #[test]
+    fn test_history_entry_builder() {
+        let entry = HistoryEntryBuilder::new()
+            .url("https://example.com/video")
+            .title(Some("Test Video".to_string()))
+            .file_path(Some(PathBuf::from("/path/video.mp4")))
+            .file_size(Some(1024))
+            .duration_secs(Some(120.5))
+            .status(DownloadStatus::Completed)
+            .error_message(None)
+            .build()
+            .unwrap();
+
+        assert_eq!(entry.url, "https://example.com/video");
+        assert_eq!(entry.title, Some("Test Video".to_string()));
+        assert_eq!(entry.file_path, Some(PathBuf::from("/path/video.mp4")));
+        assert_eq!(entry.file_size, Some(1024));
+        assert_eq!(entry.duration_secs, Some(120.5));
+        assert_eq!(entry.status, DownloadStatus::Completed);
+        assert_eq!(entry.error_message, None);
+    }
+
+    #[test]
+    fn test_add_entry_with_builder() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut history = History::new(temp_dir.path()).unwrap();
+
+        let entry = HistoryEntryBuilder::new()
+            .url("https://example.com/builder-test")
+            .title(Some("Builder Test".to_string()))
+            .status(DownloadStatus::Completed)
+            .build()
+            .unwrap();
+
+        history.add_entry(entry).unwrap();
+
+        assert_eq!(history.history_count(), 1);
+        let found = history.search("builder-test");
+        assert_eq!(found.len(), 1);
     }
 }

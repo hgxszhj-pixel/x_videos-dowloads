@@ -1,3 +1,5 @@
+import { ProgressIndicator } from "std-widgets.slint";
+
 export component AppWindow inherits Window {
     title: "X Video Downloader";
     min_width: 500px;
@@ -242,19 +244,10 @@ export component AppWindow inherits Window {
                     font-weight: 600;
                     color: #2e7d32;
                 }
-                Rectangle {
-                    background: #ddd;
-                    border-radius: 4px;
+                ProgressIndicator {
+                    progress: root.download-progress;
+                    indeterminate: false;
                     height: 14px;
-                    VerticalLayout {
-                        alignment: start;
-                        Rectangle {
-                            background: #34a853;
-                            border-radius: 4px;
-                            width: root.download-progress * parent.width;
-                            height: parent.height;
-                        }
-                    }
                 }
                 HorizontalLayout {
                     spacing: 16px;

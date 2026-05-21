@@ -4,7 +4,6 @@
 //! 参考 F2 (Python) xbogus.py 实现
 
 use md5;
-use std::collections::HashMap;
 
 /// X-Bogus 使用的 Base64 字符表 (64字符)
 const X_BOGUS_BASE64_CHARS: &str = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";
@@ -176,89 +175,5 @@ impl XBogus {
 impl Default for XBogus {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// 生成 TikTok API 签名 URL
-/// 将 X-Bogus 签名附加到 URL
-pub fn sign_tiktok_url(url: &str, user_agent: &str) -> String {
-    // 解析 URL 分离 query string
-    let parts: Vec<&str> = url.split('?').collect();
-    let base_url = parts[0];
-    let query_string = parts.get(1).unwrap_or(&"");
-
-    if query_string.is_empty() {
-        return url.to_string();
-    }
-
-    let xbogus = XBogus::new();
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-
-    let signature = xbogus.sign(query_string, user_agent, timestamp);
-
-    format!("{}?{}&X-Bogus={}", base_url, query_string, signature)
-}
-
-/// 从 cookies 构建 Netscape 格式 cookie 字符串
-pub fn build_cookie_string(tokens: &HashMap<String, String>) -> String {
-    let mut lines = String::from("# Netscape HTTP Cookie File\n");
-    lines.push_str(".tiktok.com\tTRUE\t/\tTRUE\t0\t");
-
-    for (name, value) in tokens {
-        lines.push_str(name);
-        lines.push('\t');
-        lines.push_str(value);
-        lines.push('\n');
-    }
-
-    lines
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_xbogus_creation() {
-        let xb = XBogus::new();
-        assert_eq!(xb.key, [0x00, 0x01, 0x0c]);
-    }
-
-    #[test]
-    fn test_md5_with_key() {
-        let xb = XBogus::new();
-        let result = xb.md5_with_key(b"test");
-        assert_eq!(result.len(), 16);
-    }
-
-    #[test]
-    fn test_rc4_encrypt() {
-        let xb = XBogus::new();
-        let key = [0x01, 0x02, 0x03];
-        let data = b"hello";
-        let encrypted = xb.rc4_encrypt(&key, data);
-        // RC4 should produce same result on decrypt
-        let decrypted = xb.rc4_encrypt(&key, &encrypted);
-        assert_eq!(decrypted, data);
-    }
-
-    #[test]
-    fn test_custom_base64() {
-        let xb = XBogus::new();
-        let data = b"hello world";
-        let encoded = xb.custom_base64_encode(data);
-        assert!(!encoded.is_empty());
-        assert!(encoded.chars().all(|c| X_BOGUS_BASE64_CHARS.contains(c)));
-    }
-
-    #[test]
-    fn test_sign_url() {
-        let url = "https://www.tiktok.com/api/post/item_list/?aid=1234&app_name=test";
-        let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
-        let signed = sign_tiktok_url(url, ua);
-        assert!(signed.contains("X-Bogus="));
     }
 }

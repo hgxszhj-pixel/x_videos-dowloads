@@ -3,7 +3,7 @@
 //! 支持 kc.zhixueyun.com 智学云平台的视频和文档下载
 //! sectionType: 6 = 视频 (mp4), 10 = 文档 (pdf)
 
-use crate::resolvers::{CookiePool, PlatformResolver, ResolverError};
+use crate::resolvers::{CookiePool, PlatformResolver, ResolverError, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use reqwest::blocking::Client;
@@ -19,6 +19,7 @@ pub type ProgressCallback = Arc<dyn Fn(u64, u64, &str) + Send + Sync>;
 
 /// 下载结果
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DownloadResult {
     pub filename: String,
     pub success: bool,
@@ -39,11 +40,11 @@ pub struct DocumentInfo {
     pub id: String,
     pub name: String,
     pub chapter_name: String,
-    pub file_ext: String,
 }
 
 /// 文件预览信息
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FilePreview {
     pub secure_url: String,
     pub filename: String,
@@ -58,6 +59,7 @@ pub struct ZhiXueYunResolver {
 
 impl ZhiXueYunResolver {
     /// 创建新的 ZhiXueYunResolver
+    #[allow(dead_code)]
     pub fn new(cookie_pool: Arc<CookiePool>) -> Self {
         Self {
             cookie_pool,
@@ -187,14 +189,12 @@ impl ZhiXueYunResolver {
                                 .unwrap_or("未知文档")
                                 .to_string();
 
-                            let file_ext = if section_type == Some(10) { "pdf" } else { "mp4" };
-
+                            
                             if let Some(id) = doc_id {
                                 documents.push(DocumentInfo {
                                     id,
                                     name: doc_name,
                                     chapter_name: chapter_name.clone(),
-                                    file_ext: file_ext.to_string(),
                                 });
                             }
                         }
@@ -298,6 +298,7 @@ impl ZhiXueYunResolver {
     }
 
     /// 下载单个文件
+    #[allow(dead_code)]
     pub fn download_file(&self, url: &str, token: &str, output_path: &std::path::Path) -> anyhow::Result<u64> {
         let course_id = Self::extract_course_id(url)
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
@@ -321,7 +322,7 @@ impl ZhiXueYunResolver {
         token: &str,
         output_dir: &std::path::Path,
         progress: Option<ProgressCallback>,
-        parallel: usize,
+        _parallel: usize,
     ) -> anyhow::Result<Vec<DownloadResult>> {
         let category_id = Self::extract_course_id(url)
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 categoryId"))?;
@@ -442,6 +443,7 @@ impl ZhiXueYunResolver {
     }
 
     /// 下载单个文件（公开接口，返回 DownloadResult）
+    #[allow(dead_code)]
     pub fn download_single(&self, url: &str, token: &str, output_path: &std::path::Path) -> anyhow::Result<DownloadResult> {
         let course_id = Self::extract_course_id(url)
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
@@ -517,7 +519,7 @@ impl PlatformResolver for ZhiXueYunResolver {
     }
 
     fn supported_url_patterns(&self) -> Vec<&'static str> {
-        vec!["kc.zhixueyun.com"]
+        url_matcher::get_platform_patterns(Platform::ZhiXueYun).to_vec()
     }
 
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {

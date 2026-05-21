@@ -4,16 +4,7 @@
 //! 参考 F2 的 DouYinAPI 实现
 
 use crate::resolvers::xbogus::XBogus;
-use once_cell::sync::Lazy;
-use reqwest::Client;
 use serde::Deserialize;
-
-static FEED_CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .expect("Failed to create FEED_CLIENT")
-});
 
 /// 抖音 API 客户端
 pub struct DouYinApiClient {
@@ -43,21 +34,8 @@ impl DouYinApiClient {
         self
     }
 
-    /// 生成 Netscape 格式 cookie 字符串
-    fn build_cookie_string(&self) -> Option<String> {
-        let token = self.ms_token.as_ref()?;
-        // Pre-allocate: header (30) + domain line (~60) + newline
-        let mut lines = String::with_capacity(100);
-        lines.push_str("# Netscape HTTP Cookie File\n");
-        lines.push_str(".douyin.com\tTRUE\t/\tTRUE\t0\tmsToken\t");
-        lines.push_str(token);
-        lines.push('\n');
-        Some(lines)
-    }
-
     /// 生成带 A-Bogus 签名的请求 URL
     fn sign_url(&self, url: &str) -> String {
-        // 提取 query string
         let parts: Vec<&str> = url.split('?').collect();
         if parts.len() < 2 {
             return url.to_string();
@@ -138,93 +116,6 @@ impl DouYinApiClient {
 
         Ok(json)
     }
-
-    /// 从 feed 页面 HTML 提取视频 ID
-    pub async fn extract_video_id_from_feed(url: &str) -> anyhow::Result<String> {
-        let response = FEED_CLIENT.get(url)
-            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .header("Referer", "https://www.douyin.com/")
-            .send()
-            .await?;
-
-        let text = response.text().await?;
-
-        // 尝试从 HTML 中提取视频 ID
-        // 格式: window.__INIT_PROPS__ = { ... aweme_id: "123456" ... }
-        if let Some(pos) = text.find("\"aweme_id\"") {
-            let start = pos + 10;
-            let slice = &text[start..];
-            if let Some(end) = slice.find(['"', ',', ' ', '\n']) {
-                let video_id = &slice[..end].trim_matches('"');
-                if !video_id.is_empty() && video_id.len() > 10 {
-                    return Ok(video_id.to_string());
-                }
-            }
-        }
-
-        // 尝试 RENDER_DATA 格式
-        if let Some(pos) = text.find("window._ROUTER_DATA = ") {
-            let slice = &text[pos..];
-            if let Some(end) = slice.find("</script>") {
-                let data = &slice[21..end];
-                if let Some(id_pos) = data.find("\"id\":\"") {
-                    let start = id_pos + 5;
-                    let slice2 = &data[start..];
-                    if let Some(end) = slice2.find('"') {
-                        return Ok(slice2[..end].to_string());
-                    }
-                }
-            }
-        }
-
-        anyhow::bail!("无法从 feed 页面提取视频 ID")
-    }
-
-    /// 获取用户主页视频列表
-    pub async fn get_user_videos(&self, sec_user_id: &str, max_cursor: i64) -> anyhow::Result<UserPostResponse> {
-        let url = format!(
-            "https://www.douyin.com/aweme/v1/web/user/profile/self/?sec_user_id={}&max_cursor={}&device_platform=web&beta_bit_list=1",
-            sec_user_id, max_cursor
-        );
-
-        let signed_url = self.sign_url(&url);
-
-        let response = self.client
-            .get(&signed_url)
-            .header("User-Agent", &self.user_agent)
-            .header("Referer", "https://www.douyin.com/")
-            .send()
-            .await?;
-
-        let text = response.text().await?;
-        let json: UserPostResponse = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
-
-        Ok(json)
-    }
-
-    /// 获取推荐 feed 视频
-    pub async fn get_trending_feed(&self, cursor: i64) -> anyhow::Result<FeedResponse> {
-        let url = format!(
-            "https://www.douyin.com/aweme/v1/web/tab/feed/?device_platform=web&channel_id=tab_search&disable_search_template=1&cursor={}",
-            cursor
-        );
-
-        let signed_url = self.sign_url(&url);
-
-        let response = self.client
-            .get(&signed_url)
-            .header("User-Agent", &self.user_agent)
-            .header("Referer", "https://www.douyin.com/")
-            .send()
-            .await?;
-
-        let text = response.text().await?;
-        let json: FeedResponse = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
-
-        Ok(json)
-    }
 }
 
 impl Default for DouYinApiClient {
@@ -235,6 +126,7 @@ impl Default for DouYinApiClient {
 
 /// 视频详情响应
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct VideoDetailResponse {
     #[serde(rename = "status_code")]
     pub status_code: i32,
@@ -242,40 +134,9 @@ pub struct VideoDetailResponse {
     pub aweme_list: Option<Vec<AwemeItem>>,
 }
 
-impl VideoDetailResponse {
-    pub fn get_first_video(&self) -> Option<&AwemeItem> {
-        self.aweme_list.as_ref()?.first()
-    }
-}
-
-/// 用户主页响应
-#[derive(Debug, Deserialize)]
-pub struct UserPostResponse {
-    #[serde(rename = "status_code")]
-    pub status_code: i32,
-    #[serde(rename = "aweme_list")]
-    pub aweme_list: Option<Vec<AwemeItem>>,
-    #[serde(rename = "has_more")]
-    pub has_more: Option<i32>,
-    #[serde(rename = "max_cursor")]
-    pub max_cursor: Option<i64>,
-}
-
-/// 推荐 feed 响应
-#[derive(Debug, Deserialize)]
-pub struct FeedResponse {
-    #[serde(rename = "status_code")]
-    pub status_code: i32,
-    #[serde(rename = "aweme_list")]
-    pub aweme_list: Option<Vec<AwemeItem>>,
-    #[serde(rename = "has_more")]
-    pub has_more: Option<i32>,
-    #[serde(rename = "max_cursor")]
-    pub max_cursor: Option<i64>,
-}
-
 /// 作品项
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AwemeItem {
     #[serde(rename = "aweme_id")]
     pub aweme_id: Option<String>,
@@ -315,17 +176,19 @@ impl AwemeItem {
             .and_then(|v| v.duration)
             .unwrap_or(0) as u64 / 1000
     }
+}
 
-    /// 获取视频下载 URL
-    pub fn get_download_url(&self) -> Option<String> {
-        self.video.as_ref()
-            .and_then(|v| v.play_addr.as_ref())
-            .and_then(|p| p.uri.clone())
+impl VideoDetailResponse {
+    /// 获取第一个视频（如果存在）
+    #[allow(dead_code)]
+    pub fn get_first_video(&self) -> Option<&AwemeItem> {
+        self.aweme_list.as_ref()?.first()
     }
 }
 
 /// 作者信息
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Author {
     #[serde(rename = "nickname")]
     pub nickname: Option<String>,
@@ -337,6 +200,7 @@ pub struct Author {
 
 /// 视频信息
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Video {
     #[serde(rename = "duration")]
     pub duration: Option<i64>,
@@ -354,6 +218,7 @@ pub struct Video {
 
 /// 播放地址
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct PlayAddr {
     #[serde(rename = "uri")]
     pub uri: Option<String>,
@@ -370,6 +235,7 @@ pub struct Cover {
 
 /// 统计数据
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Statistics {
     #[serde(rename = "play_count")]
     pub play_count: Option<u64>,
@@ -397,21 +263,6 @@ pub fn extract_modal_id(url: &str) -> Option<String> {
     None
 }
 
-/// 从 URL 解析视频 ID
-pub fn extract_video_id(url: &str) -> Option<String> {
-    // 格式: https://www.douyin.com/video/7231679494828376333
-    if url.contains("/video/") {
-        let parts: Vec<&str> = url.split("/video/").collect();
-        if parts.len() >= 2 {
-            let id = parts[1].split('?').next().unwrap_or(parts[1]);
-            if !id.is_empty() {
-                return Some(id.to_string());
-            }
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,13 +272,6 @@ mod tests {
         let url = "https://www.douyin.com/jingxuan/sports?modal_id=7616615936887459108";
         let modal_id = extract_modal_id(url);
         assert_eq!(modal_id, Some("7616615936887459108".to_string()));
-    }
-
-    #[test]
-    fn test_extract_video_id() {
-        let url = "https://www.douyin.com/video/7231679494828376333";
-        let id = extract_video_id(url);
-        assert_eq!(id, Some("7231679494828376333".to_string()));
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod douyin_api;
 mod cookie_utils;
 mod cookie_pool;
 mod zhixueyun;
+pub mod url_matcher;
 pub use token_manager::TokenManager;
 pub use tiktok::TikTokResolver;
 pub use douyin::DouYinResolver;
@@ -17,14 +18,11 @@ pub use bilibili::BilibiliResolver;
 pub use douyin_api::{DouYinApiClient, extract_modal_id};
 pub use cookie_utils::CookieFileManager;
 pub use cookie_pool::CookiePool;
-pub use zhixueyun::ZhiXueYunResolver;
 use crate::types::VideoInfo;
 use crate::history::Platform;
 /// 解析器错误类型
 #[derive(Debug, Clone)]
 pub enum ResolverError {
-    /// URL 不支持
-    UnsupportedUrl(String),
     /// 需要认证
     AuthenticationRequired,
     /// 内容不可用
@@ -33,18 +31,14 @@ pub enum ResolverError {
     Network(String),
     /// 解析失败
     ParseFailed(String),
-    /// Token 缺失
-    MissingToken(String),
 }
 impl std::fmt::Display for ResolverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResolverError::UnsupportedUrl(url) => write!(f, "URL 不支持: {}", url),
             ResolverError::AuthenticationRequired => write!(f, "需要登录认证"),
             ResolverError::ContentUnavailable(msg) => write!(f, "内容不可用: {}", msg),
             ResolverError::Network(msg) => write!(f, "网络错误: {}", msg),
             ResolverError::ParseFailed(msg) => write!(f, "解析失败: {}", msg),
-            ResolverError::MissingToken(token) => write!(f, "缺少 Token: {}", token),
         }
     }
 }
@@ -66,6 +60,7 @@ impl From<anyhow::Error> for ResolverError {
 }
 /// 平台解析器 trait
 /// 所有平台解析器必须实现此接口
+#[allow(dead_code)]
 pub trait PlatformResolver: Send + Sync {
     /// 获取解析器对应的平台
     fn platform(&self) -> Platform;
@@ -97,6 +92,7 @@ impl YtDlpResolver {
     pub fn new() -> Self {
         Self { cookie_file: None }
     }
+    #[allow(dead_code)]
     pub fn with_cookie_file(mut self, path: std::path::PathBuf) -> Self {
         self.cookie_file = Some(path);
         self
@@ -154,6 +150,7 @@ impl ResolverRegistry {
         &*self.default_resolver
     }
     /// 尝试使用主解析器，失败时使用回退列表
+    #[allow(dead_code)]
     pub fn try_resolve(
         &self,
         url: &str,
@@ -191,8 +188,8 @@ mod tests {
     use super::*;
     #[test]
     fn test_resolver_error_display() {
-        let err = ResolverError::UnsupportedUrl("test".to_string());
-        assert_eq!(format!("{}", err), "URL 不支持: test");
+        let err = ResolverError::ParseFailed("test".to_string());
+        assert_eq!(format!("{}", err), "解析失败: test");
     }
     #[test]
     fn test_tiktok_supports_url() {
@@ -219,5 +216,133 @@ mod tests {
         assert_eq!(bili_resolver.platform(), Platform::Bilibili);
         let default_resolver = registry.select_resolver("https://youtube.com/watch");
         assert_eq!(default_resolver.platform(), Platform::Other); // YtDlp as default
+    }
+
+    #[test]
+    fn test_registry_default_resolver() {
+        let registry = ResolverRegistry::new();
+        // Empty registry should use default YtDlpResolver
+        let resolver = registry.select_resolver("https://any.url.com/test");
+        assert_eq!(resolver.platform(), Platform::Other);
+    }
+
+    #[test]
+    fn test_registry_multiple_resolvers_same_platform() {
+        // Register multiple resolvers - first matching one wins
+        let mut registry = ResolverRegistry::new();
+        registry.register(TikTokResolver::new());
+        registry.register(TikTokResolver::new()); // duplicate
+        let resolver = registry.select_resolver("https://www.tiktok.com/video/123");
+        assert_eq!(resolver.platform(), Platform::TikTok);
+    }
+
+    #[test]
+    fn test_platform_resolver_default_requires_auth() {
+        struct TestResolver;
+        impl PlatformResolver for TestResolver {
+            fn platform(&self) -> Platform { Platform::Other }
+            fn supported_url_patterns(&self) -> Vec<&'static str> { vec![] }
+            fn get_video_info(&self, _url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+                unreachable!()
+            }
+        }
+        let resolver = TestResolver;
+        // Default implementation returns false
+        assert!(!resolver.requires_auth());
+    }
+
+    #[test]
+    fn test_platform_resolver_default_required_tokens() {
+        struct TestResolver;
+        impl PlatformResolver for TestResolver {
+            fn platform(&self) -> Platform { Platform::Other }
+            fn supported_url_patterns(&self) -> Vec<&'static str> { vec![] }
+            fn get_video_info(&self, _url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+                unreachable!()
+            }
+        }
+        let resolver = TestResolver;
+        // Default implementation returns empty vec
+        assert!(resolver.required_tokens().is_empty());
+    }
+
+    #[test]
+    fn test_ytdlp_resolver_basic() {
+        let resolver = YtDlpResolver::new();
+        assert_eq!(resolver.platform(), Platform::Other);
+        assert!(!resolver.requires_auth()); // No cookie file by default
+    }
+
+    #[test]
+    fn test_ytdlp_resolver_with_cookie() {
+        let resolver = YtDlpResolver::new().with_cookie_file(std::path::PathBuf::from("/tmp/cookies.txt"));
+        assert!(resolver.requires_auth());
+    }
+
+    #[test]
+    fn test_resolver_error_from_download_error() {
+        use crate::types::{DownloadError, DownloadErrorType};
+
+        // Authentication error
+        let download_err = DownloadError {
+            error_type: DownloadErrorType::Authentication,
+            message: "auth required".to_string(),
+            action: None,
+        };
+        let resolver_err: ResolverError = download_err.into();
+        assert!(matches!(resolver_err, ResolverError::AuthenticationRequired));
+
+        // Content unavailable error
+        let download_err = DownloadError {
+            error_type: DownloadErrorType::ContentUnavailable,
+            message: "video not found".to_string(),
+            action: None,
+        };
+        let resolver_err: ResolverError = download_err.into();
+        assert!(matches!(resolver_err, ResolverError::ContentUnavailable(msg) if msg == "video not found"));
+
+        // Rate limited error
+        let download_err = DownloadError {
+            error_type: DownloadErrorType::RateLimited,
+            message: "rate limited".to_string(),
+            action: None,
+        };
+        let resolver_err: ResolverError = download_err.into();
+        assert!(matches!(resolver_err, ResolverError::Network(_)));
+
+        // Network error
+        let download_err = DownloadError {
+            error_type: DownloadErrorType::Network,
+            message: "network error".to_string(),
+            action: None,
+        };
+        let resolver_err: ResolverError = download_err.into();
+        assert!(matches!(resolver_err, ResolverError::Network(_)));
+    }
+
+    #[test]
+    fn test_resolver_error_from_anyhow() {
+        let anyhow_err = anyhow::anyhow!("test error");
+        let resolver_err: ResolverError = anyhow_err.into();
+        assert!(matches!(resolver_err, ResolverError::Network(msg) if msg.contains("test error")));
+    }
+
+    #[test]
+    fn test_resolver_error_display_all_variants() {
+        assert_eq!(format!("{}", ResolverError::AuthenticationRequired), "需要登录认证");
+        assert_eq!(format!("{}", ResolverError::ContentUnavailable("test".to_string())), "内容不可用: test");
+        assert_eq!(format!("{}", ResolverError::Network("net error".to_string())), "网络错误: net error");
+        assert_eq!(format!("{}", ResolverError::ParseFailed("parse error".to_string())), "解析失败: parse error");
+    }
+
+    #[test]
+    fn test_registry_register_preserves_order() {
+        let mut registry = ResolverRegistry::new();
+        registry.register(DouYinResolver::new());
+        registry.register(BilibiliResolver::new());
+
+        // Bilibili should be selected for bilibili URL (last registered)
+        let resolver = registry.select_resolver("https://www.bilibili.com/video/BV123");
+        assert_eq!(resolver.platform(), Platform::Bilibili);
     }
 }

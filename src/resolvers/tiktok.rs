@@ -3,7 +3,7 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持 TokenManager 自动token生成和注入
 
-use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager};
+use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use std::collections::HashMap;
@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// TikTok 解析器
+#[allow(dead_code)]
 pub struct TikTokResolver {
     tokens: HashMap<String, String>,
     token_manager: Option<Arc<Mutex<crate::resolvers::TokenManager>>>,
@@ -28,12 +29,14 @@ impl TikTokResolver {
     }
 
     /// 设置 tokens
+    #[allow(dead_code)]
     pub fn with_tokens(mut self, tokens: HashMap<String, String>) -> Self {
         self.tokens = tokens;
         self
     }
 
     /// 设置 TokenManager 用于自动token生成
+    #[allow(dead_code)]
     pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::resolvers::TokenManager>>) -> Self {
         self.token_manager = Some(tm);
         self
@@ -57,7 +60,7 @@ impl PlatformResolver for TikTokResolver {
     }
 
     fn supported_url_patterns(&self) -> Vec<&'static str> {
-        vec!["tiktok.com", "vm.tiktok.com"]
+        url_matcher::get_platform_patterns(Platform::TikTok).to_vec()
     }
 
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
@@ -91,29 +94,6 @@ impl PlatformResolver for TikTokResolver {
     }
 }
 
-/// 从 URL 提取 TikTok 视频 ID
-pub fn extract_tiktok_video_id(url: &str) -> anyhow::Result<String> {
-    // 格式: https://www.tiktok.com/@user/video/6912692830423454982/
-    // 或: https://vm.tiktok.com/ZMXXXXX/
-
-    if url.contains("/video/") {
-        let parts: Vec<&str> = url.split("/video/").collect();
-        if parts.len() >= 2 {
-            let id_part = parts[1].split('?').next().unwrap_or(parts[1]);
-            if !id_part.is_empty() {
-                return Ok(id_part.to_string());
-            }
-        }
-    }
-
-    if url.contains("vm.tiktok.com") {
-        // 短链接需要先解析
-        anyhow::bail!("TikTok 短链接需要先解析");
-    }
-
-    anyhow::bail!("无法从 URL 提取 TikTok 视频 ID")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,16 +106,4 @@ mod tests {
         assert!(!resolver.supports_url("https://youtube.com/watch"));
     }
 
-    #[test]
-    fn test_extract_video_id() {
-        let id = extract_tiktok_video_id("https://www.tiktok.com/@user/video/6912692830423454982");
-        assert!(id.is_ok());
-        assert_eq!(id.unwrap(), "6912692830423454982");
-    }
-
-    #[test]
-    fn test_extract_video_id_short() {
-        let id = extract_tiktok_video_id("https://vm.tiktok.com/ZMxxxxx");
-        assert!(id.is_err()); // 短链接需要解析
-    }
 }

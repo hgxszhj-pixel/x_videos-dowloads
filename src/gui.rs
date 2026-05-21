@@ -12,7 +12,7 @@ use crate::types::{format_bytes, sanitize_filename, DownloadProgress, DownloadRe
 use crate::yt_dlp::YtDlp;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use tokio::runtime::Runtime;
 use tracing::{info, warn};
 
@@ -116,7 +116,7 @@ pub fn run_gui() {
             return;
         }
     };
-    let history = Arc::new(Mutex::new(history));
+    let history = Arc::new(RwLock::new(history));
 
     // 创建 tokio runtime handle (wrapped in Arc for cheap cloning)
     let rt = Arc::new(Runtime::new().expect("Failed to create tokio runtime"));
@@ -143,7 +143,7 @@ pub fn run_gui() {
     let app_weak_tick_clone = app_weak_tick.clone();
 
     // 初始化共享状态
-    let shared = Arc::new(Mutex::new(SharedState {
+    let shared = Arc::new(RwLock::new(SharedState {
         url: String::new(),
         cookie_file: saved_cookie.clone(),
         output_dir: output_dir_value.clone(),
@@ -217,7 +217,13 @@ pub fn run_gui() {
 
             // 更新 shared state
             {
-                let mut s = shared.lock().unwrap();
+                let mut s = match shared.write() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Lock poisoned: {}", e);
+                        return;
+                    }
+                };
                 s.url = url.clone();
                 s.cookie_file = cookie.clone();
                 s.output_dir = output_dir;
@@ -316,7 +322,13 @@ pub fn run_gui() {
                         app.set_is_fetching(false);
 
                         // 更新共享状态
-                        let mut s = shared.lock().unwrap();
+                        let mut s = match shared.write() {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("Lock poisoned: {}", e);
+                                return;
+                            }
+                        };
                         s.is_fetching = false;
                         if let Ok(ref info) = final_result {
                             s.video_info = Some(info.clone());
@@ -336,7 +348,13 @@ pub fn run_gui() {
         let shared = shared_download.clone();
         let history = history_download.clone();
         let cookie = {
-            let s = shared.lock().unwrap();
+            let s = match shared.read() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Lock poisoned: {}", e);
+                    return;
+                }
+            };
             s.cookie_file.clone()
         };
 
@@ -350,7 +368,13 @@ pub fn run_gui() {
             }
 
             let video_info = {
-                let s = shared.lock().unwrap();
+                let s = match shared.read() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Lock poisoned: {}", e);
+                        return;
+                    }
+                };
                 s.video_info.clone()
             };
 
@@ -366,7 +390,13 @@ pub fn run_gui() {
                 app.set_download_threads("4".into());
 
                 {
-                    let mut s = shared.lock().unwrap();
+                    let mut s = match shared.write() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Lock poisoned: {}", e);
+                            return;
+                        }
+                    };
                     s.is_downloading = true;
                     s.download_progress = 0.0;
                     s.download_speed = String::new();
@@ -539,7 +569,7 @@ pub fn run_gui() {
                     let app_weak_clone = app_weak.clone();
                     let result_clone = download_result.clone();
                     let history_clone = history.clone();
-                    let url_for_history = url.clone();
+                    let url_for_history = url_clone.clone();
                     let title_for_history = title.clone();
                     slint::invoke_from_event_loop(move || {
                         if let Some(app) = app_weak_clone.upgrade() {
@@ -548,8 +578,8 @@ pub fn run_gui() {
                                     app.set_status_message(msg.clone().into());
                                     app.set_download_progress(100.0);
                                     // 记录到历史
-                                    if let Ok(mut h) = history_clone.lock() {
-                                        let _ = h.add_entry(
+                                    if let Ok(mut h) = history_clone.write() {
+                                        let _ = h.add_entry_with_all(
                                             url_for_history.clone(),
                                             Some(title_for_history.clone()),
                                             None,
@@ -560,7 +590,7 @@ pub fn run_gui() {
                                         );
                                         // 更新 UI 历史列表
                                         drop(h);
-                                        let h = history_clone.lock().unwrap();
+                                        let h = history_clone.write().unwrap();
                                         let entries = h.get_all().to_vec();
                                         drop(h);
                                         let display: Vec<String> = entries.iter().take(20).map(|e| {
@@ -586,8 +616,8 @@ pub fn run_gui() {
                                     app.set_error_message(e.clone().into());
                                     app.set_status_message("Download failed".into());
                                     // 记录失败到历史
-                                    if let Ok(mut h) = history_clone.lock() {
-                                        let _ = h.add_entry(
+                                    if let Ok(mut h) = history_clone.write() {
+                                        let _ = h.add_entry_with_all(
                                             url_for_history.clone(),
                                             Some(title_for_history.clone()),
                                             None,
@@ -601,7 +631,13 @@ pub fn run_gui() {
                             }
                             app.set_is_downloading(false);
 
-                            let mut s = shared.lock().unwrap();
+                            let mut s = match shared.write() {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    eprintln!("Lock poisoned: {}", e);
+                                    return;
+                                }
+                            };
                             s.is_downloading = false;
                             s.download_progress = 0.0;
                         }
@@ -616,7 +652,13 @@ pub fn run_gui() {
     // Cancel Download 回调
     app.on_cancel_download(move || {
         let shared = shared_cancel.clone();
-        let mut s = shared.lock().unwrap();
+        let mut s = match shared.write() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Lock poisoned: {}", e);
+                return;
+            }
+        };
         if s.is_downloading {
             s.cancel_flag.store(1, Ordering::Relaxed);
             s.is_downloading = false;
@@ -642,8 +684,16 @@ pub fn run_gui() {
 
     // Save Config 回调
     app.on_save_config(move || {
-        let cookie = shared_save.lock().unwrap().cookie_file.clone();
-        let output = shared_save.lock().unwrap().output_dir.clone();
+        let (cookie, output) = {
+            let s = match shared_save.read() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Lock poisoned: {}", e);
+                    return;
+                }
+            };
+            (s.cookie_file.clone(), s.output_dir.clone())
+        };
         if let Err(e) = save_config_to_file(&cookie, &output) {
             eprintln!("Save config error: {}", e);
         }
@@ -667,7 +717,7 @@ pub fn run_gui() {
         if let Some(app) = app_weak.upgrade() {
             // 记录选中的 ID
             app.set_selected_history_id(id.clone());
-            if let Ok(h) = history.lock() {
+            if let Ok(h) = history.write() {
                 if let Ok(uuid) = uuid::Uuid::parse_str(&id) {
                     if let Some(entry) = h.get_all().iter().find(|e| e.id == uuid) {
                         app.set_url(entry.url.clone().into());
@@ -686,7 +736,7 @@ pub fn run_gui() {
         if let Some(app) = app_weak.upgrade() {
             let url = app.get_url().to_string();
             if !url.is_empty() {
-                if let Ok(mut h) = history.lock() {
+                if let Ok(mut h) = history.write() {
                     let title = app.get_video_title().to_string();
                     if h.add_bookmark(url, Some(title), None).is_ok() {
                         app.set_status_message("Bookmark added".into());
@@ -704,17 +754,29 @@ pub fn run_gui() {
         let history = history_remove.clone();
         let shared = shared_remove.clone();
         let selected_id = {
-            let s = shared.lock().unwrap();
+            let s = match shared.read() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Lock poisoned: {}", e);
+                    return;
+                }
+            };
             s.selected_history_id.clone()
         };
         if !selected_id.is_empty() {
             if let Ok(uuid) = uuid::Uuid::parse_str(&selected_id) {
-                if let Ok(mut h) = history.lock() {
+                if let Ok(mut h) = history.write() {
                     if h.remove_entry(uuid) {
                         if let Some(app) = app_weak.upgrade() {
                             app.set_status_message("Item removed".into());
                             // 清空选中
-                            let mut s = shared.lock().unwrap();
+                            let mut s = match shared.write() {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    eprintln!("Lock poisoned: {}", e);
+                                    return;
+                                }
+                            };
                             s.selected_history_id = String::new();
                             // 刷新列表
                             let entries = h.get_all().to_vec();
@@ -758,7 +820,13 @@ pub fn run_gui() {
             let is_downloading = app.get_is_downloading();
             if is_downloading {
                 let progress = {
-                    let s = shared.lock().unwrap();
+                    let s = match shared.read() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Lock poisoned: {}", e);
+                            return;
+                        }
+                    };
                     s.download_progress_arc
                         .as_ref()
                         .map(|arc| arc.load(Ordering::Relaxed) as f32 / 100.0)
@@ -862,9 +930,15 @@ fn validate_url(url: &str) -> Result<String, String> {
 }
 
 /// 更新历史列表到 UI
-fn update_history_list(app: &AppWindow, history: &Arc<Mutex<History>>) {
+fn update_history_list(app: &AppWindow, history: &Arc<RwLock<History>>) {
     let entries = {
-        let h = history.lock().unwrap();
+        let h = match history.write() {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("Lock poisoned: {}", e);
+                return;
+            }
+        };
         h.get_all().to_vec()
     };
 
