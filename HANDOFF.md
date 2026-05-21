@@ -89,6 +89,12 @@
 | history.rs | `HistoryEntryBuilder` 和 `add_entry` 添加 `#[allow(dead_code)]` |
 | cookie_pool.rs | `valid_before` → `_valid_before` 消除 unused var 警告 |
 
+### 新提交 (2026-05-21)
+
+| 文件 | 修复内容 |
+|------|----------|
+| zhixueyun.rs | `ZHIXUEYUN_TOKEN` 环境变量优先于硬编码 fallback token |
+
 ### 新增文件
 
 - src/resolvers/url_matcher.rs - 统一 URL 平台检测
