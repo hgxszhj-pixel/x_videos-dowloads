@@ -3,7 +3,7 @@
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
 **更新时间**: 2026-05-21
 **当前分支**: gitbutler/workspace
-**Git**: `b21bc2a` fix: resolve all clippy warnings and test issues
+**Git**: `855786b` fix: prioritize ZHIXUEYUN_TOKEN env var over hardcoded fallback
 
 ---
 
