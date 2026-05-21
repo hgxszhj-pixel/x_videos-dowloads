@@ -72,6 +72,7 @@ pub struct HistoryEntry {
 
 /// 历史条目构建器
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct HistoryEntryBuilder {
     url: Option<String>,
     title: Option<String>,
@@ -82,6 +83,7 @@ pub struct HistoryEntryBuilder {
     error_message: Option<String>,
 }
 
+#[allow(dead_code)]
 impl HistoryEntryBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -199,6 +201,7 @@ impl History {
     }
 
     /// 添加下载历史
+    #[allow(dead_code)]
     pub fn add_entry(&mut self, entry: HistoryEntry) -> Result<()> {
         let mut entry = entry;
         entry.id = Uuid::new_v4();

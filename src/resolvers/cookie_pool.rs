@@ -375,7 +375,7 @@ mod tests {
         assert!(second.is_some(), "second get should succeed");
 
         let _len_before = pool.len();
-        let valid_before = pool.valid_count();
+        let _valid_before = pool.valid_count();
 
         pool.cleanup();
 

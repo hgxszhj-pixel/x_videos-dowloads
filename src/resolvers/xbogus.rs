@@ -3,7 +3,7 @@
 //! 用于 TikTok API 请求签名
 //! 参考 F2 (Python) xbogus.py 实现
 
-use md5;
+use ::md5;
 
 /// X-Bogus 使用的 Base64 字符表 (64字符)
 const X_BOGUS_BASE64_CHARS: &str = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";

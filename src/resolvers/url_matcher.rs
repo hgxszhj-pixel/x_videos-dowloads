@@ -81,6 +81,7 @@ pub fn detect_platform(url: &str) -> Platform {
 ///
 /// # Returns
 /// 如果 URL 匹配该平台则返回 `true`
+#[allow(dead_code)]
 pub fn url_matches_platform(url: &str, platform: Platform) -> bool {
     let url_lower = url.to_lowercase();
 

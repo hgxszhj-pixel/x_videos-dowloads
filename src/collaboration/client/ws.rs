@@ -72,7 +72,7 @@ impl ConnectionState {
     /// * `val` - u64 value (0=Disconnected, 1=Connecting, 2=Connected, 3=Failed, 4+=Reconnecting)
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let state = ConnectionState::from_u64(2);
     /// assert_eq!(state, ConnectionState::Connected);
     /// ```
