@@ -51,6 +51,13 @@ pub struct FilePreview {
     pub file_size: u64,
 }
 
+/// 下载上下文 (封装进度相关参数，减少函数参数)
+struct DownloadContext {
+    progress: Option<ProgressCallback>,
+    completed: Arc<AtomicU64>,
+    total_bytes: Arc<AtomicU64>,
+}
+
 /// ZhiXueYun 解析器
 pub struct ZhiXueYunResolver {
     cookie_pool: Arc<CookiePool>,
@@ -351,15 +358,16 @@ impl ZhiXueYunResolver {
 
         // 并行下载
         let tx = Arc::new(tx);
-        let progress = progress.clone();
         thread::scope(|s| {
             for (course, doc) in all_files {
                 let tx = tx.clone();
-                let completed = completed.clone();
-                let total_bytes = total_bytes.clone();
-                let progress = progress.clone();
+                let ctx = DownloadContext {
+                    progress: progress.clone(),
+                    completed: completed.clone(),
+                    total_bytes: total_bytes.clone(),
+                };
                 s.spawn(move || {
-                    let result = self.download_single_file(&course, &doc, output_dir, token, progress.as_ref(), &completed, &total_bytes);
+                    let result = self.download_single_file(&course, &doc, output_dir, token, &ctx);
                     let _ = tx.send(result);
                 });
             }
@@ -384,9 +392,7 @@ impl ZhiXueYunResolver {
         doc: &DocumentInfo,
         output_dir: &std::path::Path,
         token: &str,
-        progress: Option<&ProgressCallback>,
-        completed: &Arc<AtomicU64>,
-        total_bytes: &Arc<AtomicU64>,
+        ctx: &DownloadContext,
     ) -> DownloadResult {
         let course_dir = output_dir.join(sanitize_filename(&course.name));
 
@@ -409,9 +415,9 @@ impl ZhiXueYunResolver {
 
                 match self.download_file_with_retry(&preview.secure_url, &output_path, 3) {
                     Ok(size) => {
-                        let _ = total_bytes.fetch_add(size, Ordering::Relaxed);
-                        let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                        if let Some(cb) = progress {
+                        let _ = ctx.total_bytes.fetch_add(size, Ordering::Relaxed);
+                        let n = ctx.completed.fetch_add(1, Ordering::Relaxed) + 1;
+                        if let Some(cb) = &ctx.progress {
                             cb(n, 0, &file_name);
                         }
                         DownloadResult {
@@ -455,9 +461,11 @@ impl ZhiXueYunResolver {
             &doc,
             output_path.parent().unwrap_or(std::path::Path::new(".")),
             token,
-            None,
-            &Arc::new(AtomicU64::new(0)),
-            &Arc::new(AtomicU64::new(0)),
+            &DownloadContext {
+                progress: None,
+                completed: Arc::new(AtomicU64::new(0)),
+                total_bytes: Arc::new(AtomicU64::new(0)),
+            },
         );
 
         if result.success {
