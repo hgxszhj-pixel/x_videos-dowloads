@@ -3,7 +3,7 @@
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
 **更新时间**: 2026-05-21
 **当前分支**: gitbutler/workspace
-**Git**: `5e8144f` refactor: improve code quality and error handling
+**Git**: `d669986` refactor: reduce function arguments in ZhiXueYunResolver
 
 ---
 
@@ -61,12 +61,14 @@
 
 ---
 
-## 最近代码改进 (2026-05-21)
+## 最近代码改进 (2026-05-21 晚间更新)
 
 ### 已完成的改进
 
 | 类别 | 改进内容 |
 |------|----------|
+| **Clippy 警告修复** | downloader.rs: `&PathBuf` → `&Path` (4处); zhixueyun.rs: rsplit/return/cast/closure 修复; url_matcher.rs: needless_borrow 修复 |
+| **参数结构体重构** | ZhiXueYunResolver 新增 DownloadContext 结构体，将 8 个参数减少为 6 个 |
 | **Panic 风险修复** | GUI 14 处 lock().unwrap() → match 模式；i18n 4 处 → expect() |
 | **大函数拆分** | on_download_clicked 拆分为 5 个函数；parallel_download 拆分为 3 个辅助函数 |
 | **Builder 模式** | HistoryEntryBuilder 替代 9 参数 add_entry() |
@@ -125,8 +127,8 @@
 | 检查项 | 状态 |
 |--------|------|
 | cargo check | ✅ 通过 |
-| cargo test | ✅ 121+ 测试通过 |
-| clippy 警告 | ✅ 无 |
+| cargo test | ✅ 139 测试通过 |
+| clippy 警告 | ✅ 0 warnings (完全清洁) |
 
 ---
 
