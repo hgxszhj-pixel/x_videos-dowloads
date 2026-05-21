@@ -3,20 +3,22 @@
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
 **更新时间**: 2026-05-21
 **当前分支**: gitbutler/workspace
+**Git**: `5e8144f` refactor: improve code quality and error handling
 
 ---
 
 ## 项目概述
 
-基于 Rust 的多平台视频下载器，支持 x.com (Twitter), TikTok, 抖音, Bilibili。
+基于 Rust 的多平台视频下载器，支持 x.com (Twitter), TikTok, 抖音, Bilibili, 智学云等平台。
 
 **技术栈:**
-- Rust + tokio
+- Rust + tokio (async)
 - Slint v1.15.1 GUI
 - yt-dlp 视频下载 (主要)
 - ResolverRegistry 平台选择
 - X-Bogus / A-Bogus 签名 (SM3)
 - FxTwitter API (Twitter fallback)
+- CookiePool SSO 认证
 
 ---
 
@@ -32,6 +34,11 @@
 | ZhiXueYunResolver | zhixueyun.rs | zhixueyun.com (PDF 下载) |
 | CookiePool | cookie_pool.rs | Cookie 池管理 |
 | YtDlpResolver | mod.rs | 所有平台 (fallback) |
+
+**共享模块:**
+| 模块 | 文件 | 用途 |
+|------|------|------|
+| url_matcher | url_matcher.rs | URL 平台检测统一入口 |
 
 **签名模块:**
 | 模块 | 文件 | 算法 |
@@ -54,14 +61,36 @@
 
 ---
 
+## 最近代码改进 (2026-05-21)
+
+### 已完成的改进
+
+| 类别 | 改进内容 |
+|------|----------|
+| **Panic 风险修复** | GUI 14 处 lock().unwrap() → match 模式；i18n 4 处 → expect() |
+| **大函数拆分** | on_download_clicked 拆分为 5 个函数；parallel_download 拆分为 3 个辅助函数 |
+| **Builder 模式** | HistoryEntryBuilder 替代 9 参数 add_entry() |
+| **并发优化** | Mutex → RwLock (SharedState, History) |
+| **错误处理** | downloader.rs 6 处添加 .context() |
+| **共享模块** | 新增 url_matcher.rs 统一 URL 平台检测 |
+| **单元测试** | 新增 10 个 resolver 测试 |
+| **魔法数字** | 提取 5 个命名常量 |
+| **API 文档** | 为 ws.rs, handler.rs 添加文档注释 |
+
+### 新增文件
+
+- src/resolvers/url_matcher.rs - 统一 URL 平台检测
+
+---
+
 ## GUI 进度条要点
 
 **关键规则**（详见 CLAUDE.md）:
-- `download_segment()` 只更新 `total_downloaded`，不发回调
-- 存储格式：`progress_arc.store((p.percent * 100.0) as u32)`
-- UI 更新：`progress_arc.load() as f32 / 100.0`
-- 终止条件：`while progress_arc_for_update.load(...) < 100`
-- 进度条使用 `HorizontalLayout { alignment: start }`
+- download_segment() 只更新 total_downloaded，不发回调
+- 存储格式：progress_arc.store((p.percent * 100.0) as u32)
+- UI 更新：progress_arc.load() as f32 / 100.0
+- 终止条件：while progress_arc_for_update.load(...) < 100
+- 进度条使用 HorizontalLayout { alignment: start }
 
 ---
 
@@ -76,48 +105,35 @@
 2. 清除浏览器中所有 douyin.com cookies
 3. 重新登录抖音账号
 4. 立即导出新的 Netscape 格式 cookies
-5. 保存到 `~/.cookies/douyin_cookies.txt`
+5. 保存到 ~/.cookies/douyin_cookies.txt
 
-**配置文件:** `~/.config/x-video-downloader/config.toml`
+**配置文件:** ~/.config/x-video-downloader/config.toml
 
 ---
 
 ## 待办 (优先级排序)
 
-### P0 - 关键问题
+### P1 - 改进空间
 
-1. **进度条不更新** - yt-dlp 在非 TTY 模式下进度不输出
-2. **中文字体显示** - Slint 的 font-family 属性在 Window 上不支持
-
-### P1 - 重要功能
-
-3. **clippy 检查修复** - 运行 `cargo clippy` 查看警告
+1. **CookiePool 简化** - 当前过度设计（LRU/TTL/hit counting 未使用），但暂不修改以避免风险
+2. **ZhiXueYun 依赖硬编码 token** - d452ee129814c2549a2d7b4448a48ea9 作为 fallback
 
 ---
 
-## 已知问题根因
+## 项目质量状态
 
-### 进度条不更新
-
-yt-dlp 检测是否连接到 TTY 来决定是否输出进度。当作为子进程被捕获时:
-- stderr 被 `BufReader` 读取，但 yt-dlp 可能输出到 `stdout` 或根本不输出
-
-### 中文字体显示
-
-Slint 的 `Window` 组件不支持 `font-family` 属性。需要逐个 Text 元素添加:
-```slint
-Text {
-    font-family: "PingFang SC";
-    ...
-}
-```
+| 检查项 | 状态 |
+|--------|------|
+| cargo check | ✅ 通过 |
+| cargo test | ✅ 121+ 测试通过 |
+| clippy 警告 | ✅ 无 |
 
 ---
 
 ## 调试技巧
 
-- GUI 启动时会打印 `DEBUG: GUI started, log file: ...` 日志
-- `eprintln!("DEBUG yt-dlp stderr: {}", line)` 会输出 yt-dlp 的 stderr
-- `parse_ytdlp_progress()` 函数解析进度，格式: `[download] 45.0% of ~2.50MB`
-- Slint 回调中使用 `invoke_from_event_loop` 线程安全更新 UI
-- 设置 `RUST_LOG=debug` 查看详细日志
+- GUI 启动时会打印 DEBUG: GUI started, log file: ... 日志
+- eprintln!("DEBUG yt-dlp stderr: {}", line) 会输出 yt-dlp 的 stderr
+- parse_ytdlp_progress() 函数解析进度，格式: [download] 45.0% of ~2.50MB
+- Slint 回调中使用 invoke_from_event_loop 线程安全更新 UI
+- 设置 RUST_LOG=debug 查看详细日志
