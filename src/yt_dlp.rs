@@ -132,7 +132,7 @@ impl YtDlp {
             "10M".to_string(),
             // 禁用SSL验证（可选，用于测试）
             // "--no-check-certificate".to_string(),
-            quote(url).into_owned(),
+            url.to_string(),
         ];
 
         // 添加反爬虫参数
@@ -338,8 +338,8 @@ impl YtDlp {
             args.push(proxy.clone());
         }
 
-        // URL
-        args.push(quote(url).into_owned());
+        // URL - 不使用 quote，避免引号问题
+        args.push(url.to_string());
 
         args
     }

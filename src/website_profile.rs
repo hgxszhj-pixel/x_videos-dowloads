@@ -377,7 +377,7 @@ fn get_profile_for_domain(domain: &str) -> Option<WebsiteProfile> {
             ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false }
         }
         s if s.ends_with(".linkedin.com") => ProfileTemplate::Auth { delay_ms: 1000 },
-        s if s.ends_with(".x.com") => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
+        s if s.ends_with(".x.com") => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false },
 
         // ===== 通配符（默认配置） =====
         s if s.ends_with(".com") || s.ends_with(".org") || s.ends_with(".net") => {

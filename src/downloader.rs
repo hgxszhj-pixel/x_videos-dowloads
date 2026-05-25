@@ -66,10 +66,10 @@ impl Default for DownloaderConfig {
             request_timeout: 600, // 大文件需要更长超时
             retry_count: 5,      // 增加重试次数
             retry_max_delay: 30,  // 最大重试间隔30秒
-            chunk_size: 1024 * 1024, // 1MB chunk
+            chunk_size: 32 * 1024 * 1024, // 32MB chunk - 减少HTTP开销
             user_agent: None,
             proxy: None,
-            pool_max_idle_per_host: 16,  // 适度连接池
+            pool_max_idle_per_host: 32,  // 更大连接池
             http2: true,
             tcp_keepalive: 120, // 减少连接断开
             parallel_segments: 4, // 默认4线程
