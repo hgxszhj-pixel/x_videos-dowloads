@@ -1,9 +1,9 @@
 # 项目交接文档 (Handoff)
 
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
-**更新时间**: 2026-05-25 00:30
+**更新时间**: 2026-05-25 12:00
 **当前分支**: gitbutler/workspace
-**Git**: `08f7a2b` fix: multi-agent review - security, performance, architecture improvements
+**Git**: `3126e77` perf: Round 3 performance fixes - HTTP pooling and URL caching
 
 ---
 
@@ -170,6 +170,20 @@ pub enum DownloadStrategy {
 | 代码重复 (tiktok/douyin/bilibili) | MEDIUM | 提取 `YtDlpBasedResolver` trait |
 | 测试覆盖不足 | MEDIUM | 添加 DouYin/ZhiXueYun 集成测试 |
 | sequential chunk merge | MEDIUM | 用 `join_set.spawn` 并行化 |
+
+### Round 3 性能修复 (2026-05-25)
+
+**提交**: `3126e77` perf: Round 3 performance fixes - HTTP pooling and URL caching
+
+| Issue | Priority | Status | Impact |
+|-------|----------|--------|--------|
+| FxTwitterResolver → shared() | P0 | ✅ Done | 15-20% |
+| Duplicate tcp_keepalive | P2 | ✅ Done | cosmetic |
+| to_lowercase() caching | P1 | ✅ Done | 5-10% |
+| CookiePool lock optimization | P0 | ⚠️ Reverted | LRU semantics broken with atomic refactor |
+| segment_sizes[8] panic | P2 | ✅ Latent | Can't trigger (segments ≤ 8 enforced) |
+
+**预计总性能提升:** 20-30%
 
 ---
 
