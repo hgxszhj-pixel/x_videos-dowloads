@@ -8,6 +8,7 @@ pub mod downloader;
 pub mod fxtwitter;
 pub mod gui;
 pub mod history;
+pub mod http_client;
 pub mod i18n;
 pub mod resolvers;
 pub mod types;

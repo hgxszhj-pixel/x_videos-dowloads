@@ -5,10 +5,11 @@
 
 use crate::resolvers::xbogus::XBogus;
 use serde::Deserialize;
+use std::sync::Arc;
 
 /// 抖音 API 客户端
 pub struct DouYinApiClient {
-    client: reqwest::Client,
+    client: Arc<reqwest::Client>,
     xbogus: XBogus,
     user_agent: String,
     ms_token: Option<String>,
@@ -18,10 +19,7 @@ impl DouYinApiClient {
     /// 创建新的 API 客户端
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_default(),
+            client: crate::http_client::shared(),
             xbogus: XBogus::new(),
             user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
             ms_token: None,

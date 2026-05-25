@@ -14,6 +14,7 @@ use tokio::io::AsyncWriteExt;
 pub struct ChunkedDownloader {
     chunk_size: u64,
     connect_timeout: Duration,
+    client: Arc<reqwest::Client>,
 }
 
 #[allow(dead_code)]
@@ -23,6 +24,7 @@ impl ChunkedDownloader {
         Self {
             chunk_size,
             connect_timeout: Duration::from_secs(10),
+            client: crate::http_client::shared(),
         }
     }
 
@@ -41,8 +43,7 @@ impl ChunkedDownloader {
         let url = format!("http://{}:{}/file/{}", ip, port, task_id);
 
         // 首先获取文件大小
-        let client = reqwest::Client::new();
-        let head_resp = client.head(&url).send().await?;
+        let head_resp = self.client.head(&url).send().await?;
         let total_size = head_resp
             .content_length()
             .context("服务器未返回 Content-Length")?;
@@ -69,7 +70,7 @@ impl ChunkedDownloader {
             .await?;
 
         // 从断点开始下载
-        let response = client
+        let response = self.client
             .get(&url)
             .header("Range", format!("bytes={}-", existing_size))
             .send()
@@ -105,8 +106,7 @@ impl ChunkedDownloader {
         let url = format!("http://{}:{}/file/{}", ip, port, task_id);
 
         // 获取文件大小
-        let client = reqwest::Client::new();
-        let head_resp = client.head(&url).send().await?;
+        let head_resp = self.client.head(&url).send().await?;
         let total_size = head_resp
             .content_length()
             .context("服务器未返回 Content-Length")?;
@@ -130,7 +130,7 @@ impl ChunkedDownloader {
         // 并行下载各分块（使用共享client）
         use tokio::task::JoinSet;
         let mut join_set = JoinSet::new();
-        let client = reqwest::Client::new();
+        let client = self.client.clone();
 
         for (i, chunk_idx) in (0..num_chunks).enumerate() {
             if i >= num_connections {
@@ -236,8 +236,7 @@ impl ChunkedDownloader {
     where
         F: Fn(u64, u64),
     {
-        let client = reqwest::Client::new();
-        let response = client
+        let response = self.client
             .get(url)
             .header("Range", format!("bytes={}-", from_byte))
             .send()

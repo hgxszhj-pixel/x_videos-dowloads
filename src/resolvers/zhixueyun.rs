@@ -6,7 +6,6 @@
 use crate::resolvers::{CookiePool, PlatformResolver, ResolverError, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
-use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderName};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -62,7 +61,9 @@ struct DownloadContext {
 pub struct ZhiXueYunResolver {
     cookie_pool: Arc<CookiePool>,
     token: std::sync::RwLock<Option<String>>,
-    client: Client,
+    client: Arc<reqwest::blocking::Client>,
+    /// 缓存的认证头（避免每次克隆 BASE_HEADERS）
+    cached_headers: std::sync::RwLock<Option<HeaderMap>>,
 }
 
 impl ZhiXueYunResolver {
@@ -72,10 +73,8 @@ impl ZhiXueYunResolver {
         Self {
             cookie_pool,
             token: std::sync::RwLock::new(None),
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .unwrap_or_default(),
+            client: crate::http_client::shared_blocking(),
+            cached_headers: std::sync::RwLock::new(None),
         }
     }
 
@@ -84,6 +83,10 @@ impl ZhiXueYunResolver {
     pub fn set_token(&self, token: String) {
         let mut write_lock = self.token.write().unwrap();
         *write_lock = Some(token);
+        // Invalidate cached headers when token changes
+        if let Ok(mut cached) = self.cached_headers.write() {
+            *cached = None;
+        }
     }
 
     /// 获取当前 token
@@ -109,6 +112,7 @@ impl ZhiXueYunResolver {
         // 4. CookiePool fallback
         if let Some(cookies) = self.cookie_pool.get() {
             if let Some(t) = cookies.get("authorization") {
+                // Return clone since cookies HashMap may not live long enough
                 return Ok(t.clone());
             }
         }
@@ -129,17 +133,39 @@ impl ZhiXueYunResolver {
             .and_then(|s| s.split('&').next())
             .map(|s| s.to_string())
     }
+}
 
+/// 智学云基础请求头（静态缓存避免每次重新构建）
+static BASE_HEADERS: once_cell::sync::Lazy<HeaderMap> = once_cell::sync::Lazy::new(|| {
+    let mut headers = HeaderMap::new();
+    headers.insert(reqwest::header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36".parse().unwrap());
+    headers.insert(reqwest::header::ACCEPT, "*/*".parse().unwrap());
+    headers.insert(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9".parse().unwrap());
+    headers.insert(reqwest::header::DNT, "1".parse().unwrap());
+    headers.insert(HeaderName::from_static("x-requested-with"), "XMLHttpRequest".parse().unwrap());
+    headers.insert(HeaderName::from_static("referer"), "https://kc.zhixueyun.com/".parse().unwrap());
+    headers
+});
+
+impl ZhiXueYunResolver {
     fn get_auth_headers(&self, token: Option<&str>) -> Result<HeaderMap, ResolverError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(reqwest::header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36".parse().unwrap());
-        headers.insert(reqwest::header::ACCEPT, "*/*".parse().unwrap());
-        headers.insert(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9".parse().unwrap());
-        headers.insert(reqwest::header::DNT, "1".parse().unwrap());
-        headers.insert(HeaderName::from_static("x-requested-with"), "XMLHttpRequest".parse().unwrap());
-        headers.insert(HeaderName::from_static("referer"), "https://kc.zhixueyun.com/".parse().unwrap());
+        // Get or build cached base headers
+        let base_headers = {
+            let cached = self.cached_headers.read().unwrap();
+            if let Some(ref h) = *cached {
+                h.clone()
+            } else {
+                drop(cached);
+                let base = (*BASE_HEADERS).clone();
+                let mut cached = self.cached_headers.write().unwrap();
+                *cached = Some(base.clone());
+                base
+            }
+        };
+
+        let mut headers = base_headers;
         if let Some(t) = token {
-            headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer__{}", t.trim_start_matches("Bearer__")).parse().unwrap());
+            headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer__{}", t.trim_start_matches("Bearer__").trim()).parse().unwrap());
         }
         Ok(headers)
     }
@@ -532,6 +558,7 @@ impl ZhiXueYunResolver {
             thumbnail: None,
             formats: vec![],
             created_at: None,
+            download_strategy: crate::types::DownloadStrategy::Native,
         })
     }
 

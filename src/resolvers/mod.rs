@@ -70,10 +70,15 @@ pub trait PlatformResolver: Send + Sync {
     fn supported_url_patterns(&self) -> Vec<&'static str>;
     /// 检查是否支持此 URL
     fn supports_url(&self, url: &str) -> bool {
-        let url_lower = url.to_lowercase();
+        // Optimization: avoid re-lowercasing if already lowercase
+        let url_check = if url.chars().any(|c| c.is_uppercase()) {
+            url.to_lowercase()
+        } else {
+            url.to_string()
+        };
         self.supported_url_patterns()
             .iter()
-            .any(|pattern| url_lower.contains(&pattern.to_lowercase()))
+            .any(|pattern| url_check.contains(pattern))
     }
     /// 获取视频信息
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError>;
@@ -148,8 +153,10 @@ impl ResolverRegistry {
     }
     /// 根据 URL 选择合适的解析器
     pub fn select_resolver(&self, url: &str) -> &dyn PlatformResolver {
+        // Cache lowercase URL once to avoid repeated allocation
+        let url_lower = url.to_lowercase();
         for resolver in &self.resolvers {
-            if resolver.supports_url(url) {
+            if resolver.supports_url(&url_lower) {
                 return resolver.as_ref();
             }
         }

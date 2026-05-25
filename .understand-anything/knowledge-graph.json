@@ -1,0 +1,1604 @@
+{
+  "nodes": [
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "Rust x.com 视频下载器项目主文档，支持 CLI 和 GUI，具有三级视频源解析功能（yt-dlp → FxTwitter API → Scrapling）。",
+      "tags": [
+        "docs",
+        "project-overview",
+        "video-downloader"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:CLAUDE.md",
+      "type": "document",
+      "name": "CLAUDE.md",
+      "filePath": "CLAUDE.md",
+      "summary": "项目编程理念文档，包含 Think Before Coding、Simplicity First、Surgical Changes、Goal-Driven Execution 四大核心原则。",
+      "tags": [
+        "docs",
+        "coding-principles",
+        "best-practices"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:AGENTS.md",
+      "type": "document",
+      "name": "AGENTS.md",
+      "filePath": "AGENTS.md",
+      "summary": "Agent 智能体相关文档，记录项目中的 AI Agent 配置和使用指南。",
+      "tags": [
+        "docs",
+        "agents",
+        "claude-code"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:COOKIE_GUIDE.md",
+      "type": "document",
+      "name": "COOKIE_GUIDE.md",
+      "filePath": "COOKIE_GUIDE.md",
+      "summary": "Cookie 使用指南，帮助用户理解如何为各平台配置 Cookie 以提高下载成功率。",
+      "tags": [
+        "docs",
+        "cookie",
+        "authentication"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:HANDOFF.md",
+      "type": "document",
+      "name": "HANDOFF.md",
+      "filePath": "HANDOFF.md",
+      "summary": "项目交接文档，包含重要技术决策、安全修复记录（如 ZHIXUEYUN_TOKEN 环境变量优先）和多代理 review 记录。",
+      "tags": [
+        "docs",
+        "handoff",
+        "security",
+        "multi-agent"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:PLAN-IMPROVEMENTS.md",
+      "type": "document",
+      "name": "PLAN-IMPROVEMENTS.md",
+      "filePath": "PLAN-IMPROVEMENTS.md",
+      "summary": "项目改进计划文档，记录性能优化、功能增强等长期规划。",
+      "tags": [
+        "docs",
+        "planning",
+        "improvements"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:Cargo.toml",
+      "type": "config",
+      "name": "Cargo.toml",
+      "filePath": "Cargo.toml",
+      "summary": "Rust 项目配置文件，定义依赖包括 tokio、reqwest、serde、slint、rusqlite 等，输出二进制 x-video-downloader。",
+      "tags": [
+        "config",
+        "rust",
+        "dependencies"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/agents/domain.md",
+      "type": "document",
+      "name": "domain.md",
+      "filePath": "docs/agents/domain.md",
+      "summary": "Agent 领域文档，定义项目特定术语和概念。",
+      "tags": [
+        "docs",
+        "agents",
+        "domain"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/agents/issue-tracker.md",
+      "type": "document",
+      "name": "issue-tracker.md",
+      "filePath": "docs/agents/issue-tracker.md",
+      "summary": "GitHub Issues 追踪指南，通过 gh CLI 管理 issue 状态。",
+      "tags": [
+        "docs",
+        "agents",
+        "issue-tracker",
+        "github"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/agents/triage-labels.md",
+      "type": "document",
+      "name": "triage-labels.md",
+      "filePath": "docs/agents/triage-labels.md",
+      "summary": "Issue 分类标签系统：needs-triage、needs-info、ready-for-agent、ready-for-human、wontfix。",
+      "tags": [
+        "docs",
+        "agents",
+        "triage",
+        "labels"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/plans/2026-05-21-improvement-plan.md",
+      "type": "document",
+      "name": "2026-05-21-improvement-plan.md",
+      "filePath": "docs/plans/2026-05-21-improvement-plan.md",
+      "summary": "2026-05-21 改进计划，记录当日功能优化和技术改进决策。",
+      "tags": [
+        "docs",
+        "planning",
+        "improvement"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/plans/2026-05-25-performance-bottleneck-report.md",
+      "type": "document",
+      "name": "2026-05-25-performance-bottleneck-report.md",
+      "filePath": "docs/plans/2026-05-25-performance-bottleneck-report.md",
+      "summary": "性能瓶颈分析报告 v1，记录下载性能和并发问题。",
+      "tags": [
+        "docs",
+        "performance",
+        "bottleneck",
+        "analysis"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/plans/2026-05-25-performance-bottleneck-report-v2.md",
+      "type": "document",
+      "name": "2026-05-25-performance-bottleneck-report-v2.md",
+      "filePath": "docs/plans/2026-05-25-performance-bottleneck-report-v2.md",
+      "summary": "性能瓶颈分析报告 v2，更新版本，包含最新发现和解决方案。",
+      "tags": [
+        "docs",
+        "performance",
+        "bottleneck",
+        "analysis",
+        "updated"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-13-solution-a-cookie-pool.md",
+      "type": "document",
+      "name": "2026-05-13-solution-a-cookie-pool.md",
+      "filePath": "docs/superpowers/plans/2026-05-13-solution-a-cookie-pool.md",
+      "summary": "方案 A：Cookie 池方案，通过管理多个 Cookie 提高平台请求成功率。",
+      "tags": [
+        "docs",
+        "superpowers",
+        "cookie",
+        "solution"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-13-solution-b-hybrid.md",
+      "type": "document",
+      "name": "2026-05-13-solution-b-hybrid.md",
+      "filePath": "docs/superpowers/plans/2026-05-13-solution-b-hybrid.md",
+      "summary": "方案 B：混合方案，结合 Cookie 池和无 Cookie 请求方式。",
+      "tags": [
+        "docs",
+        "superpowers",
+        "hybrid",
+        "solution"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-13-solution-c-playwright.md",
+      "type": "document",
+      "name": "2026-05-13-solution-c-playwright.md",
+      "filePath": "docs/superpowers/plans/2026-05-13-solution-c-playwright.md",
+      "summary": "方案 C：Playwright 浏览器自动化方案，通过浏览器绕过 Cloudflare。",
+      "tags": [
+        "docs",
+        "superpowers",
+        "playwright",
+        "solution"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:.codegraph/config.json",
+      "type": "config",
+      "name": "config.json",
+      "filePath": ".codegraph/config.json",
+      "summary": "CodeGraph 索引配置，包含数据库路径和符号追踪设置。",
+      "tags": [
+        "config",
+        "codegraph",
+        "indexing"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:build.rs",
+      "type": "file",
+      "name": "build.rs",
+      "filePath": "build.rs",
+      "summary": "Rust 构建脚本，用于编译 Slint UI。",
+      "tags": [
+        "build",
+        "rust",
+        "slint"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:config/mcporter.json",
+      "type": "config",
+      "name": "mcporter.json",
+      "filePath": "config/mcporter.json",
+      "summary": "Mcporter 配置文件，用于协作模块配置。",
+      "tags": [
+        "config",
+        "collaboration",
+        "mcporter"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/config.rs",
+      "type": "file",
+      "name": "config.rs",
+      "filePath": "src/config.rs",
+      "summary": "应用配置管理模块，负责加载和保存配置（AppConfig）。",
+      "tags": [
+        "code",
+        "config",
+        "settings"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/server/db.rs:Database",
+      "type": "class",
+      "name": "Database",
+      "filePath": "src/collaboration/server/db.rs",
+      "summary": "SQLite 数据库封装，管理团队、设备、任务的持久化存储（WAL 模式）。",
+      "tags": [
+        "collaboration",
+        "database",
+        "sqlite"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/server/handler.rs:MessageHandler",
+      "type": "class",
+      "name": "MessageHandler",
+      "filePath": "src/collaboration/server/handler.rs",
+      "summary": "客户端会话管理器，协调团队操作和任务分发，与数据库和哈希环协作。",
+      "tags": [
+        "collaboration",
+        "messaging",
+        "server"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/server/ws.rs:WsServer",
+      "type": "class",
+      "name": "WsServer",
+      "filePath": "src/collaboration/server/ws.rs",
+      "summary": "WebSocket 服务器，基于 tokio-tungstenite 实现。",
+      "tags": [
+        "collaboration",
+        "websocket",
+        "server"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/transfer/http_server.rs:FileServer",
+      "type": "class",
+      "name": "FileServer",
+      "filePath": "src/collaboration/transfer/http_server.rs",
+      "summary": "HTTP 文件服务器，支持 CORS、速率限制和安全路径验证。",
+      "tags": [
+        "collaboration",
+        "http",
+        "file-server"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/transfer/downloader.rs:ChunkedDownloader",
+      "type": "class",
+      "name": "ChunkedDownloader",
+      "filePath": "src/collaboration/transfer/downloader.rs",
+      "summary": "分块下载器，支持从对等节点并行下载文件片段。",
+      "tags": [
+        "collaboration",
+        "download",
+        "p2p"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/client/ws.rs:CollaborationClient",
+      "type": "class",
+      "name": "CollaborationClient",
+      "filePath": "src/collaboration/client/ws.rs",
+      "summary": "协作客户端 WebSocket 连接，支持团队加入、任务认领、进度更新。",
+      "tags": [
+        "collaboration",
+        "websocket",
+        "client"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/client/queue.rs:LocalQueue",
+      "type": "class",
+      "name": "LocalQueue",
+      "filePath": "src/collaboration/client/queue.rs",
+      "summary": "本地任务队列，管理设备的下载任务状态和同步。",
+      "tags": [
+        "collaboration",
+        "queue",
+        "tasks"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/crypto/auth.rs:AuthToken",
+      "type": "class",
+      "name": "AuthToken",
+      "filePath": "src/collaboration/crypto/auth.rs",
+      "summary": "认证 Token 生成和验证（HMAC-SHA256）。",
+      "tags": [
+        "collaboration",
+        "crypto",
+        "auth"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/crypto/hashring.rs:HashRing",
+      "type": "class",
+      "name": "HashRing",
+      "filePath": "src/collaboration/crypto/hashring.rs",
+      "summary": "一致性哈希环，用于 URL 到设备 ID 的映射（任务分配）。",
+      "tags": [
+        "collaboration",
+        "crypto",
+        "hash-ring"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/discovery/stun.rs:NatType",
+      "type": "class",
+      "name": "NatType",
+      "filePath": "src/collaboration/discovery/stun.rs",
+      "summary": "NAT 类型检测，用于网络穿透（STUN）。",
+      "tags": [
+        "collaboration",
+        "network",
+        "nat",
+        "stun"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/types.rs:Team",
+      "type": "class",
+      "name": "Team",
+      "filePath": "src/collaboration/types.rs",
+      "summary": "团队数据结构（ID、名称、邀请码、创建时间）。",
+      "tags": [
+        "collaboration",
+        "types",
+        "team"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/types.rs:Device",
+      "type": "class",
+      "name": "Device",
+      "filePath": "src/collaboration/types.rs",
+      "summary": "设备数据结构（ID、团队、公网 IP/端口、最后活动时间）。",
+      "tags": [
+        "collaboration",
+        "types",
+        "device"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/collaboration/types.rs:Task",
+      "type": "class",
+      "name": "Task",
+      "filePath": "src/collaboration/types.rs",
+      "summary": "任务数据结构（ID、URL、状态、进度、文件路径）。",
+      "tags": [
+        "collaboration",
+        "types",
+        "task"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:src/collaboration/mod.rs:start_server",
+      "type": "function",
+      "name": "start_server",
+      "filePath": "src/collaboration/mod.rs",
+      "summary": "启动协作服务器的入口函数。",
+      "tags": [
+        "collaboration",
+        "server",
+        "entry"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:src/collaboration/README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "src/collaboration/README.md",
+      "summary": "协作模块文档，说明分布式下载协作架构。",
+      "tags": [
+        "docs",
+        "collaboration",
+        "architecture"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/DOUYIN_COOKIES.md",
+      "type": "document",
+      "name": "DOUYIN_COOKIES.md",
+      "filePath": "docs/DOUYIN_COOKIES.md",
+      "summary": "抖音 Cookie 配置指南，说明如何获取和使用 msToken。",
+      "tags": [
+        "docs",
+        "cookie",
+        "douyin"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/main.rs",
+      "type": "file",
+      "name": "main.rs",
+      "filePath": "src/main.rs",
+      "summary": "CLI/GUI 入口，支持 --gui 参数启动 Slint GUI，否则运行 CLI 模式。",
+      "tags": [
+        "code",
+        "entry",
+        "cli",
+        "gui"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/lib.rs",
+      "type": "file",
+      "name": "lib.rs",
+      "filePath": "src/lib.rs",
+      "summary": "库入口，导出主要模块供二进制使用。",
+      "tags": [
+        "code",
+        "library",
+        "entry"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/downloader.rs",
+      "type": "file",
+      "name": "downloader.rs",
+      "filePath": "src/downloader.rs",
+      "summary": "视频下载核心，支持分段并行下载、重试机制、自适应线程。",
+      "tags": [
+        "code",
+        "download",
+        "core"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/downloader.rs:VideoDownloader",
+      "type": "class",
+      "name": "VideoDownloader",
+      "filePath": "src/downloader.rs",
+      "summary": "视频下载器，支持配置化下载、User-Agent、代理设置、网站特征自适应。",
+      "tags": [
+        "code",
+        "download",
+        "video"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/types.rs",
+      "type": "file",
+      "name": "types.rs",
+      "filePath": "src/types.rs",
+      "summary": "核心类型定义：VideoInfo、DownloadRequest、DownloadResult、DownloadProgress、DownloadError 等。",
+      "tags": [
+        "code",
+        "types",
+        "core"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/fxtwitter.rs",
+      "type": "file",
+      "name": "fxtwitter.rs",
+      "filePath": "src/fxtwitter.rs",
+      "summary": "FxTwitter API 解析器，通过 api.fxtwitter.com 获取视频信息。",
+      "tags": [
+        "code",
+        "resolver",
+        "fxtwitter",
+        "x.com"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/fxtwitter.rs:FxTwitterResolver",
+      "type": "class",
+      "name": "FxTwitterResolver",
+      "filePath": "src/fxtwitter.rs",
+      "summary": "FxTwitter 解析器，支持代理配置和 Tweet ID 提取。",
+      "tags": [
+        "code",
+        "resolver",
+        "fxtwitter"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/mod.rs",
+      "type": "file",
+      "name": "mod.rs",
+      "filePath": "src/resolvers/mod.rs",
+      "summary": "解析器注册表，定义 PlatformResolver trait 和 ResolverRegistry，支持多平台解析器注册和选择。",
+      "tags": [
+        "code",
+        "resolver",
+        "registry"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/mod.rs:ResolverRegistry",
+      "type": "class",
+      "name": "ResolverRegistry",
+      "filePath": "src/resolvers/mod.rs",
+      "summary": "解析器注册表，管理多个平台解析器，支持 select_resolver 和 try_resolve 回退机制。",
+      "tags": [
+        "code",
+        "resolver",
+        "registry"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/mod.rs:YtDlpResolver",
+      "type": "class",
+      "name": "YtDlpResolver",
+      "filePath": "src/resolvers/mod.rs",
+      "summary": "yt-dlp 包装解析器，作为默认解析器支持所有平台。",
+      "tags": [
+        "code",
+        "resolver",
+        "ytdlp"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/douyin.rs",
+      "type": "file",
+      "name": "douyin.rs",
+      "filePath": "src/resolvers/douyin.rs",
+      "summary": "抖音解析器，优先使用 DouYinApiClient 获取视频信息，支持 feed URL 和 modal_id。",
+      "tags": [
+        "code",
+        "resolver",
+        "douyin"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/douyin.rs:DouYinResolver",
+      "type": "class",
+      "name": "DouYinResolver",
+      "filePath": "src/resolvers/douyin.rs",
+      "summary": "抖音平台解析器，支持 msToken 认证和 TokenManager 自动 token 生成。",
+      "tags": [
+        "code",
+        "resolver",
+        "douyin"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/douyin_api.rs",
+      "type": "file",
+      "name": "douyin_api.rs",
+      "filePath": "src/resolvers/douyin_api.rs",
+      "summary": "抖音 API 客户端，通过 DouYinApiClient 调用抖音接口获取视频详情。",
+      "tags": [
+        "code",
+        "api",
+        "douyin"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/tiktok.rs",
+      "type": "file",
+      "name": "tiktok.rs",
+      "filePath": "src/resolvers/tiktok.rs",
+      "summary": "TikTok 解析器，使用 yt-dlp 获取视频信息，支持 msToken/ttwid 认证。",
+      "tags": [
+        "code",
+        "resolver",
+        "tiktok"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/tiktok.rs:TikTokResolver",
+      "type": "class",
+      "name": "TikTokResolver",
+      "filePath": "src/resolvers/tiktok.rs",
+      "summary": "TikTok 平台解析器，支持 Cookie 文件和 TokenManager。",
+      "tags": [
+        "code",
+        "resolver",
+        "tiktok"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/bilibili.rs",
+      "type": "file",
+      "name": "bilibili.rs",
+      "filePath": "src/resolvers/bilibili.rs",
+      "summary": "Bilibili 解析器，支持 sessdata 和 bili_jct cookie 认证。",
+      "tags": [
+        "code",
+        "resolver",
+        "bilibili"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/bilibili.rs:BilibiliResolver",
+      "type": "class",
+      "name": "BilibiliResolver",
+      "filePath": "src/resolvers/bilibili.rs",
+      "summary": "Bilibili 平台解析器，支持 Cookie 认证。",
+      "tags": [
+        "code",
+        "resolver",
+        "bilibili"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/zhixueyun.rs",
+      "type": "file",
+      "name": "zhixueyun.rs",
+      "filePath": "src/resolvers/zhixueyun.rs",
+      "summary": "智学云解析器，支持 authorization token 认证和课程/资料下载。",
+      "tags": [
+        "code",
+        "resolver",
+        "zhixueyun",
+        "education"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/zhixueyun.rs:ZhiXueYunResolver",
+      "type": "class",
+      "name": "ZhiXueYunResolver",
+      "filePath": "src/resolvers/zhixueyun.rs",
+      "summary": "智学云平台解析器，支持 TokenManager、CookiePool 和多级缓存认证。",
+      "tags": [
+        "code",
+        "resolver",
+        "zhixueyun"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/token_manager.rs",
+      "type": "file",
+      "name": "token_manager.rs",
+      "filePath": "src/resolvers/token_manager.rs",
+      "summary": "Token 管理器，自动生成和管理 TikTok/DouYin/Bilibili 的认证 token。",
+      "tags": [
+        "code",
+        "token",
+        "auth",
+        "manager"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/token_manager.rs:TokenManager",
+      "type": "class",
+      "name": "TokenManager",
+      "filePath": "src/resolvers/token_manager.rs",
+      "summary": "平台 Token 管理器，支持 msToken/ttwid/sessdata/bili_jct 等 token 的存储和刷新。",
+      "tags": [
+        "code",
+        "token",
+        "manager"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/cookie_pool.rs",
+      "type": "file",
+      "name": "cookie_pool.rs",
+      "filePath": "src/resolvers/cookie_pool.rs",
+      "summary": "Cookie 池，管理多个账号的 Cookie，支持按账号失效和清理。",
+      "tags": [
+        "code",
+        "cookie",
+        "pool"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/resolvers/cookie_pool.rs:CookiePool",
+      "type": "class",
+      "name": "CookiePool",
+      "filePath": "src/resolvers/cookie_pool.rs",
+      "summary": "Cookie 池，实现 Cookie 复用和按账号失效管理。",
+      "tags": [
+        "code",
+        "cookie",
+        "pool"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/cookie_utils.rs",
+      "type": "file",
+      "name": "cookie_utils.rs",
+      "filePath": "src/resolvers/cookie_utils.rs",
+      "summary": "Cookie 工具，从 token 生成临时 cookie 文件供 yt-dlp 使用。",
+      "tags": [
+        "code",
+        "cookie",
+        "utils"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/url_matcher.rs",
+      "type": "file",
+      "name": "url_matcher.rs",
+      "filePath": "src/resolvers/url_matcher.rs",
+      "summary": "URL 匹配器，通过正则表达式检测 URL 所属平台。",
+      "tags": [
+        "code",
+        "url",
+        "matcher"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/xbogus.rs",
+      "type": "file",
+      "name": "xbogus.rs",
+      "filePath": "src/resolvers/xbogus.rs",
+      "summary": "X-Bogus 签名生成器，用于 x.com 请求签名。",
+      "tags": [
+        "code",
+        "signature",
+        "x.com"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/abogus.rs",
+      "type": "file",
+      "name": "abogus.rs",
+      "filePath": "src/resolvers/abogus.rs",
+      "summary": "A-Bogus 签名生成器（抖音/ TikTok 使用）。",
+      "tags": [
+        "code",
+        "signature",
+        "douyin",
+        "tiktok"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/resolvers/zhixueyun_token/mod.rs",
+      "type": "file",
+      "name": "mod.rs",
+      "filePath": "src/resolvers/zhixueyun_token/mod.rs",
+      "summary": "智学云 Token 加载模块，从 cookies 文件提取 authorization token。",
+      "tags": [
+        "code",
+        "zhixueyun",
+        "token"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/scrapling_client.rs",
+      "type": "file",
+      "name": "scrapling_client.rs",
+      "filePath": "src/scrapling_client.rs",
+      "summary": "Scrapling Cloudflare 绕过客户端，通过 Python 浏览器自动化获取视频 URL。",
+      "tags": [
+        "code",
+        "cloudflare",
+        "scraping",
+        "browser"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/scrapling_client.rs:ScraplingClient",
+      "type": "class",
+      "name": "ScraplingClient",
+      "filePath": "src/scrapling_client.rs",
+      "summary": "Scrapling 客户端，支持 Python 浏览器自动化绕过 Cloudflare。",
+      "tags": [
+        "code",
+        "cloudflare",
+        "scraping"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/scrapling_extractor.rs",
+      "type": "file",
+      "name": "scrapling_extractor.rs",
+      "filePath": "src/scrapling_extractor.rs",
+      "summary": "HTML 视频 URL 提取器，从页面 HTML 中提取视频源地址。",
+      "tags": [
+        "code",
+        "extractor",
+        "html",
+        "video"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/yt_dlp.rs",
+      "type": "file",
+      "name": "yt_dlp.rs",
+      "filePath": "src/yt_dlp.rs",
+      "summary": "yt-dlp 集成封装，支持 User-Agent、Cookie 文件、代理配置，通过命令行调用 yt-dlp。",
+      "tags": [
+        "code",
+        "ytdlp",
+        "downloader"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/yt_dlp.rs:YtDlp",
+      "type": "class",
+      "name": "YtDlp",
+      "filePath": "src/yt_dlp.rs",
+      "summary": "yt-dlp 封装类，提供 get_video_info 和 is_available 方法。",
+      "tags": [
+        "code",
+        "ytdlp"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/history.rs",
+      "type": "file",
+      "name": "history.rs",
+      "filePath": "src/history.rs",
+      "summary": "下载历史和书签管理，使用 SQLite 存储下载记录。",
+      "tags": [
+        "code",
+        "history",
+        "bookmark",
+        "sqlite"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/gui.rs",
+      "type": "file",
+      "name": "gui.rs",
+      "filePath": "src/gui.rs",
+      "summary": "Slint GUI 实现，包含网络状态指示、下载进度、按钮交互。",
+      "tags": [
+        "code",
+        "gui",
+        "slint",
+        "ui"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:src/gui.rs:run_gui",
+      "type": "function",
+      "name": "run_gui",
+      "filePath": "src/gui.rs",
+      "summary": "GUI 入口函数，初始化并运行 Slint 界面。",
+      "tags": [
+        "code",
+        "gui",
+        "entry"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/theme.rs",
+      "type": "file",
+      "name": "theme.rs",
+      "filePath": "src/theme.rs",
+      "summary": "主题管理，支持深色/浅色模式切换。",
+      "tags": [
+        "code",
+        "theme",
+        "dark-mode"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/i18n.rs",
+      "type": "file",
+      "name": "i18n.rs",
+      "filePath": "src/i18n.rs",
+      "summary": "国际化支持，支持多语言包和字体配置。",
+      "tags": [
+        "code",
+        "i18n",
+        "localization"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/http_client.rs",
+      "type": "file",
+      "name": "http_client.rs",
+      "filePath": "src/http_client.rs",
+      "summary": "共享 HTTP 客户端（reqwest），提供异步和同步版本。",
+      "tags": [
+        "code",
+        "http",
+        "client"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:src/website_profile.rs",
+      "type": "file",
+      "name": "website_profile.rs",
+      "filePath": "src/website_profile.rs",
+      "summary": "网站特征学习模块，记录域名对应的反爬策略和最佳下载配置（线程数、代理等）。",
+      "tags": [
+        "code",
+        "website",
+        "profile",
+        "anti-crawler"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:src/website_profile.rs:WebsiteProfileStore",
+      "type": "class",
+      "name": "WebsiteProfileStore",
+      "filePath": "src/website_profile.rs",
+      "summary": "网站配置存储，管理已知网站的防爬特征和推荐配置。",
+      "tags": [
+        "code",
+        "website",
+        "profile"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:ui.slint",
+      "type": "file",
+      "name": "ui.slint",
+      "filePath": "ui.slint",
+      "summary": "Slint UI 定义文件，描述 GUI 界面布局（网络状态、按钮、进度条）。",
+      "tags": [
+        "ui",
+        "slint",
+        "gui"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:tests/types_test.rs",
+      "type": "file",
+      "name": "types_test.rs",
+      "filePath": "tests/types_test.rs",
+      "summary": "types 模块的单元测试。",
+      "tags": [
+        "test",
+        "types"
+      ],
+      "complexity": "moderate"
+    }
+  ],
+  "edges": [
+    {
+      "source": "document:HANDOFF.md",
+      "target": "document:CLAUDE.md",
+      "type": "related",
+      "direction": "forward"
+    },
+    {
+      "source": "config:Cargo.toml",
+      "target": "document:README.md",
+      "type": "documents",
+      "direction": "forward"
+    },
+    {
+      "source": "document:docs/agents/issue-tracker.md",
+      "target": "document:docs/agents/triage-labels.md",
+      "type": "related",
+      "direction": "forward"
+    },
+    {
+      "source": "document:docs/plans/2026-05-25-performance-bottleneck-report-v2.md",
+      "target": "document:docs/plans/2026-05-25-performance-bottleneck-report.md",
+      "type": "related",
+      "direction": "forward"
+    },
+    {
+      "source": "document:docs/plans/2026-05-21-improvement-plan.md",
+      "target": "document:PLAN-IMPROVEMENTS.md",
+      "type": "related",
+      "direction": "forward"
+    },
+    {
+      "source": "document:docs/superpowers/plans/2026-05-13-solution-a-cookie-pool.md",
+      "target": "document:docs/superpowers/plans/2026-05-13-solution-b-hybrid.md",
+      "type": "similar_to",
+      "direction": "forward"
+    },
+    {
+      "source": "document:docs/superpowers/plans/2026-05-13-solution-a-cookie-pool.md",
+      "target": "document:docs/superpowers/plans/2026-05-13-solution-c-playwright.md",
+      "type": "similar_to",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/server/db.rs:Database",
+      "target": "class:src/collaboration/types.rs:Team",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/server/db.rs:Database",
+      "target": "class:src/collaboration/types.rs:Device",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/server/db.rs:Database",
+      "target": "class:src/collaboration/types.rs:Task",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/server/handler.rs:MessageHandler",
+      "target": "class:src/collaboration/server/db.rs:Database",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/server/handler.rs:MessageHandler",
+      "target": "class:src/collaboration/crypto/hashring.rs:HashRing",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/client/ws.rs:CollaborationClient",
+      "target": "class:src/collaboration/crypto/auth.rs:AuthToken",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/transfer/http_server.rs:FileServer",
+      "target": "file:src/config.rs",
+      "type": "related",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/collaboration/crypto/hashring.rs:HashRing",
+      "target": "class:src/collaboration/types.rs:Device",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/resolvers/mod.rs:ResolverRegistry",
+      "target": "class:src/resolvers/mod.rs:YtDlpResolver",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/resolvers/mod.rs:ResolverRegistry",
+      "target": "class:src/resolvers/douyin.rs:DouYinResolver",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/resolvers/mod.rs:ResolverRegistry",
+      "target": "class:src/resolvers/tiktok.rs:TikTokResolver",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/resolvers/mod.rs:ResolverRegistry",
+      "target": "class:src/resolvers/bilibili.rs:BilibiliResolver",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/resolvers/mod.rs:ResolverRegistry",
+      "target": "class:src/resolvers/zhixueyun.rs:ZhiXueYunResolver",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/main.rs",
+      "target": "function:src/gui.rs:run_gui",
+      "type": "calls",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/downloader.rs",
+      "target": "class:src/downloader.rs:VideoDownloader",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/downloader.rs:VideoDownloader",
+      "target": "file:src/yt_dlp.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/downloader.rs:VideoDownloader",
+      "target": "file:src/fxtwitter.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "class:src/downloader.rs:VideoDownloader",
+      "target": "file:src/scrapling_client.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/douyin.rs",
+      "target": "file:src/resolvers/douyin_api.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/douyin.rs",
+      "target": "file:src/resolvers/token_manager.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/douyin.rs",
+      "target": "file:src/resolvers/cookie_pool.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/tiktok.rs",
+      "target": "file:src/resolvers/token_manager.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/tiktok.rs",
+      "target": "file:src/resolvers/cookie_utils.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/zhixueyun.rs",
+      "target": "file:src/resolvers/cookie_pool.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/zhixueyun.rs",
+      "target": "file:src/resolvers/zhixueyun_token/mod.rs",
+      "type": "imports",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/resolvers/cookie_utils.rs",
+      "target": "file:src/yt_dlp.rs",
+      "type": "related",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/website_profile.rs",
+      "target": "class:src/website_profile.rs:WebsiteProfileStore",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/yt_dlp.rs",
+      "target": "class:src/yt_dlp.rs:YtDlp",
+      "type": "contains",
+      "direction": "forward"
+    },
+    {
+      "source": "file:src/website_profile.rs",
+      "target": "file:src/downloader.rs",
+      "type": "related",
+      "direction": "forward"
+    },
+    {
+      "source": "file:ui.slint",
+      "target": "file:src/gui.rs",
+      "type": "related",
+      "direction": "forward"
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:entry-points",
+      "name": "Entry Points",
+      "description": "应用程序入口点，CLI 和 GUI 启动模块",
+      "nodeIds": [
+        "file:src/main.rs",
+        "file:src/lib.rs",
+        "function:src/gui.rs:run_gui"
+      ]
+    },
+    {
+      "id": "layer:core-download",
+      "name": "Core Download",
+      "description": "核心下载逻辑，包括视频下载器、HTTP 客户端和类型定义",
+      "nodeIds": [
+        "file:src/downloader.rs",
+        "class:src/downloader.rs:VideoDownloader",
+        "file:src/types.rs",
+        "file:src/http_client.rs"
+      ]
+    },
+    {
+      "id": "layer:video-resolvers",
+      "name": "Video Resolvers",
+      "description": "多平台视频解析器注册表和各个平台解析器实现",
+      "nodeIds": [
+        "file:src/resolvers/mod.rs",
+        "class:src/resolvers/mod.rs:ResolverRegistry",
+        "class:src/resolvers/mod.rs:YtDlpResolver",
+        "file:src/resolvers/douyin.rs",
+        "class:src/resolvers/douyin.rs:DouYinResolver",
+        "file:src/resolvers/tiktok.rs",
+        "class:src/resolvers/tiktok.rs:TikTokResolver",
+        "file:src/resolvers/bilibili.rs",
+        "class:src/resolvers/bilibili.rs:BilibiliResolver",
+        "file:src/resolvers/zhixueyun.rs",
+        "class:src/resolvers/zhixueyun.rs:ZhiXueYunResolver",
+        "file:src/resolvers/fxtwitter.rs",
+        "class:src/resolvers/fxtwitter.rs:FxTwitterResolver"
+      ]
+    },
+    {
+      "id": "layer:resolver-support",
+      "name": "Resolver Support",
+      "description": "解析器辅助模块：签名、Cookie 管理、Token 管理、URL 匹配",
+      "nodeIds": [
+        "file:src/resolvers/cookie_pool.rs",
+        "class:src/resolvers/cookie_pool.rs:CookiePool",
+        "file:src/resolvers/token_manager.rs",
+        "class:src/resolvers/token_manager.rs:TokenManager",
+        "file:src/resolvers/cookie_utils.rs",
+        "file:src/resolvers/url_matcher.rs",
+        "file:src/resolvers/xbogus.rs",
+        "file:src/resolvers/abogus.rs",
+        "file:src/resolvers/zhixueyun_token/mod.rs",
+        "file:src/resolvers/douyin_api.rs"
+      ]
+    },
+    {
+      "id": "layer:scraping",
+      "name": "Scraping / Cloudflare Bypass",
+      "description": "浏览器自动化和 HTML 提取，用于绕过 Cloudflare",
+      "nodeIds": [
+        "file:src/scrapling_client.rs",
+        "class:src/scrapling_client.rs:ScraplingClient",
+        "file:src/scrapling_extractor.rs",
+        "file:src/yt_dlp.rs",
+        "class:src/yt_dlp.rs:YtDlp"
+      ]
+    },
+    {
+      "id": "layer:website-learning",
+      "name": "Website Learning",
+      "description": "网站特征学习和自适应配置",
+      "nodeIds": [
+        "file:src/website_profile.rs",
+        "class:src/website_profile.rs:WebsiteProfileStore"
+      ]
+    },
+    {
+      "id": "layer:collaboration-server",
+      "name": "Collaboration Server",
+      "description": "分布式协作服务器端：数据库、消息处理、WebSocket、文件传输",
+      "nodeIds": [
+        "class:src/collaboration/server/db.rs:Database",
+        "class:src/collaboration/server/handler.rs:MessageHandler",
+        "class:src/collaboration/server/ws.rs:WsServer",
+        "class:src/collaboration/transfer/http_server.rs:FileServer",
+        "class:src/collaboration/transfer/downloader.rs:ChunkedDownloader"
+      ]
+    },
+    {
+      "id": "layer:collaboration-client",
+      "name": "Collaboration Client",
+      "description": "分布式协作客户端：WebSocket 连接、本地队列、设备发现",
+      "nodeIds": [
+        "class:src/collaboration/client/ws.rs:CollaborationClient",
+        "class:src/collaboration/client/queue.rs:LocalQueue",
+        "class:src/collaboration/client/discovery.rs:DiscoveryService"
+      ]
+    },
+    {
+      "id": "layer:collaboration-crypto",
+      "name": "Collaboration Crypto",
+      "description": "协作安全：认证、哈希环、NAT 发现",
+      "nodeIds": [
+        "class:src/collaboration/crypto/auth.rs:AuthToken",
+        "class:src/collaboration/crypto/hashring.rs:HashRing",
+        "class:src/collaboration/discovery/stun.rs:NatType",
+        "file:src/collaboration/README.md"
+      ]
+    },
+    {
+      "id": "layer:collaboration-types",
+      "name": "Collaboration Types",
+      "description": "协作核心数据类型：Team、Device、Task、ClientMessage、ServerMessage",
+      "nodeIds": [
+        "class:src/collaboration/types.rs:Team",
+        "class:src/collaboration/types.rs:Device",
+        "class:src/collaboration/types.rs:Task",
+        "function:src/collaboration/mod.rs:start_server"
+      ]
+    },
+    {
+      "id": "layer:ui-theming",
+      "name": "UI / Theming",
+      "description": "用户界面和主题管理",
+      "nodeIds": [
+        "file:src/gui.rs",
+        "file:ui.slint",
+        "file:src/theme.rs",
+        "file:src/i18n.rs"
+      ]
+    },
+    {
+      "id": "layer:history-config",
+      "name": "History / Config",
+      "description": "下载历史管理和应用配置",
+      "nodeIds": [
+        "file:src/history.rs",
+        "file:src/config.rs"
+      ]
+    },
+    {
+      "id": "layer:documentation",
+      "name": "Documentation",
+      "description": "项目文档、计划、指南",
+      "nodeIds": [
+        "document:README.md",
+        "document:CLAUDE.md",
+        "document:HANDOFF.md",
+        "document:AGENTS.md",
+        "document:COOKIE_GUIDE.md",
+        "document:PLAN-IMPROVEMENTS.md",
+        "document:docs/DOUYIN_COOKIES.md",
+        "document:docs/plans/2026-05-21-improvement-plan.md",
+        "document:docs/plans/2026-05-25-performance-bottleneck-report.md",
+        "document:docs/plans/2026-05-25-performance-bottleneck-report-v2.md"
+      ]
+    },
+    {
+      "id": "layer:agent-docs",
+      "name": "Agent Documentation",
+      "description": "Agent 相关文档和解决方案计划",
+      "nodeIds": [
+        "document:docs/agents/domain.md",
+        "document:docs/agents/issue-tracker.md",
+        "document:docs/agents/triage-labels.md",
+        "document:docs/superpowers/plans/2026-05-13-solution-a-cookie-pool.md",
+        "document:docs/superpowers/plans/2026-05-13-solution-b-hybrid.md",
+        "document:docs/superpowers/plans/2026-05-13-solution-c-playwright.md"
+      ]
+    },
+    {
+      "id": "layer:project-config",
+      "name": "Project Configuration",
+      "description": "项目构建和配置文件",
+      "nodeIds": [
+        "config:Cargo.toml",
+        "file:build.rs",
+        "file:config/mcporter.json",
+        "file:.codegraph/config.json"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "项目概览",
+      "description": "通过 README 了解项目定位：Rust x.com 视频下载器，支持 CLI/GUI，具备三级解析链。",
+      "nodeIds": [
+        "document:README.md"
+      ]
+    },
+    {
+      "order": 2,
+      "title": "编程理念",
+      "description": "理解项目核心原则：Think Before Coding、Simplicity First、Surgical Changes、Goal-Driven Execution。",
+      "nodeIds": [
+        "document:CLAUDE.md"
+      ]
+    },
+    {
+      "order": 3,
+      "title": "应用入口",
+      "description": "main.rs 是 CLI/GUI 双模式入口，lib.rs 导出库模块，run_gui 启动 Slint GUI。",
+      "nodeIds": [
+        "file:src/main.rs",
+        "file:src/lib.rs",
+        "function:src/gui.rs:run_gui"
+      ]
+    },
+    {
+      "order": 4,
+      "title": "核心类型系统",
+      "description": "types.rs 定义 VideoInfo、DownloadRequest、DownloadResult、DownloadProgress 等核心类型，是整个项目的数据基石。",
+      "nodeIds": [
+        "file:src/types.rs"
+      ]
+    },
+    {
+      "order": 5,
+      "title": "视频下载器",
+      "description": "downloader.rs 实现 VideoDownloader，支持分段并行下载、重试机制、自适应线程和网站特征学习。",
+      "nodeIds": [
+        "file:src/downloader.rs",
+        "class:src/downloader.rs:VideoDownloader"
+      ]
+    },
+    {
+      "order": 6,
+      "title": "三级解析链",
+      "description": "ResolverRegistry 管理多平台解析器：yt-dlp（首选）→ FxTwitter API → Scrapling（Cloudflare 绕过）。",
+      "nodeIds": [
+        "class:src/resolvers/mod.rs:ResolverRegistry",
+        "file:src/fxtwitter.rs",
+        "file:src/scrapling_client.rs"
+      ]
+    },
+    {
+      "order": 7,
+      "title": "平台解析器实现",
+      "description": "各平台专用解析器：抖音（DouYinResolver + DouYinApiClient）、TikTok、Bilibili、智学云。",
+      "nodeIds": [
+        "class:src/resolvers/douyin.rs:DouYinResolver",
+        "class:src/resolvers/tiktok.rs:TikTokResolver",
+        "class:src/resolvers/bilibili.rs:BilibiliResolver",
+        "class:src/resolvers/zhixueyun.rs:ZhiXueYunResolver"
+      ]
+    },
+    {
+      "order": 8,
+      "title": "Token 与 Cookie 管理",
+      "description": "TokenManager 自动生成平台 token，CookiePool 管理多账号 Cookie，CookieUtils 生成临时 cookie 文件。",
+      "nodeIds": [
+        "class:src/resolvers/token_manager.rs:TokenManager",
+        "class:src/resolvers/cookie_pool.rs:CookiePool",
+        "file:src/resolvers/cookie_utils.rs"
+      ]
+    },
+    {
+      "order": 9,
+      "title": "签名与防爬",
+      "description": "X-Bogus 和 A-Bogus 签名用于 x.com/抖音 请求签名，WebsiteProfileStore 记录网站防爬特征。",
+      "nodeIds": [
+        "file:src/resolvers/xbogus.rs",
+        "file:src/resolvers/abogus.rs",
+        "class:src/website_profile.rs:WebsiteProfileStore"
+      ]
+    },
+    {
+      "order": 10,
+      "title": "协作模块架构",
+      "description": "分布式协作模块：支持多设备团队下载协作、WebSocket 通信、文件传输和数据库持久化。",
+      "nodeIds": [
+        "class:src/collaboration/types.rs:Team",
+        "class:src/collaboration/types.rs:Device",
+        "class:src/collaboration/types.rs:Task",
+        "document:src/collaboration/README.md"
+      ]
+    },
+    {
+      "order": 11,
+      "title": "协作服务器端",
+      "description": "Database、MessageHandler、WsServer、FileServer 构成协作服务器核心，处理团队任务分发和文件传输。",
+      "nodeIds": [
+        "class:src/collaboration/server/db.rs:Database",
+        "class:src/collaboration/server/handler.rs:MessageHandler",
+        "class:src/collaboration/server/ws.rs:WsServer",
+        "class:src/collaboration/transfer/http_server.rs:FileServer"
+      ]
+    },
+    {
+      "order": 12,
+      "title": "协作密码学与网络",
+      "description": "AuthToken 认证、HashRing 一致性哈希任务分配、NAT 类型检测（STUN）。",
+      "nodeIds": [
+        "class:src/collaboration/crypto/auth.rs:AuthToken",
+        "class:src/collaboration/crypto/hashring.rs:HashRing",
+        "class:src/collaboration/discovery/stun.rs:NatType"
+      ]
+    },
+    {
+      "order": 13,
+      "title": "Slint GUI",
+      "description": "Slint UI 界面，包含网络状态指示、下载进度条、按钮交互，theme.rs 支持深色/浅色模式。",
+      "nodeIds": [
+        "file:ui.slint",
+        "file:src/gui.rs",
+        "file:src/theme.rs"
+      ]
+    },
+    {
+      "order": 14,
+      "title": "历史与配置管理",
+      "description": "History 使用 SQLite 存储下载记录，Config 管理应用配置。",
+      "nodeIds": [
+        "file:src/history.rs",
+        "file:src/config.rs"
+      ]
+    },
+    {
+      "order": 15,
+      "title": "项目交接与安全",
+      "description": "HANDOFF.md 记录关键决策，ZHIXUEYUN_TOKEN 环境变量优先于硬编码 fallback。",
+      "nodeIds": [
+        "document:HANDOFF.md"
+      ]
+    }
+  ]
+}

@@ -173,12 +173,7 @@ impl TokenManager {
     /// 生成 TikTok msToken (参考 F2 TokenManager.gen_real_msToken)
     /// 通过 HTTP POST 获取，失败则使用 fallback 随机生成
     pub async fn generate_ms_token(&mut self) -> anyhow::Result<()> {
-        use reqwest::Client;
-        use std::time::Duration;
-
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+        let client = crate::http_client::shared();
 
         // F2 使用的端点
         let url = "https://live.douyin.com/aweme/push/web/effect/get_region_list";
@@ -239,12 +234,10 @@ impl TokenManager {
 
     /// 生成 TikTok ttwid (参考 F2 TokenManager.gen_ttwid)
     pub async fn generate_ttwid(&mut self) -> anyhow::Result<()> {
-        use reqwest::Client;
-        use std::time::Duration;
+        
+        
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+        let client = crate::http_client::shared();
 
         let url = "https://www.tiktok.com/api/register/wtv/";
 
@@ -276,12 +269,10 @@ impl TokenManager {
 
     /// 生成 TikTok webid (参考 F2 TokenManager.gen_webid)
     pub async fn generate_webid(&mut self) -> anyhow::Result<()> {
-        use reqwest::Client;
-        use std::time::Duration;
+        
+        
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+        let client = crate::http_client::shared();
 
         let url = "https://www.tiktok.com/api/webid/generate/";
 

@@ -126,6 +126,7 @@ impl PlatformResolver for DouYinResolver {
                                     format_note: Some("DouYin API".to_string()),
                                 }],
                                 created_at: None,
+                                download_strategy: crate::types::DownloadStrategy::YtDlp,
                             });
                         } else {
                             tracing::warn!("DouYin API returned empty aweme_list");

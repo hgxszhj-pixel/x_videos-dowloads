@@ -215,6 +215,8 @@ pub struct VideoInfo {
     pub formats: Vec<VideoFormat>,
     /// 创建时间
     pub created_at: Option<String>,
+    /// 下载策略（由解析器决定）
+    pub download_strategy: DownloadStrategy,
 }
 
 impl VideoInfo {
@@ -229,6 +231,7 @@ impl VideoInfo {
             thumbnail: None,
             formats: Vec::new(),
             created_at: Some(chrono::Utc::now().to_rfc3339()),
+            download_strategy: DownloadStrategy::YtDlp,
         }
     }
 }
@@ -449,11 +452,12 @@ pub enum DownloadStatus {
 }
 
 /// 下载策略
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DownloadStrategy {
     /// 使用原生下载
     Native,
     /// 使用 yt-dlp 下载
+    #[default]
     YtDlp,
 }
 

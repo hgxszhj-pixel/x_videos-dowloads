@@ -1,9 +1,9 @@
 # 项目交接文档 (Handoff)
 
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
-**更新时间**: 2026-05-21 15:00
+**更新时间**: 2026-05-25 00:30
 **当前分支**: gitbutler/workspace
-**Git**: `855786b` fix: prioritize ZHIXUEYUN_TOKEN env var over hardcoded fallback
+**Git**: `08f7a2b` fix: multi-agent review - security, performance, architecture improvements
 
 ---
 
@@ -101,6 +101,78 @@
 
 ---
 
+## Multi-Agent Review 改进 (2026-05-25)
+
+### Ultrawork 并行分析完成
+
+4 个 agents 并行分析项目瓶颈:
+| Agent | 模型 | 分析范围 |
+|-------|------|----------|
+| Architecture | Opus | main.rs 硬编码逻辑、循环依赖、错误类型 |
+| Security | Sonnet | 密钥处理、命令注入、依赖漏洞 |
+| Performance | Sonnet | async 阻塞、内存分配、连接池 |
+| Code Quality | Haiku | 代码重复、测试覆盖、文档 |
+
+### 已修复的安全问题
+
+| 问题 | 严重性 | 位置 | 修复 |
+|------|--------|------|------|
+| 硬编码 token `d452ee...` | CRITICAL | zhixueyun.rs:117 | 移除 fallback，改为 `ResolverError::AuthenticationRequired` |
+| 命令注入 (URL 未转义) | CRITICAL | yt_dlp.rs, scrapling_client.rs, main.rs | 添加 `shell_words::quote` 转义 |
+| 日志泄露 URL token | HIGH | yt_dlp.rs:112 | - |
+| ring 0.16.20 漏洞 | HIGH | Cargo.lock | `cargo update -p ring` |
+
+### 已修复的性能问题
+
+| 问题 | 严重性 | 位置 | 修复 |
+|------|--------|------|------|
+| async 阻塞 (wget) | CRITICAL | main.rs:491 | `std::process::Command` → `tokio::process::Command` |
+| Python subprocess 阻塞 | CRITICAL | scrapling_client.rs:79 | `spawn_blocking` 包装 |
+| busy-wait try_wait() | MEDIUM | scrapling_client.rs:116 | 改用 `child.wait()` |
+| 每 chunk 新建 Client | HIGH | downloader.rs:179 | 复用共享 `Arc<Client>` |
+| Vec 内存分配 | CRITICAL | downloader.rs:446 | 改为栈上固定数组 `[0u64; 8]` |
+| CookiePool O(n) 查找 | HIGH | cookie_pool.rs:145 | 添加 HashMap 索引 O(1) |
+
+### 已修复的架构问题
+
+| 问题 | 严重性 | 位置 | 修复 |
+|------|--------|------|------|
+| 硬编码平台判断 | HIGH | main.rs:311 | `download_strategy` 字段路由 |
+| DownloadStrategy 缺失 | - | types.rs | 添加 `Native/YtDlp` enum |
+| msg.clone() borrow 错误 | MEDIUM | types.rs:190 | 添加 `msg.clone()` |
+
+### 下载策略架构
+
+```rust
+// VideoInfo 新增字段
+pub struct VideoInfo {
+    ...
+    pub download_strategy: DownloadStrategy,  // 新增
+}
+
+// DownloadStrategy enum
+pub enum DownloadStrategy {
+    Native,   // 智学云原生下载
+    YtDlp,    // yt-dlp 下载 (默认)
+}
+```
+
+**分发逻辑 (main.rs:309)**:
+```rust
+// 之前: if info.url.contains("kc.zhixueyun.com")
+// 现在: if info.download_strategy == DownloadStrategy::Native
+```
+
+### 待改进项 (P2)
+
+| 问题 | 优先级 | 建议方案 |
+|------|--------|----------|
+| 代码重复 (tiktok/douyin/bilibili) | MEDIUM | 提取 `YtDlpBasedResolver` trait |
+| 测试覆盖不足 | MEDIUM | 添加 DouYin/ZhiXueYun 集成测试 |
+| sequential chunk merge | MEDIUM | 用 `join_set.spawn` 并行化 |
+
+---
+
 ## MCP 服务配置 (2026-05-21 下午更新)
 
 | 服务 | 状态 | 说明 |
@@ -189,10 +261,14 @@ codegraph affected [files]
 
 ## 待办 (优先级排序)
 
-### P1 - 改进空间
+### P1 - 已完成
+
+1. ✅ **ZHIXUEYUN_TOKEN 硬编码问题** - 已在 multi-agent review 中修复
+
+### P2 - 改进空间
 
 1. **CookiePool 简化** - 当前过度设计（LRU/TTL/hit counting 未使用），但暂不修改以避免风险
-2. **ZhiXueYun 依赖硬编码 token** - d452ee129814c2549a2d7b4448a48ea9 作为 fallback
+2. **测试覆盖** - DouYinResolver/ZhiXueYunResolver 缺少集成测试
 
 ---
 
@@ -201,8 +277,9 @@ codegraph affected [files]
 | 检查项 | 状态 |
 |--------|------|
 | cargo check | ✅ 通过 |
-| cargo test | ✅ 139 测试通过 (lib) + 148 + 6 = 293 total |
-| clippy 警告 | ✅ 0 warnings (完全清洁) |
+| cargo test | ✅ 139 测试通过 (lib) |
+| clippy 警告 | ✅ 0 warnings |
+| cargo build --lib | ✅ 0.73s |
 
 ---
 

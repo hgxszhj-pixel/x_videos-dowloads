@@ -6,6 +6,7 @@
 use crate::types::{VideoFormat, VideoInfo};
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
+use std::sync::Arc;
 
 /// FxTwitter API 响应
 #[derive(Debug, Deserialize)]
@@ -111,37 +112,15 @@ struct FxVariant {
 
 /// FxTwitter API 解析器
 pub struct FxTwitterResolver {
-    client: reqwest::Client,
+    client: Arc<reqwest::Client>,
 }
 
 impl FxTwitterResolver {
-    /// 创建新的解析器（自动使用环境变量代理）
+    /// 创建新的解析器（使用共享客户端，自动支持环境变量代理）
     pub fn new() -> Self {
-        let mut builder = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .timeout(std::time::Duration::from_secs(60));
-
-        // 尝试从环境变量获取代理
-        for env_var in ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"] {
-            if let Ok(proxy_url) = std::env::var(env_var) {
-                if !proxy_url.is_empty() {
-                    let proxy_with_scheme = if proxy_url.starts_with("http://") || proxy_url.starts_with("https://") {
-                        proxy_url.to_string()
-                    } else {
-                        format!("http://{}", proxy_url)
-                    };
-                    if let Ok(proxy) = reqwest::Proxy::all(&proxy_with_scheme) {
-                        builder = builder.proxy(proxy);
-                        break;
-                    }
-                }
-            }
-        }
-
+        // 使用共享客户端，自动继承环境变量代理支持
         Self {
-            client: builder.build().unwrap_or_else(|_| reqwest::Client::new()),
+            client: crate::http_client::shared(),
         }
     }
 
@@ -154,13 +133,18 @@ impl FxTwitterResolver {
             format!("http://{}", proxy_url)
         };
 
+        // 创建带有代理的新客户端，基于共享客户端配置
         let client = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            .tcp_keepalive(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(600))
+            .pool_max_idle_per_host(32)
             .proxy(reqwest::Proxy::all(&proxy_with_scheme)?)
             .build()
-            .unwrap_or_default();
+            .map_err(|e| anyhow!("Failed to create client with proxy: {}", e))?;
 
-        Ok(Self { client })
+        Ok(Self { client: Arc::new(client) })
     }
 
     /// 获取视频信息

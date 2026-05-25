@@ -11,7 +11,7 @@ const SEGMENT_VALIDATION_RATIO: u64 = 90; // 90% - 分段大小验证比例
 const RESUME_MIN_DOWNLOAD_RATIO: u64 = 80; // 80% - 断点续传最小下载比例
 const FILE_SIZE_VALIDATION_RATIO: u64 = 90; // 90% - 最终文件大小验证比例
 
-use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, DEFAULT_USER_AGENT, validate_output_path};
+use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, validate_output_path};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
@@ -83,8 +83,8 @@ impl Default for DownloaderConfig {
 
 /// 视频下载器
 pub struct VideoDownloader {
-    /// HTTP 客户端
-    client: Client,
+    /// HTTP 客户端（共享连接池）
+    client: Arc<Client>,
     /// 配置
     config: DownloaderConfig,
 }
@@ -97,27 +97,15 @@ impl VideoDownloader {
 
     /// 使用配置创建下载器
     pub fn with_config(config: DownloaderConfig) -> Result<Self> {
-        let mut builder = Client::builder()
-            .connect_timeout(Duration::from_secs(config.connect_timeout))
-            .timeout(Duration::from_secs(config.request_timeout))
-            .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .tcp_keepalive(Duration::from_secs(config.tcp_keepalive))
-            .user_agent(
-                config.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string())
-            );
-
-        // 设置代理
-        if let Some(ref proxy) = config.proxy {
-            builder = builder.proxy(reqwest::Proxy::all(proxy)?);
-        }
-
-        // HTTP/2 支持需要使用不同的方法
-        // 注意: reqwest 默认支持 HTTP/1.1，HTTP/2 需要 ALPN 支持
-        // 在大多数情况下，使用默认配置即可，reqwest 会自动协商
-
-        let client = builder.build()?;
+        // 使用共享客户端以获得连接池复用和 HTTP/2 支持
+        let client = crate::http_client::shared();
 
         Ok(Self { client, config })
+    }
+
+    /// 使用自定义 client 创建下载器（保留代理配置能力）
+    pub fn with_client_and_config(client: Arc<Client>, config: DownloaderConfig) -> Self {
+        Self { client, config }
     }
 
     /// 设置 User-Agent
@@ -416,8 +404,12 @@ impl VideoDownloader {
                 let mut progress = progress_clone.lock().await;
                 progress.update(downloaded, speed, current_threads);
 
+                // Clone outside lock to avoid holding lock during potentially slow callback
+                let callback_progress = progress.clone();
+                drop(progress);
+
                 if let Some(ref callback) = callback_clone {
-                    callback(progress.clone());
+                    callback(callback_progress);
                 }
             }
         });
@@ -512,8 +504,11 @@ impl VideoDownloader {
         final_progress.status = DownloadStatus::Completed;
         final_progress.percent = 1.0;
 
+        let callback_progress = final_progress.clone();
+        drop(final_progress);
+
         if let Some(ref callback) = progress_callback {
-            callback(final_progress.clone());
+            callback(callback_progress);
         }
 
         info!("分段并行下载完成: {}", output_path.display());
@@ -589,8 +584,10 @@ impl VideoDownloader {
             progress.update(downloaded, speed, 1);
 
             // 每次chunk都触发回调（不再等待时间间隔），确保UI实时更新
+            // Clone outside lock to avoid blocking the callback with lock held
+            let callback_progress = progress.clone();
             if let Some(ref callback) = progress_callback {
-                callback(progress.clone());
+                callback(callback_progress);
             }
 
             debug!("下载进度: {}/{} bytes", downloaded, total);

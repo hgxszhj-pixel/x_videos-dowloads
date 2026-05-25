@@ -7,9 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use shell_words::quote;
 use std::path::PathBuf;
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use std::io::{BufReader as StdBufReader, BufRead};
+use std::process::{Command as StdCommand, Stdio};
 
 /// Scrapling 响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,41 +81,44 @@ impl ScraplingClient {
 
         // Spawn blocking because Python subprocess spawn is a blocking operation
         let result = tokio::task::spawn_blocking(move || {
-            let mut child = Command::new(&python_path)
+            let mut child = StdCommand::new(&python_path)
                 .arg("-c")
                 .arg(&script)
-                .arg(quote(url_owned).into_owned())
+                .arg(quote(&url_owned).into_owned())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .kill_on_drop(true)
                 .spawn()
                 .context("Failed to spawn Python subprocess")?;
 
             let stdout = child.stdout.take().ok_or_else(|| anyhow!("Missing stdout"))?;
-            let mut reader = BufReader::new(stdout).lines();
+            let mut reader = StdBufReader::new(stdout);
+            let mut line = String::new();
 
             // Use a simple loop with timeout checking
             let start = std::time::Instant::now();
             let deadline = std::time::Duration::from_secs(timeout_secs);
 
             loop {
-                if start.elapsed() > deadline {
-                    child.kill().ok();
-                    return Err(anyhow!("Scrapling fetch timed out"));
+                match start.elapsed().cmp(&deadline) {
+                    std::cmp::Ordering::Greater => {
+                        let _ = child.kill();
+                        return Err(anyhow!("Scrapling fetch timed out"));
+                    }
+                    _ => {}
                 }
 
-                match reader.next_line() {
-                    Ok(Some(line)) => {
-                        if !line.is_empty() {
-                            return Ok(line);
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        // Wait for process to finish (blocking, appropriate in spawn_blocking)
+                        match child.wait() {
+                            Ok(_) => break,
+                            Err(_) => break,
                         }
                     }
-                    Ok(None) => {
-                        // Try waiting for process to finish
-                        match child.try_wait() {
-                            Ok(Some(_)) => break,
-                            Ok(None) => continue,
-                            Err(_) => break,
+                    Ok(_) => {
+                        if !line.is_empty() {
+                            return Ok(line);
                         }
                     }
                     Err(_) => break,

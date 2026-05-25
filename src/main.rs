@@ -8,6 +8,7 @@ mod downloader;
 mod fxtwitter;
 mod gui;
 mod history;
+mod http_client;
 mod i18n;
 mod resolvers;
 mod scrapling_client;
@@ -33,7 +34,7 @@ use crate::config::AppConfig;
 use crate::downloader::{DownloaderConfig, VideoDownloader};
 use crate::fxtwitter::FxTwitterResolver;
 use crate::history::History;
-use crate::types::{format_bytes, sanitize_filename, DownloadRequest, DownloadResult, VideoInfo, DEFAULT_USER_AGENT};
+use crate::types::{format_bytes, sanitize_filename, DownloadRequest, DownloadResult, DownloadStrategy, VideoInfo, DEFAULT_USER_AGENT};
 use crate::yt_dlp::YtDlp;
 
 /// 命令行参数
@@ -307,9 +308,9 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
                 history.add_entry_with_all(url.clone(), None, Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
             }
         } else if let Some(ref info) = video_info {
-            // 针对智学云使用原生下载
-            if info.url.contains("kc.zhixueyun.com") {
-                info!("检测到智学云 URL，使用原生下载...");
+            // 根据解析器决定的下载策略选择下载方式
+            if info.download_strategy == DownloadStrategy::Native {
+                info!("使用原生下载...");
                 let result = download_with_native(&info, &cli, start_time).await?;
                 if result.success {
                     history.add_entry_with_all(url.clone(), Some(info.title.clone()), Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
@@ -496,7 +497,7 @@ async fn download_with_native(
             "-O", &output_path_str,
             "--user-agent", &user_agent,
             "--header", &format!("Authorization: Bearer__{}", token),
-            quote(url).as_str()
+            &*quote(url).into_owned()
         ])
         .output()
         .await?;
