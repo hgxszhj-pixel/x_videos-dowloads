@@ -1,7 +1,7 @@
 # 项目交接文档 (Handoff)
 
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
-**更新时间**: 2026-05-21
+**更新时间**: 2026-05-21 15:00
 **当前分支**: gitbutler/workspace
 **Git**: `855786b` fix: prioritize ZHIXUEYUN_TOKEN env var over hardcoded fallback
 
@@ -98,6 +98,64 @@
 ### 新增文件
 
 - src/resolvers/url_matcher.rs - 统一 URL 平台检测
+
+---
+
+## MCP 服务配置 (2026-05-21 下午更新)
+
+| 服务 | 状态 | 说明 |
+|------|------|------|
+| `oh-my-claudecode:t` | ✅ | oh-my-claudecode MCP bridge |
+| `context-mode:context-mode` | ✅ | 上下文管理 (v1.0.124) |
+| `sequential-thinking` | ✅ | 顺序思考 MCP |
+| `shadcn` | ✅ | UI 组件库 |
+| `codegraph` | ✅ | 代码图谱分析 (v0.8.0) |
+
+### 已移除
+
+| 服务 | 原因 |
+|------|------|
+| `gitnexus` | native 模块编译失败 + Docker 不可用 |
+
+---
+
+## CodeGraph 分析结果 (2026-05-21)
+
+### 项目索引统计
+
+| 指标 | 数值 |
+|------|------|
+| 文件数 | 46 |
+| 代码节点 | 1,123 |
+| 调用关系 | 2,633 |
+| 数据库大小 | 3.17 MB |
+
+### 性能瓶颈分析
+
+| 优先级 | 瓶颈 | 状态 |
+|--------|------|------|
+| 🔴 高 | `reqwest::blocking` (zhixueyun.rs) | 暂不修改 (高风险) |
+| ✅ | HTTP Client 复用 | 已优化 (downloader.rs) |
+| ✅ | Arc 引用传递 | 已是 `&Arc` 形式 |
+
+### CodeGraph 使用命令
+
+```bash
+# 初始化项目
+npx @colbymchenry/codegraph init
+
+# 索引代码
+npx @colbymchenry/codegraph index
+
+# 查询符号
+codegraph query "函数名"
+
+# 查看结构
+codegraph files
+
+# 分析变更影响
+codegraph affected [files]
+```
 
 ---
 

@@ -18,6 +18,8 @@ pub use bilibili::BilibiliResolver;
 pub use douyin_api::{DouYinApiClient, extract_modal_id};
 pub use cookie_utils::CookieFileManager;
 pub use cookie_pool::CookiePool;
+pub use zhixueyun::ZhiXueYunResolver;
+pub mod zhixueyun_token;
 use crate::types::VideoInfo;
 use crate::history::Platform;
 /// 解析器错误类型
@@ -82,6 +84,10 @@ pub trait PlatformResolver: Send + Sync {
     /// 获取所需 Token 名称列表
     fn required_tokens(&self) -> Vec<&'static str> {
         vec![]
+    }
+    /// 获取下载策略
+    fn download_strategy(&self) -> crate::types::DownloadStrategy {
+        crate::types::DownloadStrategy::YtDlp
     }
 }
 /// YtDlp 解析器（包装现有实现）

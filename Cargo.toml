@@ -98,9 +98,10 @@ rc4 = "0.1"
 # SM3 国密哈希
 sm3 = "0.5"
 
-# STUN (NAT穿透)
-stun = "0.3"
+# STUN (NAT穿透) - 0.17.x required for RUSTSEC-2025-0009
+stun = "0.17"
 slint = "1.15.1"
+dirs = "6.0.0"
 
 [build-dependencies]
 slint-build = "1.15.1"

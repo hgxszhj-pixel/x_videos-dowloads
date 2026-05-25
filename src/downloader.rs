@@ -443,7 +443,8 @@ impl VideoDownloader {
 
         // 等待所有分段下载完成
         let mut success_count = 0u32;
-        let mut segment_sizes = vec![0u64; segments as usize];
+        // 使用固定大小数组避免每次分配 Vec（max_threads=8）
+        let mut segment_sizes = [0u64; 8];
         for (i, handle) in handles.into_iter().enumerate() {
             match handle.await {
                 Ok(Ok(size)) => {

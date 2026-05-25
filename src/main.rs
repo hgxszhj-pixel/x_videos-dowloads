@@ -18,6 +18,7 @@ mod yt_dlp;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use shell_words::quote;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -25,7 +26,7 @@ use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
-use crate::resolvers::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver};
+use crate::resolvers::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver, ZhiXueYunResolver, CookiePool};
 use crate::collaboration::server::ws::WsServer;
 use crate::collaboration::CollaborationClient;
 use crate::config::AppConfig;
@@ -306,11 +307,20 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
                 history.add_entry_with_all(url.clone(), None, Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
             }
         } else if let Some(ref info) = video_info {
-            // 使用 yt-dlp 下载
-            download_with_ytdlp(&ytdlp, info, &cli, &config, start_time).await?;
-            // 记录到历史（duration 转换为 f64）
-            let duration_secs = info.duration.map(|d| d as f64);
-            history.add_entry_with_all(url.clone(), Some(info.title.clone()), None, None, duration_secs, history::DownloadStatus::Completed, None)?;
+            // 针对智学云使用原生下载
+            if info.url.contains("kc.zhixueyun.com") {
+                info!("检测到智学云 URL，使用原生下载...");
+                let result = download_with_native(&info, &cli, start_time).await?;
+                if result.success {
+                    history.add_entry_with_all(url.clone(), Some(info.title.clone()), Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
+                }
+            } else {
+                // 使用 yt-dlp 下载
+                download_with_ytdlp(&ytdlp, info, &cli, &config, start_time).await?;
+                // 记录到历史（duration 转换为 f64）
+                let duration_secs = info.duration.map(|d| d as f64);
+                history.add_entry_with_all(url.clone(), Some(info.title.clone()), None, None, duration_secs, history::DownloadStatus::Completed, None)?;
+            }
         }
     }
 
@@ -339,6 +349,7 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig)
 
     registry.register(TikTokResolver::new());
     registry.register(BilibiliResolver::new());
+    registry.register(ZhiXueYunResolver::new(Arc::new(CookiePool::new(24, 100))));
 
     // 使用 ResolverRegistry 选择合适的解析器
     let resolver = registry.select_resolver(url);
@@ -442,6 +453,76 @@ fn print_video_formats(info: &VideoInfo) {
             "{:<10} {:<8} {:<15} {:<12}",
             fmt.format_id, fmt.ext, resolution, size
         );
+    }
+}
+
+/// 使用原生下载（wget）用于智学云等平台
+async fn download_with_native(
+    info: &VideoInfo,
+    cli: &Cli,
+    _start_time: Instant,
+) -> Result<DownloadResult> {
+    // 确定输出路径
+    let output_dir = if cli.output.as_os_str() == "." {
+        get_default_output_dir()
+    } else {
+        cli.output.clone()
+    };
+    let output_dir = validate_output_dir(&output_dir)?;
+    tokio::fs::create_dir_all(&output_dir).await?;
+
+    // 确定文件名
+    let filename = if let Some(ref name) = cli.filename {
+        sanitize_filename(name)
+    } else {
+        sanitize_filename(&info.title)
+    };
+
+    let output_path = output_dir.join(format!("{}.mp4", filename));
+
+    // 获取 token
+    let token = std::env::var("ZHIXUEYUN_TOKEN")
+        .or_else(|_| Ok::<_, ()>(crate::resolvers::zhixueyun_token::load_zhixueyun_cookies().unwrap_or_default()))
+        .unwrap_or_default();
+
+    // 构建 wget 命令
+    let url = &info.url;
+    let user_agent = cli.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
+    let output_path_str = output_path.to_str().unwrap().to_string();
+
+    let output = tokio::process::Command::new("wget")
+        .args(&[
+            "-q", "--show-progress",
+            "-O", &output_path_str,
+            "--user-agent", &user_agent,
+            "--header", &format!("Authorization: Bearer__{}", token),
+            quote(url).as_str()
+        ])
+        .output()
+        .await?;
+
+    if output.status.success() {
+        let file_size = std::fs::metadata(&output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        println!("\n下载完成: {} ({} bytes)", output_path.display(), file_size);
+        Ok(DownloadResult {
+            success: true,
+            output_path,
+            file_size,
+            duration_secs: 0.0,
+            error_message: None,
+        })
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        println!("\n下载失败: {}", err);
+        Ok(DownloadResult {
+            success: false,
+            output_path,
+            file_size: 0,
+            duration_secs: 0.0,
+            error_message: Some(err.to_string()),
+        })
     }
 }
 

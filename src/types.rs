@@ -168,6 +168,34 @@ impl From<DownloadError> for anyhow::Error {
     }
 }
 
+/// ResolverError conversion for unified error handling.
+///
+/// Usage guidelines:
+/// - **DownloadError** / **DownloadErrorType**: For download operations (file I/O, HTTP, yt-dlp)
+/// - **ResolverError**: For platform resolution logic (parsing URLs, extracting video metadata)
+impl From<crate::resolvers::ResolverError> for DownloadError {
+    fn from(e: crate::resolvers::ResolverError) -> Self {
+        match e {
+            crate::resolvers::ResolverError::AuthenticationRequired => {
+                DownloadError::authentication()
+            }
+            crate::resolvers::ResolverError::ContentUnavailable(msg) => {
+                DownloadError::content_unavailable(&msg)
+            }
+            crate::resolvers::ResolverError::Network(msg) => {
+                DownloadError::network(msg.as_str())
+            }
+            crate::resolvers::ResolverError::ParseFailed(msg) => {
+                DownloadError {
+                    error_type: DownloadErrorType::Unknown(msg.clone()),
+                    message: format!("解析失败: {}", msg),
+                    action: Some("检查URL是否支持".to_string()),
+                }
+            }
+        }
+    }
+}
+
 /// 视频信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoInfo {
@@ -418,6 +446,15 @@ pub enum DownloadStatus {
     Failed,
     /// 已取消
     Cancelled,
+}
+
+/// 下载策略
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadStrategy {
+    /// 使用原生下载
+    Native,
+    /// 使用 yt-dlp 下载
+    YtDlp,
 }
 
 impl DownloadStatus {

@@ -5,6 +5,7 @@
 use crate::types::VideoInfo;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use shell_words::quote;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -74,28 +75,58 @@ impl ScraplingClient {
 
     /// 获取页面（绕过 Cloudflare）
     pub async fn fetch(&self, url: &str) -> Result<ScraplingResponse> {
-        let script = SCRAPLING_SCRIPT;
+        let script = SCRAPLING_SCRIPT.to_string();
+        let python_path = self.python_path.clone();
+        let timeout_secs = self.config.timeout_secs;
+        let url_owned = url.to_string();
 
-        let mut child = Command::new(&self.python_path)
-            .arg("-c")
-            .arg(script)
-            .arg(url)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .context("Failed to spawn Python subprocess")?;
+        // Spawn blocking because Python subprocess spawn is a blocking operation
+        let result = tokio::task::spawn_blocking(move || {
+            let mut child = Command::new(&python_path)
+                .arg("-c")
+                .arg(&script)
+                .arg(quote(url_owned).into_owned())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Failed to spawn Python subprocess")?;
 
-        let stdout = child.stdout.take().ok_or_else(|| anyhow!("Missing stdout"))?;
-        let mut reader = BufReader::new(stdout).lines();
+            let stdout = child.stdout.take().ok_or_else(|| anyhow!("Missing stdout"))?;
+            let mut reader = BufReader::new(stdout).lines();
 
-        let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
-        let result = tokio::time::timeout(timeout, async {
-            reader.next_line().await.ok().flatten()
+            // Use a simple loop with timeout checking
+            let start = std::time::Instant::now();
+            let deadline = std::time::Duration::from_secs(timeout_secs);
+
+            loop {
+                if start.elapsed() > deadline {
+                    child.kill().ok();
+                    return Err(anyhow!("Scrapling fetch timed out"));
+                }
+
+                match reader.next_line() {
+                    Ok(Some(line)) => {
+                        if !line.is_empty() {
+                            return Ok(line);
+                        }
+                    }
+                    Ok(None) => {
+                        // Try waiting for process to finish
+                        match child.try_wait() {
+                            Ok(Some(_)) => break,
+                            Ok(None) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            Err(anyhow!("No output from Python"))
         })
         .await
-        .context("Scrapling fetch timed out")?
-        .ok_or_else(|| anyhow!("No output from Python"))?;
+        .context("Spawn blocking task failed")??;
 
         let response: ScraplingResponse = serde_json::from_str(&result)
             .map_err(|e| anyhow!("Failed to parse JSON: {} - Output: {}", e, &result))?;

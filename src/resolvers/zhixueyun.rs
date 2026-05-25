@@ -61,6 +61,7 @@ struct DownloadContext {
 /// ZhiXueYun 解析器
 pub struct ZhiXueYunResolver {
     cookie_pool: Arc<CookiePool>,
+    token: std::sync::RwLock<Option<String>>,
     client: Client,
 }
 
@@ -70,11 +71,49 @@ impl ZhiXueYunResolver {
     pub fn new(cookie_pool: Arc<CookiePool>) -> Self {
         Self {
             cookie_pool,
+            token: std::sync::RwLock::new(None),
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_default(),
         }
+    }
+
+    /// 设置认证 token（支持运行时动态更新）
+    #[allow(dead_code)]
+    pub fn set_token(&self, token: String) {
+        let mut write_lock = self.token.write().unwrap();
+        *write_lock = Some(token);
+    }
+
+    /// 获取当前 token
+    fn get_token(&self) -> Result<String, ResolverError> {
+        // 1. 先尝试运行时设置的 token
+        if let Ok(read_lock) = self.token.read() {
+            if let Some(t) = read_lock.as_ref() {
+                if !t.is_empty() {
+                    return Ok(t.clone());
+                }
+            }
+        }
+        // 2. 环境变量
+        if let Ok(t) = std::env::var("ZHIXUEYUN_TOKEN") {
+            if !t.is_empty() {
+                return Ok(t);
+            }
+        }
+        // 3. 自动从 cookies 文件加载
+        if let Some(token) = crate::resolvers::zhixueyun_token::load_zhixueyun_cookies() {
+            return Ok(token);
+        }
+        // 4. CookiePool fallback
+        if let Some(cookies) = self.cookie_pool.get() {
+            if let Some(t) = cookies.get("authorization") {
+                return Ok(t.clone());
+            }
+        }
+        // 没有可用的 token，返回错误
+        Err(ResolverError::AuthenticationRequired)
     }
 
     /// 从 URL 中提取 course/category ID (支持两种格式)
@@ -91,7 +130,7 @@ impl ZhiXueYunResolver {
             .map(|s| s.to_string())
     }
 
-    fn get_auth_headers(&self, token: Option<&str>) -> HeaderMap {
+    fn get_auth_headers(&self, token: Option<&str>) -> Result<HeaderMap, ResolverError> {
         let mut headers = HeaderMap::new();
         headers.insert(reqwest::header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36".parse().unwrap());
         headers.insert(reqwest::header::ACCEPT, "*/*".parse().unwrap());
@@ -102,7 +141,7 @@ impl ZhiXueYunResolver {
         if let Some(t) = token {
             headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer__{}", t.trim_start_matches("Bearer__")).parse().unwrap());
         }
-        headers
+        Ok(headers)
     }
 
     /// 获取分类下的所有课程ID
@@ -112,7 +151,7 @@ impl ZhiXueYunResolver {
             category_id
         );
 
-        let headers = self.get_auth_headers(Some(token));
+        let headers = self.get_auth_headers(Some(token))?;
         let response = self.client
             .get(&url)
             .headers(headers.clone())
@@ -157,7 +196,7 @@ impl ZhiXueYunResolver {
             course_id
         );
 
-        let headers = self.get_auth_headers(Some(token));
+        let headers = self.get_auth_headers(Some(token))?;
         let response = self.client
             .get(&url)
             .headers(headers.clone())
@@ -227,7 +266,7 @@ impl ZhiXueYunResolver {
                 resource_id, timestamp
             );
 
-            let headers = self.get_auth_headers(Some(token));
+            let headers = self.get_auth_headers(Some(token))?;
 
             match self.client.get(&url).headers(headers.clone()).send() {
                 Ok(response) if response.status().is_success() => {
@@ -275,7 +314,7 @@ impl ZhiXueYunResolver {
         let mut last_error = None;
 
         for attempt in 0..max_retries {
-            let headers = self.get_auth_headers(None);
+            let headers = self.get_auth_headers(None)?;
 
             match self.client.get(url).headers(headers.clone()).send() {
                 Ok(response) if response.status().is_success() => {
@@ -527,12 +566,7 @@ impl PlatformResolver for ZhiXueYunResolver {
     }
 
     fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
-        let token = std::env::var("ZHIXUEYUN_TOKEN")
-            .ok()
-            .filter(|t| !t.is_empty())
-            .or_else(|| self.cookie_pool.get()
-                .and_then(|cookies| cookies.get("authorization").cloned()))
-            .unwrap_or_else(|| "d452ee129814c2549a2d7b4448a48ea9".to_string());
+        let token = self.get_token()?;
 
         self.fetch_video_info(url, &token).map_err(ResolverError::from)
     }
@@ -543,5 +577,9 @@ impl PlatformResolver for ZhiXueYunResolver {
 
     fn required_tokens(&self) -> Vec<&'static str> {
         vec!["authorization"]
+    }
+
+    fn download_strategy(&self) -> crate::types::DownloadStrategy {
+        crate::types::DownloadStrategy::Native
     }
 }

@@ -41,6 +41,8 @@ pub struct CookiePool {
     ttl: Duration,
     /// Maximum hits before a cookie is considered exhausted
     max_hits_per_cookie: u32,
+    /// Index: account -> list of entry indices (for O(1) invalidation)
+    account_index: RwLock<HashMap<String, Vec<usize>>>,
 }
 
 impl CookiePool {
@@ -55,6 +57,7 @@ impl CookiePool {
             entries: RwLock::new(Vec::new()),
             ttl: Duration::from_secs(ttl_hours * 3600),
             max_hits_per_cookie: max_hits,
+            account_index: RwLock::new(HashMap::new()),
         }
     }
 
@@ -65,9 +68,14 @@ impl CookiePool {
     /// * `account` - The account identifier
     #[allow(dead_code)]
     pub fn add(&self, cookies: HashMap<String, String>, account: String) {
-        let entry = CookieEntry::new(cookies, account);
+        let entry = CookieEntry::new(cookies, account.clone());
+        let mut idx = 0usize;
         if let Ok(mut entries) = self.entries.write() {
+            idx = entries.len();
             entries.push(entry);
+        }
+        if let Ok(mut index) = self.account_index.write() {
+            index.entry(account).or_insert_with(Vec::new).push(idx);
         }
     }
 
@@ -140,10 +148,15 @@ impl CookiePool {
     /// * `account` - The account identifier to invalidate
     #[allow(dead_code)]
     pub fn invalidate_by_account(&self, account: &str) {
-        if let Ok(mut entries) = self.entries.write() {
-            for entry in entries.iter_mut() {
-                if entry.account == account {
-                    entry.valid = false;
+        // O(1) lookup via HashMap index
+        if let Ok(index) = self.account_index.read() {
+            if let Some(indices) = index.get(account) {
+                if let Ok(mut entries) = self.entries.write() {
+                    for &idx in indices {
+                        if idx < entries.len() {
+                            entries[idx].valid = false;
+                        }
+                    }
                 }
             }
         }
@@ -184,6 +197,15 @@ impl CookiePool {
     pub fn cleanup(&self) {
         if let Ok(mut entries) = self.entries.write() {
             entries.retain(|e| e.valid);
+        }
+        // Rebuild index after cleanup (simpler than incremental update)
+        if let Ok(mut index) = self.account_index.write() {
+            index.clear();
+            if let Ok(entries) = self.entries.read() {
+                for (i, entry) in entries.iter().enumerate() {
+                    index.entry(entry.account.clone()).or_insert_with(Vec::new).push(i);
+                }
+            }
         }
     }
 }

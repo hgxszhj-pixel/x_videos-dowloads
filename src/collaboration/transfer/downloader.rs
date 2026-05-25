@@ -127,9 +127,10 @@ impl ChunkedDownloader {
         let chunk_size = self.chunk_size;
         let num_chunks = total_size.div_ceil(chunk_size) as usize;
 
-        // 并行下载各分块
+        // 并行下载各分块（使用共享client）
         use tokio::task::JoinSet;
         let mut join_set = JoinSet::new();
+        let client = reqwest::Client::new();
 
         for (i, chunk_idx) in (0..num_chunks).enumerate() {
             if i >= num_connections {
@@ -140,9 +141,10 @@ impl ChunkedDownloader {
             let start = (chunk_idx as u64) * chunk_size;
             let end = std::cmp::min(start + chunk_size - 1, total_size - 1);
             let cb = Arc::new(progress_callback.clone());
+            let client = client.clone();
 
             join_set.spawn(async move {
-                Self::download_chunk_arc(&url, &temp_path, start, end, cb).await
+                Self::download_chunk_arc_with_client(&client, &url, &temp_path, start, end, cb).await
             });
         }
 
@@ -171,12 +173,11 @@ impl ChunkedDownloader {
         Ok(total_downloaded)
     }
 
-    /// 下载单个分块
-    async fn download_chunk<F>(url: &str, path: &Path, start: u64, end: u64, progress_callback: F) -> Result<u64>
+    /// 下载单个分块（使用共享client）
+    async fn download_chunk_with_client<F>(client: &reqwest::Client, url: &str, path: &Path, start: u64, end: u64, progress_callback: F) -> Result<u64>
     where
         F: Fn(u64, u64) + Send + Sync,
     {
-        let client = reqwest::Client::new();
         let response = client
             .get(url)
             .header("Range", format!("bytes={}-{}", start, end))
@@ -198,12 +199,11 @@ impl ChunkedDownloader {
         Ok(downloaded)
     }
 
-    /// 下载单个分块（Arc回调版本）
-    async fn download_chunk_arc<F>(url: &str, path: &Path, start: u64, end: u64, progress_callback: Arc<F>) -> Result<u64>
+    /// 下载单个分块（Arc回调版本，使用共享client）
+    async fn download_chunk_arc_with_client<F>(client: &reqwest::Client, url: &str, path: &Path, start: u64, end: u64, progress_callback: Arc<F>) -> Result<u64>
     where
         F: Fn(u64, u64) + Send + Sync + 'static,
     {
-        let client = reqwest::Client::new();
         let response = client
             .get(url)
             .header("Range", format!("bytes={}-{}", start, end))
