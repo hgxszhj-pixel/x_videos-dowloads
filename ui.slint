@@ -5,7 +5,7 @@ export component AppWindow inherits Window {
     min_width: 500px;
     max_width: 1200px;
     min_height: 500px;
-    max_height: 900px;
+    max_height: 1300px;
 
     // Global font property that child elements can reference
     in-out property <string> ui-font: "PingFang SC";
@@ -28,6 +28,21 @@ export component AppWindow inherits Window {
     in-out property <string> error-action: "";
     in-out property <bool> has-video-info: false;
 
+    // Download pool for multiple URLs
+    in-out property <string> download-pool: "";
+
+    // Per-URL progress list (JSON array for multi-progress display)
+    in-out property <string> download-list-progress: "";
+    in-out property <int> download-list-remaining: 0;
+
+    // Batch download state
+    in-out property <bool> is-batch-mode: false;
+    in-out property <string> batch-urls: "";
+    in-out property <int> batch-current: 0;
+    in-out property <int> batch-total: 0;
+    in-out property <string> batch-status: "";
+    in-out property <float> batch-progress: 0.0;
+
     // History/Bookmark list
     in-out property <string> selected-tab: "history";
     in-out property <string> filter-status: "all";
@@ -37,6 +52,7 @@ export component AppWindow inherits Window {
 
     callback fetch-info();
     callback start-download();
+    callback start-batch-download();
     callback cancel-download();
     callback save-config();
     callback browse-cookie();
@@ -94,7 +110,7 @@ export component AppWindow inherits Window {
 
         // URL Section
         Text {
-            text: "Video URL";
+            text: "Video URL(s)";
             font-size: 14px;
             font-weight: 600;
         }
@@ -112,12 +128,13 @@ export component AppWindow inherits Window {
                     font-size: 14px;
                     color: black;
                     vertical-alignment: center;
+                    enabled: true;
                 }
             }
         }
 
         Text {
-            text: "Enter X.com/Twitter video URL";
+            text: "Enter URL(s), separate multiple URLs with spaces or commas";
             font-size: 11px;
             color: #888;
         }
@@ -230,43 +247,48 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Progress Section
+        // Progress Section (Multi-URL support)
         Rectangle {
             visible: root.is-downloading;
             background: #e8f5e9;
             border-radius: 8px;
             VerticalLayout {
-                spacing: 12px;
+                spacing: 8px;
                 padding: 16px;
+                // Batch progress header
                 Text {
-                    text: "Downloading... " + root.download-progress * 100 + "%";
+                    text: "Downloading " + root.batch-total + " video(s) - " + root.batch-status;
                     font-size: 14px;
                     font-weight: 600;
                     color: #2e7d32;
                 }
+                // Overall batch progress bar
                 ProgressIndicator {
-                    progress: root.download-progress;
+                    progress: root.batch-progress / 100.0;
                     indeterminate: false;
-                    height: 14px;
+                    height: 16px;
                 }
-                HorizontalLayout {
-                    spacing: 16px;
-                    Text {
-                        text: "Speed: " + root.download-speed;
-                        font-size: 12px;
-                        color: #555;
-                    }
-                    Text {
-                        text: "ETA: " + root.download-eta;
-                        font-size: 12px;
-                        color: #555;
-                    }
-                    Text {
-                        text: "Threads: " + root.download-threads;
-                        font-size: 12px;
-                        color: #555;
+                // Per-URL progress list (from JSON)
+                if root.download-list-progress != "": Rectangle {
+                    background: white;
+                    border-radius: 4px;
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 4px;
+                        Text {
+                            text: root.download-list-progress;
+                            font-size: 11px;
+                            color: #333;
+                            wrap: word-wrap;
+                        }
+                        if root.download-list-remaining > 0: Text {
+                            text: "... and " + root.download-list-remaining + " more download(s)";
+                            font-size: 11px;
+                            color: #888;
+                        }
                     }
                 }
+                // Cancel button
                 Rectangle {
                     background: #c62828;
                     border-radius: 6px;

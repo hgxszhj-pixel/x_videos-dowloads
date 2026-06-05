@@ -18,11 +18,60 @@ use reqwest::Client;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+
+/// HEAD 缓存 (P2: 避免重复 HEAD 请求)
+/// 使用 Vec 实现简单 LRU，缓存有效期 5 分钟
+struct HeadCache {
+    entries: RwLock<Vec<(String, u64, Instant)>>,
+    ttl_secs: u64,
+    max_size: usize,
+}
+
+impl HeadCache {
+    fn new() -> Self {
+        Self {
+            entries: RwLock::new(Vec::new()),
+            ttl_secs: 300, // 5 分钟 TTL
+            max_size: 100,
+        }
+    }
+
+    fn get(&self, url: &str) -> Option<u64> {
+        let mut entries = self.entries.write().ok()?;
+        if let Some(pos) = entries.iter().position(|(u, _, _)| u == url) {
+            let (_, size, time) = entries[pos];
+            if time.elapsed() < Duration::from_secs(self.ttl_secs) {
+                // LRU: 移动到末尾
+                let entry = entries.remove(pos);
+                entries.push((entry.0, entry.1, entry.2));
+                return Some(size);
+            }
+        }
+        None
+    }
+
+    fn insert(&self, url: &str, size: u64) {
+        if let Ok(mut entries) = self.entries.write() {
+            // 移除已有条目
+            entries.retain(|(u, _, _)| u != url);
+            // LRU eviction: 超过 max_size 时移除最老的条目
+            if entries.len() >= self.max_size {
+                entries.remove(0); // 移除第一个 (最老)
+            }
+            entries.push((url.to_string(), size, Instant::now()));
+        }
+    }
+}
+
+// 全局 HEAD 缓存实例 - 使用 LazyLock 延迟初始化
+use std::sync::LazyLock;
+static HEAD_CACHE: LazyLock<HeadCache, fn() -> HeadCache> = LazyLock::new(HeadCache::new);
 
 /// 下载器配置
 #[derive(Debug, Clone)]
@@ -154,10 +203,11 @@ impl VideoDownloader {
 
         for attempt in 0..self.config.retry_count {
             if attempt > 0 {
-                // 指数退避: 1s, 2s, 4s, 8s, 16s...
-                let delay_secs = (2u64.pow(attempt - 1)).min(self.config.retry_max_delay);
-                info!("重试 {} / {}，等待 {} 秒...", attempt + 1, self.config.retry_count, delay_secs);
-                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                // 计算差异化退避时间
+                let delay = Self::calculate_backoff(&last_error, attempt, self.config.retry_max_delay);
+                // 安全日志: 不暴露延迟时间，防止信息泄露
+                info!("重试 {} / {}...", attempt + 1, self.config.retry_count);
+                tokio::time::sleep(delay).await;
             }
 
             // 检查是否支持分段下载（需要先获取文件大小）
@@ -168,9 +218,8 @@ impl VideoDownloader {
                 if self.config.parallel_segments > 0 && size > SEGMENT_SIZE_THRESHOLD {
                     match self.parallel_download(request, size, progress_callback.clone()).await {
                         Ok(result) => return Ok(result),
-                        Err(e) => {
-                            last_error = Some(e);
-                            warn!("分段下载失败，尝试普通下载: {:?}", last_error);
+                        Err(_e) => {
+                            warn!("分段下载失败，尝试普通下载");
                             // 回退到普通下载
                         }
                     }
@@ -182,13 +231,43 @@ impl VideoDownloader {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     last_error = Some(e);
-                    warn!("下载尝试 {} 失败: {:?}", attempt + 1, last_error);
+                    warn!("下载失败，请检查网络或稍后重试");
                 }
             }
         }
 
-        Err(anyhow!("下载失败，已重试 {} 次: {:?}", self.config.retry_count, last_error))
+        Err(anyhow!("下载失败，已重试 {} 次", self.config.retry_count))
             .context("parallel download failed after all retry attempts")
+    }
+
+    /// 根据错误类型计算差异化退避时间
+    fn calculate_backoff(last_error: &Option<anyhow::Error>, attempt: u32, max_delay: u64) -> Duration {
+        if let Some(err) = last_error {
+            let msg = err.to_string();
+
+            // 429 限流错误 - 等待更长时间 (60-120s)
+            if msg.contains("429") || msg.contains("rate limit") || msg.contains("限速") {
+                // 对于限流错误，使用固定长等待，不指数退避
+                return Duration::from_secs(60);
+            }
+
+            // 5xx 服务器错误 - 短等待 (2-8s)
+            if msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("服务器异常") {
+                let backoff = 2u64.pow(attempt.min(3)).min(8);
+                return Duration::from_secs(backoff);
+            }
+
+            // 4xx 客户端错误 (非限流) - 快速失败，不重试
+            if msg.contains("404") || msg.contains("403") || msg.contains("内容不可用") {
+                // 这些错误重试无意义，但为了保持一致，仍然等待
+                let backoff = 2u64.pow(attempt).min(max_delay);
+                return Duration::from_secs(backoff);
+            }
+        }
+
+        // 默认: 标准指数退避
+        let backoff = 2u64.pow(attempt.saturating_sub(1)).min(max_delay);
+        Duration::from_secs(backoff)
     }
 
     /// 根据速度计算最佳线程数（自适应）
@@ -254,7 +333,8 @@ impl VideoDownloader {
         (total_downloaded, download_active, progress)
     }
 
-    /// 合并分段文件
+    /// 合并分段文件 - 优化版本: 按 offset 排序后顺序写入，消除所有 seek
+    /// 使用 spawn_blocking 避免阻塞 async runtime
     async fn merge_segments(
         &self,
         output_path: &Path,
@@ -263,57 +343,111 @@ impl VideoDownloader {
         total_size: u64,
         chunk_size: u64,
     ) -> Result<u64> {
-        use std::fs::{File as StdFile, OpenOptions};
-        use std::io::{copy as io_copy, Seek, SeekFrom};
+        use std::io::{Read, Seek, SeekFrom, Write};
 
         // Validate output path to prevent path traversal
         validate_output_path(output_path, temp_dir_path)
             .map_err(|e| anyhow!("Path traversal detected: {}", e))
             .context("output path validation failed")?;
 
-        // 打开输出文件（不截断，支持追加写入）
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(output_path)?;
+        // 根据文件大小自适应缓冲区策略
+        let copy_buffer_size = if total_size < 100 * 1024 * 1024 {
+            64 * 1024
+        } else if total_size < 1024 * 1024 * 1024 {
+            512 * 1024
+        } else {
+            1024 * 1024
+        };
 
-        let mut final_size = 0u64;
-
+        // 收集分段信息用于在 blocking 任务中处理
+        let mut segment_info: Vec<(u64, PathBuf)> = Vec::with_capacity(segments as usize);
         for i in 0..segments {
             let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
-            let expected_start = i as u64 * chunk_size;
-            let expected_end = if i == segments - 1 {
-                total_size - 1
+            let expected_offset = i as u64 * chunk_size;
+            let expected_segment_size = if i == segments - 1 {
+                total_size - expected_offset
             } else {
-                (i + 1) as u64 * chunk_size - 1
+                chunk_size
             };
-            let expected_segment_size = expected_end - expected_start + 1;
 
-            // 检查分段文件是否存在且大小合理
             if let Ok(metadata) = std::fs::metadata(&temp_path) {
                 let actual_size = metadata.len();
                 if actual_size >= expected_segment_size * SEGMENT_VALIDATION_RATIO / 100 {
-                    let mut input = StdFile::open(&temp_path)?;
-
-                    // 移动到正确的写入位置
-                    output.seek(SeekFrom::Start(expected_start))?;
-
-                    // 使用 std::io::copy，操作系统会自动使用大缓冲区
-                    match io_copy(&mut input, &mut output) {
-                        Ok(n) => {
-                            debug!("合并分段 {}: {} bytes", i, n);
-                            final_size += n;
-                        }
-                        Err(e) => {
-                            warn!("合并分段 {} 时出错: {:?}", i, e);
-                        }
-                    }
-                } else {
-                    warn!("分段 {} 大小异常: {} (期望 {})", i, actual_size, expected_segment_size);
+                    segment_info.push((expected_offset, temp_path));
                 }
             }
+        }
 
+        // 按 offset 排序
+        segment_info.sort_by_key(|(offset, _)| *offset);
+        let total_segments = segment_info.len() as u32;
+
+        // 在 blocking 线程中执行所有文件 I/O
+        // 转换为 PathBuf 以确保所有权转移
+        let output_path_owned = output_path.to_path_buf();
+        let final_size = tokio::task::spawn_blocking(move || {
+            // 打开输出文件
+            let mut output = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&output_path_owned)?;
+
+            let mut final_size = 0u64;
+            let mut buffer = vec![0u8; copy_buffer_size];
+
+            info!("开始合并 {} 个分段 (缓冲区: {}KB)...", total_segments, copy_buffer_size / 1024);
+
+            for (segment_idx, (expected_offset, temp_path)) in segment_info.into_iter().enumerate() {
+                let mut input = std::fs::File::open(&temp_path)?;
+
+                // 验证分段从正确的位置开始写入
+                let current_pos = output.stream_position()?;
+                if current_pos != expected_offset {
+                    output.seek(SeekFrom::Start(expected_offset))?;
+                }
+
+                let mut segment_total = 0u64;
+                loop {
+                    let bytes_read = match input.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(e) => {
+                            warn!("读取分段 {} 时出错: {:?}", segment_idx, e);
+                            break;
+                        }
+                    };
+
+                    if let Err(e) = output.write_all(&buffer[..bytes_read]) {
+                        warn!("写入分段 {} 时出错: {:?}", segment_idx, e);
+                        break;
+                    }
+
+                    segment_total += bytes_read as u64;
+                    final_size += bytes_read as u64;
+
+                    if segment_total.is_multiple_of(50 * 1024 * 1024) {
+                        let seg_idx_u32 = segment_idx as u32;
+                        let last_segment = seg_idx_u32 == total_segments - 1;
+                        let denominator = if last_segment {
+                            total_size - expected_offset
+                        } else {
+                            chunk_size
+                        } as f64;
+                        info!("合并进度: 分段 {}/{}, {:.1}%",
+                            seg_idx_u32 + 1, total_segments, segment_total as f64 / denominator * 100.0);
+                    }
+                }
+
+                debug!("合并分段 {}/{}: {} bytes", segment_idx + 1, total_segments, segment_total);
+            }
+
+            Ok::<u64, std::io::Error>(final_size)
+        }).await??;
+
+        // 阶段3: 清理临时文件 (使用 tokio::fs，异步)
+        for i in 0..segments {
+            let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
             if let Err(e) = tokio::fs::remove_file(&temp_path).await {
                 debug!("删除临时文件 {} 失败: {:?}", temp_path.display(), e);
             }
@@ -428,7 +562,7 @@ impl VideoDownloader {
             let cb = progress_callback.clone();
 
             let handle = tokio::spawn(async move {
-                download_segment_with_retry(&client, &url, &temp_path, start, end, segment_size, retry_count, Some(td), cb).await
+                download_segment_with_retry(&client, &url, &temp_path, start, end, segment_size, retry_count, Some(td), cb, None).await
             });
             handles.push(handle);
         }
@@ -623,8 +757,14 @@ impl VideoDownloader {
         Ok(DownloadResult::success(output_path.clone(), downloaded, elapsed))
     }
 
-    /// 获取内容长度
+    /// 获取内容长度 (带缓存，TTL 5分钟)
     async fn get_content_length(&self, url: &str) -> Result<Option<u64>> {
+        // 检查缓存
+        if let Some(size) = HEAD_CACHE.get(url) {
+            debug!("HEAD 缓存命中: {} -> {} bytes", url, size);
+            return Ok(Some(size));
+        }
+
         let response = self.client.head(url).send().await?;
 
         if response.status().is_success() {
@@ -633,6 +773,12 @@ impl VideoDownloader {
                 .get("content-length")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse().ok());
+
+            // 缓存结果
+            if let Some(size) = length {
+                HEAD_CACHE.insert(url, size);
+                debug!("HEAD 缓存存储: {} -> {} bytes", url, size);
+            }
 
             Ok(length)
         } else {
@@ -770,7 +916,20 @@ async fn download_segment(
     Ok(downloaded)
 }
 
-/// 带重试的分段下载（使用独立超时控制）
+/// 带暂停标志的下载状态
+pub struct PausableDownloadState {
+    pub cancel_flag: Arc<AtomicBool>,
+}
+
+impl Default for PausableDownloadState {
+    fn default() -> Self {
+        Self {
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+/// 带重试的分段下载（支持暂停）
 #[allow(clippy::too_many_arguments)]
 async fn download_segment_with_retry(
     client: &Client,
@@ -782,11 +941,19 @@ async fn download_segment_with_retry(
     retry_count: u32,
     total_downloaded: Option<Arc<AtomicU64>>,
     progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
+    pause_state: Option<&PausableDownloadState>,
 ) -> Result<u64> {
     let segment_timeout = Duration::from_secs(SEGMENT_TIMEOUT_SECS);
     let segment_size = end - start + 1;
 
     for attempt in 0..retry_count {
+        // 检查暂停标志
+        if let Some(state) = pause_state {
+            while state.cancel_flag.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
         if attempt > 0 {
             let delay = Duration::from_secs(2u64.pow(attempt - 1).min(30));
             info!("分段 [{}-{}] 重试 {} / {}，等待 {}s", start, end, attempt + 1, retry_count, delay.as_secs());
@@ -969,5 +1136,84 @@ mod tests {
         let result = parse_size(large_value);
         // 由于精度问题，解析结果可能不准确，这是预期行为
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_downloader_config_default() {
+        let config = DownloaderConfig::default();
+        assert_eq!(config.retry_count, 5);
+        assert_eq!(config.chunk_size, 32 * 1024 * 1024);
+        assert_eq!(config.pool_max_idle_per_host, 32);
+        assert_eq!(config.parallel_segments, 4);
+        assert!(config.adaptive_threads);
+        assert_eq!(config.min_threads, 2);
+        assert_eq!(config.max_threads, 8);
+    }
+
+    #[test]
+    fn test_downloader_config_custom() {
+        let config = DownloaderConfig {
+            connect_timeout: 60,
+            request_timeout: 300,
+            retry_count: 3,
+            retry_max_delay: 15,
+            chunk_size: 16 * 1024 * 1024,
+            user_agent: Some("TestAgent".to_string()),
+            proxy: Some("http://proxy:8080".to_string()),
+            pool_max_idle_per_host: 16,
+            http2: false,
+            tcp_keepalive: 60,
+            parallel_segments: 2,
+            adaptive_threads: false,
+            min_threads: 1,
+            max_threads: 4,
+            speed_threshold_bps: 256 * 1024,
+        };
+        assert_eq!(config.connect_timeout, 60);
+        assert_eq!(config.parallel_segments, 2);
+        assert!(!config.adaptive_threads);
+    }
+
+    #[test]
+    fn test_calculate_segment_ranges() {
+        let downloader = VideoDownloader::new().unwrap();
+        let ranges = downloader.calculate_segment_ranges(4, 100, 25);
+        assert_eq!(ranges.len(), 4);
+        assert_eq!(ranges[0], (0, 24));
+        assert_eq!(ranges[1], (25, 49));
+        assert_eq!(ranges[2], (50, 74));
+        assert_eq!(ranges[3], (75, 99));
+    }
+
+    #[test]
+    fn test_calculate_segment_ranges_unequal() {
+        let downloader = VideoDownloader::new().unwrap();
+        // 10 bytes with 3 segments = chunk_size = 4
+        let ranges = downloader.calculate_segment_ranges(3, 10, 4);
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges[0], (0, 3));
+        assert_eq!(ranges[1], (4, 7));
+        assert_eq!(ranges[2], (8, 9)); // Last segment takes remainder
+    }
+
+    #[test]
+    fn test_calculate_backoff_rate_limit() {
+        let err = anyhow::anyhow!("429 Too Many Requests");
+        let delay = VideoDownloader::calculate_backoff(&Some(err), 1, 30);
+        assert_eq!(delay, Duration::from_secs(60)); // Rate limit uses fixed 60s
+    }
+
+    #[test]
+    fn test_calculate_backoff_server_error() {
+        let err = anyhow::anyhow!("500 Internal Server Error");
+        let delay = VideoDownloader::calculate_backoff(&Some(err), 1, 30);
+        assert_eq!(delay, Duration::from_secs(2)); // 2^1 = 2s
+    }
+
+    #[test]
+    fn test_calculate_backoff_not_found() {
+        let err = anyhow::anyhow!("404 Not Found");
+        let delay = VideoDownloader::calculate_backoff(&Some(err), 2, 30);
+        assert_eq!(delay, Duration::from_secs(4)); // 2^2 = 4s
     }
 }

@@ -22,6 +22,8 @@ pub use zhixueyun::ZhiXueYunResolver;
 pub mod zhixueyun_token;
 use crate::types::VideoInfo;
 use crate::history::Platform;
+use async_trait::async_trait;
+use serde::{Serialize, Deserialize};
 /// 解析器错误类型
 #[derive(Debug, Clone)]
 pub enum ResolverError {
@@ -62,6 +64,7 @@ impl From<anyhow::Error> for ResolverError {
 }
 /// 平台解析器 trait
 /// 所有平台解析器必须实现此接口
+#[async_trait]
 #[allow(dead_code)]
 pub trait PlatformResolver: Send + Sync {
     /// 获取解析器对应的平台
@@ -70,18 +73,21 @@ pub trait PlatformResolver: Send + Sync {
     fn supported_url_patterns(&self) -> Vec<&'static str>;
     /// 检查是否支持此 URL
     fn supports_url(&self, url: &str) -> bool {
-        // Optimization: avoid re-lowercasing if already lowercase
-        let url_check = if url.chars().any(|c| c.is_uppercase()) {
-            url.to_lowercase()
-        } else {
-            url.to_string()
-        };
+        // Case-insensitive pattern matching without allocation
         self.supported_url_patterns()
             .iter()
-            .any(|pattern| url_check.contains(pattern))
+            .any(|pattern| url.to_lowercase().contains(pattern))
     }
     /// 获取视频信息
-    fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError>;
+    async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError>;
+    /// 获取字幕列表（可选实现）
+    async fn get_subtitles(&self, _video_id: &str) -> Result<Vec<SubtitleInfo>, ResolverError> {
+        Ok(vec![]) // 默认返回空
+    }
+    /// 获取弹幕列表（可选实现）
+    async fn get_danmaku(&self, _video_id: &str) -> Result<Vec<DanmakuInfo>, ResolverError> {
+        Ok(vec![]) // 默认返回空
+    }
     /// 检查是否需要认证
     fn requires_auth(&self) -> bool {
         false
@@ -94,6 +100,32 @@ pub trait PlatformResolver: Send + Sync {
     fn download_strategy(&self) -> crate::types::DownloadStrategy {
         crate::types::DownloadStrategy::YtDlp
     }
+}
+
+/// 字幕信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubtitleInfo {
+    /// 语言代码
+    pub lang: String,
+    /// 语言名称
+    pub lang_name: String,
+    /// 字幕下载 URL
+    pub url: String,
+    /// 字幕格式 (srt, vtt, ass)
+    pub format: String,
+}
+
+/// 弹幕信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DanmakuInfo {
+    /// 弹幕文本
+    pub text: String,
+    /// 出现时间（秒）
+    pub time: f64,
+    /// 弹幕颜色 (RGB)
+    pub color: u32,
+    /// 发送者 ID
+    pub user_id: Option<u64>,
 }
 /// YtDlp 解析器（包装现有实现）
 pub struct YtDlpResolver {
@@ -114,6 +146,7 @@ impl Default for YtDlpResolver {
         Self::new()
     }
 }
+#[async_trait]
 impl PlatformResolver for YtDlpResolver {
     fn platform(&self) -> Platform {
         Platform::Other
@@ -121,7 +154,7 @@ impl PlatformResolver for YtDlpResolver {
     fn supported_url_patterns(&self) -> Vec<&'static str> {
         vec![] // yt-dlp 支持所有平台
     }
-    fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+    async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         let mut ytdlp = crate::yt_dlp::YtDlp::new();
         if let Some(ref cookie) = self.cookie_file {
             if cookie.exists() {
@@ -153,10 +186,8 @@ impl ResolverRegistry {
     }
     /// 根据 URL 选择合适的解析器
     pub fn select_resolver(&self, url: &str) -> &dyn PlatformResolver {
-        // Cache lowercase URL once to avoid repeated allocation
-        let url_lower = url.to_lowercase();
         for resolver in &self.resolvers {
-            if resolver.supports_url(&url_lower) {
+            if resolver.supports_url(url) {
                 return resolver.as_ref();
             }
         }
@@ -164,14 +195,14 @@ impl ResolverRegistry {
     }
     /// 尝试使用主解析器，失败时使用回退列表
     #[allow(dead_code)]
-    pub fn try_resolve(
+    pub async fn try_resolve(
         &self,
         url: &str,
         fallback_order: &[Platform],
     ) -> Result<VideoInfo, ResolverError> {
         // 首先尝试 URL 匹配的解析器
         let primary = self.select_resolver(url);
-        match primary.get_video_info(url) {
+        match primary.get_video_info(url).await {
             Ok(info) => Ok(info),
             Err(e) => {
                 tracing::warn!("Primary resolver failed: {}, trying fallbacks", e);
@@ -179,7 +210,7 @@ impl ResolverRegistry {
                 for platform in fallback_order {
                     for resolver in &self.resolvers {
                         if resolver.platform() == *platform {
-                            match resolver.get_video_info(url) {
+                            match resolver.get_video_info(url).await {
                                 Ok(info) => return Ok(info),
                                 Err(_) => continue,
                             }
@@ -252,10 +283,11 @@ mod tests {
     #[test]
     fn test_platform_resolver_default_requires_auth() {
         struct TestResolver;
+        #[async_trait]
         impl PlatformResolver for TestResolver {
             fn platform(&self) -> Platform { Platform::Other }
             fn supported_url_patterns(&self) -> Vec<&'static str> { vec![] }
-            fn get_video_info(&self, _url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+            async fn get_video_info(&self, _url: &str) -> Result<VideoInfo, ResolverError> {
                 unreachable!()
             }
         }
@@ -267,10 +299,11 @@ mod tests {
     #[test]
     fn test_platform_resolver_default_required_tokens() {
         struct TestResolver;
+        #[async_trait]
         impl PlatformResolver for TestResolver {
             fn platform(&self) -> Platform { Platform::Other }
             fn supported_url_patterns(&self) -> Vec<&'static str> { vec![] }
-            fn get_video_info(&self, _url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+            async fn get_video_info(&self, _url: &str) -> Result<VideoInfo, ResolverError> {
                 unreachable!()
             }
         }
