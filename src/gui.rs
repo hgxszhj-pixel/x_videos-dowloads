@@ -118,9 +118,11 @@ impl BatchItem {
     }
 
     fn update_from_atoms(&mut self) {
-        // progress_arc 存储 0-10000，需要转换回 0-100 范围
-        let pct = self.progress_arc.load(Ordering::Relaxed) as f32 / 100.0;
-        self.progress = pct; // 范围 0.0-100.0 (百分比)
+        // progress_arc 存储 0-10000，需要转换回 0-1 范围 (ProgressIndicator 期望)
+        let raw = self.progress_arc.load(Ordering::Relaxed) as f32;
+        // raw 是 0-10000 范围 (例如 3500 表示 35%)
+        // 转换为 0-1 范围
+        self.progress = raw / 10000.0; // 3500/10000 = 0.35
         self.speed = self.speed_arc.load(Ordering::Relaxed);
     }
 

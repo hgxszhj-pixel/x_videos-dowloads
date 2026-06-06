@@ -308,8 +308,8 @@ export component AppWindow inherits Window {
                             spacing: 2px;
                             Text { text: per1-title; font-size: 11px; color: #333; font-weight: 600; }
                             HorizontalLayout {
-                                ProgressIndicator { progress: per1-progress / 100.0; height: 8px; horizontal-stretch: 1; }
-                                Text { text: (per1-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                                ProgressIndicator { progress: per1-progress; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per1-progress * 100.0).round() + "%"; font-size: 10px; color: #666; }
                             }
                             HorizontalLayout {
                                 Text { text: per1-speed; font-size: 10px; color: #666; }
@@ -326,8 +326,8 @@ export component AppWindow inherits Window {
                             spacing: 2px;
                             Text { text: per2-title; font-size: 11px; color: #333; font-weight: 600; }
                             HorizontalLayout {
-                                ProgressIndicator { progress: per2-progress / 100.0; height: 8px; horizontal-stretch: 1; }
-                                Text { text: (per2-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                                ProgressIndicator { progress: per2-progress; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per2-progress * 100.0).round() + "%"; font-size: 10px; color: #666; }
                             }
                             HorizontalLayout {
                                 Text { text: per2-speed; font-size: 10px; color: #666; }
@@ -344,8 +344,8 @@ export component AppWindow inherits Window {
                             spacing: 2px;
                             Text { text: per3-title; font-size: 11px; color: #333; font-weight: 600; }
                             HorizontalLayout {
-                                ProgressIndicator { progress: per3-progress / 100.0; height: 8px; horizontal-stretch: 1; }
-                                Text { text: (per3-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                                ProgressIndicator { progress: per3-progress; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per3-progress * 100.0).round() + "%"; font-size: 10px; color: #666; }
                             }
                             HorizontalLayout {
                                 Text { text: per3-speed; font-size: 10px; color: #666; }
@@ -362,8 +362,8 @@ export component AppWindow inherits Window {
                             spacing: 2px;
                             Text { text: per4-title; font-size: 11px; color: #333; font-weight: 600; }
                             HorizontalLayout {
-                                ProgressIndicator { progress: per4-progress / 100.0; height: 8px; horizontal-stretch: 1; }
-                                Text { text: (per4-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                                ProgressIndicator { progress: per4-progress; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per4-progress * 100.0).round() + "%"; font-size: 10px; color: #666; }
                             }
                             HorizontalLayout {
                                 Text { text: per4-speed; font-size: 10px; color: #666; }
@@ -380,8 +380,8 @@ export component AppWindow inherits Window {
                             spacing: 2px;
                             Text { text: per5-title; font-size: 11px; color: #333; font-weight: 600; }
                             HorizontalLayout {
-                                ProgressIndicator { progress: per5-progress / 100.0; height: 8px; horizontal-stretch: 1; }
-                                Text { text: (per5-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                                ProgressIndicator { progress: per5-progress; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per5-progress * 100.0).round() + "%"; font-size: 10px; color: #666; }
                             }
                             HorizontalLayout {
                                 Text { text: per5-speed; font-size: 10px; color: #666; }
