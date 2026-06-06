@@ -2,6 +2,8 @@
 //!
 //! 支持字幕下载和格式转换
 
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use std::path::Path;
 

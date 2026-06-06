@@ -2,6 +2,8 @@
 //!
 //! 提供结构化的下载队列状态管理，支持暂停/恢复/取消/重试
 
+#![allow(dead_code)]
+
 use crate::types::{DownloadProgress, DownloadResult, VideoInfo};
 use std::collections::VecDeque;
 use std::sync::RwLock;

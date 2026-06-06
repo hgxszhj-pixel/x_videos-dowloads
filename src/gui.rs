@@ -2,6 +2,8 @@
 //!
 //! 使用 Slint 框架的 GUI 界面
 
+#![allow(dead_code)]
+
 use crate::config::AppConfig;
 use crate::downloader::{DownloaderConfig, VideoDownloader};
 use crate::fxtwitter::FxTwitterResolver;
