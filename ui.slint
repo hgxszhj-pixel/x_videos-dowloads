@@ -149,8 +149,10 @@ export component AppWindow inherits Window {
             border-width: 1px;
             border-color: #ccc;
             height: 40px;
+            horizontal-stretch: 1;
             HorizontalLayout {
                 padding-left: 12px;
+                spacing: 0px;
                 TextInput {
                     text <=> root.url;
                     font-size: 14px;
