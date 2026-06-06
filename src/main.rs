@@ -13,7 +13,7 @@ mod history;
 mod http_client;
 mod i18n;
 mod muxer;
-mod resolvers;
+mod platform;
 mod scrapling_client;
 mod scrapling_extractor;
 mod subtitle;
@@ -31,7 +31,7 @@ use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
-use crate::resolvers::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver, ZhiXueYunResolver, CookiePool};
+use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver, ZhiXueYunResolver, CookiePool};
 use crate::collaboration::server::ws::WsServer;
 use crate::collaboration::CollaborationClient;
 use crate::config::AppConfig;
@@ -487,7 +487,7 @@ async fn download_with_native(
 
     // 获取 token
     let token = std::env::var("ZHIXUEYUN_TOKEN")
-        .or_else(|_| Ok::<_, ()>(crate::resolvers::zhixueyun_token::load_zhixueyun_cookies().unwrap_or_default()))
+        .or_else(|_| Ok::<_, ()>(crate::platform::zhixueyun_token::load_zhixueyun_cookies().unwrap_or_default()))
         .unwrap_or_default();
 
     // 构建 wget 命令

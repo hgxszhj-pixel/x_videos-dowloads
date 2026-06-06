@@ -1,6 +1,6 @@
 //! 下载历史和书签模块
 
-use crate::resolvers::url_matcher;
+use crate::platform::url_matcher;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

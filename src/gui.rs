@@ -7,7 +7,7 @@ use crate::downloader::{DownloaderConfig, VideoDownloader};
 use crate::fxtwitter::FxTwitterResolver;
 use crate::history::{History, Platform};
 use crate::i18n;
-use crate::resolvers::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver};
+use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver};
 use crate::types::{format_bytes, sanitize_filename, DownloadProgress, DownloadRequest, VideoInfo, DEFAULT_USER_AGENT};
 use crate::yt_dlp::YtDlp;
 use futures::future;

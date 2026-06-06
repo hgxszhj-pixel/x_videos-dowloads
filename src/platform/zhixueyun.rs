@@ -3,7 +3,7 @@
 //! 支持 kc.zhixueyun.com 智学云平台的视频和文档下载
 //! sectionType: 6 = 视频 (mp4), 10 = 文档 (pdf)
 
-use crate::resolvers::{CookiePool, PlatformResolver, ResolverError, url_matcher};
+use crate::platform::{CookiePool, PlatformResolver, ResolverError, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use async_trait::async_trait;
@@ -114,7 +114,7 @@ impl ZhiXueYunResolver {
             }
         }
         // 3. 自动从 cookies 文件加载
-        if let Some(token) = crate::resolvers::zhixueyun_token::load_zhixueyun_cookies() {
+        if let Some(token) = crate::platform::zhixueyun_token::load_zhixueyun_cookies() {
             return Ok(token);
         }
         // 4. CookiePool fallback

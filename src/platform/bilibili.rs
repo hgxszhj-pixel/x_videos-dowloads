@@ -2,7 +2,7 @@
 //!
 //! 使用 yt-dlp 作为主要方式，支持 cookies 认证
 
-use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
+use crate::platform::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use async_trait::async_trait;

@@ -3,7 +3,7 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持信息流 URL (jingxuan/sports) 和 modal_id 解析
 
-use crate::resolvers::{PlatformResolver, ResolverError, DouYinApiClient, extract_modal_id, CookieFileManager, url_matcher};
+use crate::platform::{PlatformResolver, ResolverError, DouYinApiClient, extract_modal_id, CookieFileManager, url_matcher};
 use crate::types::{VideoInfo, VideoFormat};
 use crate::history::Platform;
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 #[allow(dead_code)]
 pub struct DouYinResolver {
     tokens: HashMap<String, String>,
-    token_manager: Option<Arc<Mutex<crate::resolvers::TokenManager>>>,
+    token_manager: Option<Arc<Mutex<crate::platform::TokenManager>>>,
     cookie_manager: CookieFileManager,
 }
 
@@ -37,7 +37,7 @@ impl DouYinResolver {
 
     /// 设置 TokenManager 用于自动token生成
     #[allow(dead_code)]
-    pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::resolvers::TokenManager>>) -> Self {
+    pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::platform::TokenManager>>) -> Self {
         self.token_manager = Some(tm);
         self
     }

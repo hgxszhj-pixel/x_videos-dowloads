@@ -3,7 +3,7 @@
 //! 用于直接调用抖音 API 获取视频信息，绕过 yt-dlp 对某些 URL 类型的限制
 //! 参考 F2 的 DouYinAPI 实现
 
-use crate::resolvers::xbogus::XBogus;
+use crate::platform::xbogus::XBogus;
 use serde::Deserialize;
 use std::sync::Arc;
 

@@ -13,7 +13,7 @@ pub mod history;
 pub mod http_client;
 pub mod i18n;
 pub mod muxer;
-pub mod resolvers;
+pub mod platform;
 pub mod subtitle;
 pub mod types;
 pub mod website_profile;

@@ -3,7 +3,7 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持 TokenManager 自动token生成和注入
 
-use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
+use crate::platform::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
 use async_trait::async_trait;
@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 #[allow(dead_code)]
 pub struct TikTokResolver {
     tokens: HashMap<String, String>,
-    token_manager: Option<Arc<Mutex<crate::resolvers::TokenManager>>>,
+    token_manager: Option<Arc<Mutex<crate::platform::TokenManager>>>,
     cookie_manager: CookieFileManager,
 }
 
@@ -38,7 +38,7 @@ impl TikTokResolver {
 
     /// 设置 TokenManager 用于自动token生成
     #[allow(dead_code)]
-    pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::resolvers::TokenManager>>) -> Self {
+    pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::platform::TokenManager>>) -> Self {
         self.token_manager = Some(tm);
         self
     }

@@ -173,19 +173,19 @@ impl From<DownloadError> for anyhow::Error {
 /// Usage guidelines:
 /// - **DownloadError** / **DownloadErrorType**: For download operations (file I/O, HTTP, yt-dlp)
 /// - **ResolverError**: For platform resolution logic (parsing URLs, extracting video metadata)
-impl From<crate::resolvers::ResolverError> for DownloadError {
-    fn from(e: crate::resolvers::ResolverError) -> Self {
+impl From<crate::platform::ResolverError> for DownloadError {
+    fn from(e: crate::platform::ResolverError) -> Self {
         match e {
-            crate::resolvers::ResolverError::AuthenticationRequired => {
+            crate::platform::ResolverError::AuthenticationRequired => {
                 DownloadError::authentication()
             }
-            crate::resolvers::ResolverError::ContentUnavailable(msg) => {
+            crate::platform::ResolverError::ContentUnavailable(msg) => {
                 DownloadError::content_unavailable(&msg)
             }
-            crate::resolvers::ResolverError::Network(msg) => {
+            crate::platform::ResolverError::Network(msg) => {
                 DownloadError::network(msg.as_str())
             }
-            crate::resolvers::ResolverError::ParseFailed(msg) => {
+            crate::platform::ResolverError::ParseFailed(msg) => {
                 DownloadError {
                     error_type: DownloadErrorType::Unknown(msg.clone()),
                     message: format!("解析失败: {}", msg),
