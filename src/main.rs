@@ -167,6 +167,9 @@ enum DownloadMode {
 }
 
 fn main() {
+    // 设置语言环境，避免 ICU4X 日语分词模型错误
+    std::env::set_var("LANG", "en_US.UTF-8");
+
     // 解析命令行参数
     let cli = Cli::parse();
 
