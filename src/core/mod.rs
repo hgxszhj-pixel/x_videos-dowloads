@@ -12,6 +12,7 @@
 pub use crate::downloader::{VideoDownloader, DownloaderConfig};
 pub use crate::types::DownloadResult;
 
-// Re-export muxer and subtitle
+// Re-export muxer, subtitle, and danmaku
 pub use crate::muxer::{mux, mux_with_quality, check_ffmpeg, get_media_info, MediaInfo, MuxerConfig};
 pub use crate::subtitle::{Subtitle, SubtitleFormat, SubtitleEntry, vtt_to_srt, download_subtitle, save_subtitle};
+pub use crate::danmaku::{Danmaku, DanmakuEntry, DanmakuFormat, download_danmaku, parse_xml_danmaku, danmaku_to_ass, save_danmaku};

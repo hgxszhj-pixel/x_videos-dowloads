@@ -5,6 +5,7 @@
 mod collaboration;
 mod config;
 mod core;
+mod danmaku;
 mod downloader;
 mod fxtwitter;
 mod gui;

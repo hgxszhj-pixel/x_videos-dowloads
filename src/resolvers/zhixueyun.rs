@@ -6,6 +6,7 @@
 use crate::resolvers::{CookiePool, PlatformResolver, ResolverError, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
+use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -70,10 +71,17 @@ impl ZhiXueYunResolver {
     /// 创建新的 ZhiXueYunResolver
     #[allow(dead_code)]
     pub fn new(cookie_pool: Arc<CookiePool>) -> Self {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+            .tcp_keepalive(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .unwrap_or_else(|e| panic!("Failed to build ZhiXueYun HTTP client: {}", e));
         Self {
             cookie_pool,
             token: std::sync::RwLock::new(None),
-            client: crate::http_client::shared_blocking(),
+            client: Arc::new(client),
             cached_headers: std::sync::RwLock::new(None),
         }
     }
@@ -583,6 +591,7 @@ fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
+#[async_trait]
 impl PlatformResolver for ZhiXueYunResolver {
     fn platform(&self) -> Platform {
         Platform::ZhiXueYun
@@ -592,7 +601,7 @@ impl PlatformResolver for ZhiXueYunResolver {
         url_matcher::get_platform_patterns(Platform::ZhiXueYun).to_vec()
     }
 
-    fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+    async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         let token = self.get_token()?;
 
         self.fetch_video_info(url, &token).map_err(ResolverError::from)

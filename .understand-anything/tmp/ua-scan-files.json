@@ -1,0 +1,547 @@
+{
+  "scriptCompleted": true,
+  "files": [
+    {
+      "path": ".codegraph/config.json",
+      "language": "json",
+      "sizeLines": 142,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".codegraph/daemon.pid",
+      "language": "pid",
+      "sizeLines": 6,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".understand-anything/.understandignore",
+      "language": "unknown",
+      "sizeLines": 31,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".understand-anything/fingerprints.json",
+      "language": "json",
+      "sizeLines": 8487,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/intermediate/batch-7.json",
+      "language": "json",
+      "sizeLines": 2940,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/intermediate/batch-8.json",
+      "language": "json",
+      "sizeLines": 1346,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/intermediate/batch-9.json",
+      "language": "json",
+      "sizeLines": 43,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/intermediate/review.json",
+      "language": "json",
+      "sizeLines": 47,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/knowledge-graph.json",
+      "language": "json",
+      "sizeLines": 4713,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/meta.json",
+      "language": "json",
+      "sizeLines": 5,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/tmp/ua-scan-files.json",
+      "language": "json",
+      "sizeLines": 540,
+      "fileCategory": "config"
+    },
+    {
+      "path": "AGENTS.md",
+      "language": "markdown",
+      "sizeLines": 42,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "build.rs",
+      "language": "rust",
+      "sizeLines": 3,
+      "fileCategory": "code"
+    },
+    {
+      "path": "Cargo.toml",
+      "language": "toml",
+      "sizeLines": 120,
+      "fileCategory": "config"
+    },
+    {
+      "path": "CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 167,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/mcporter.json",
+      "language": "json",
+      "sizeLines": 7,
+      "fileCategory": "config"
+    },
+    {
+      "path": "COOKIE_GUIDE.md",
+      "language": "markdown",
+      "sizeLines": 68,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/agents/domain.md",
+      "language": "markdown",
+      "sizeLines": 11,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/agents/issue-tracker.md",
+      "language": "markdown",
+      "sizeLines": 14,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/agents/triage-labels.md",
+      "language": "markdown",
+      "sizeLines": 15,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/DOUYIN_COOKIES.md",
+      "language": "markdown",
+      "sizeLines": 76,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/2026-05-21-improvement-plan.md",
+      "language": "markdown",
+      "sizeLines": 144,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/2026-05-25-performance-bottleneck-report-v2.md",
+      "language": "markdown",
+      "sizeLines": 283,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/2026-05-25-performance-bottleneck-report-v3.md",
+      "language": "markdown",
+      "sizeLines": 241,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/2026-05-25-performance-bottleneck-report.md",
+      "language": "markdown",
+      "sizeLines": 286,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/gui-improvement-plan-v2.md",
+      "language": "markdown",
+      "sizeLines": 54,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/gui-improvement-plan.md",
+      "language": "markdown",
+      "sizeLines": 178,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/performance-http.md",
+      "language": "markdown",
+      "sizeLines": 150,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/performance-improvement-plan.md",
+      "language": "markdown",
+      "sizeLines": 407,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/performance-memory.md",
+      "language": "markdown",
+      "sizeLines": 299,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/performance-pipeline.md",
+      "language": "markdown",
+      "sizeLines": 145,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/performance-resolvers.md",
+      "language": "markdown",
+      "sizeLines": 160,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-13-solution-a-cookie-pool.md",
+      "language": "markdown",
+      "sizeLines": 48,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-13-solution-b-hybrid.md",
+      "language": "markdown",
+      "sizeLines": 68,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-13-solution-c-playwright.md",
+      "language": "markdown",
+      "sizeLines": 54,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "HANDOFF.md",
+      "language": "markdown",
+      "sizeLines": 246,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "PLAN-IMPROVEMENTS.md",
+      "language": "markdown",
+      "sizeLines": 276,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 69,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "src/collaboration/client/discovery.rs",
+      "language": "rust",
+      "sizeLines": 37,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/client/mod.rs",
+      "language": "rust",
+      "sizeLines": 5,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/client/queue.rs",
+      "language": "rust",
+      "sizeLines": 256,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/client/ws.rs",
+      "language": "rust",
+      "sizeLines": 574,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/crypto/auth.rs",
+      "language": "rust",
+      "sizeLines": 190,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/crypto/hashring.rs",
+      "language": "rust",
+      "sizeLines": 229,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/crypto/mod.rs",
+      "language": "rust",
+      "sizeLines": 4,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/discovery/mod.rs",
+      "language": "rust",
+      "sizeLines": 18,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/discovery/stun.rs",
+      "language": "rust",
+      "sizeLines": 231,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/mod.rs",
+      "language": "rust",
+      "sizeLines": 36,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/README.md",
+      "language": "markdown",
+      "sizeLines": 261,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "src/collaboration/server/db.rs",
+      "language": "rust",
+      "sizeLines": 881,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/server/handler.rs",
+      "language": "rust",
+      "sizeLines": 582,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/server/mod.rs",
+      "language": "rust",
+      "sizeLines": 8,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/server/ws.rs",
+      "language": "rust",
+      "sizeLines": 213,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/transfer/downloader.rs",
+      "language": "rust",
+      "sizeLines": 259,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/transfer/http_server.rs",
+      "language": "rust",
+      "sizeLines": 492,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/transfer/mod.rs",
+      "language": "rust",
+      "sizeLines": 6,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/collaboration/types.rs",
+      "language": "rust",
+      "sizeLines": 225,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/config.rs",
+      "language": "rust",
+      "sizeLines": 244,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/downloader.rs",
+      "language": "rust",
+      "sizeLines": 1134,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/fxtwitter.rs",
+      "language": "rust",
+      "sizeLines": 390,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/gui.rs",
+      "language": "rust",
+      "sizeLines": 1424,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/history.rs",
+      "language": "rust",
+      "sizeLines": 448,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/http_client.rs",
+      "language": "rust",
+      "sizeLines": 27,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/i18n.rs",
+      "language": "rust",
+      "sizeLines": 228,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/lib.rs",
+      "language": "rust",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/main.rs",
+      "language": "rust",
+      "sizeLines": 929,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/abogus.rs",
+      "language": "rust",
+      "sizeLines": 222,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/bilibili.rs",
+      "language": "rust",
+      "sizeLines": 95,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/cookie_pool.rs",
+      "language": "rust",
+      "sizeLines": 475,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/cookie_utils.rs",
+      "language": "rust",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/douyin_api.rs",
+      "language": "rust",
+      "sizeLines": 282,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/douyin.rs",
+      "language": "rust",
+      "sizeLines": 222,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/mod.rs",
+      "language": "rust",
+      "sizeLines": 360,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/tiktok.rs",
+      "language": "rust",
+      "sizeLines": 108,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/token_manager.rs",
+      "language": "rust",
+      "sizeLines": 366,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/url_matcher.rs",
+      "language": "rust",
+      "sizeLines": 192,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/xbogus.rs",
+      "language": "rust",
+      "sizeLines": 179,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/zhixueyun_token/mod.rs",
+      "language": "rust",
+      "sizeLines": 87,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/resolvers/zhixueyun.rs",
+      "language": "rust",
+      "sizeLines": 618,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/scrapling_client.rs",
+      "language": "rust",
+      "sizeLines": 233,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/scrapling_extractor.rs",
+      "language": "rust",
+      "sizeLines": 287,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/theme.rs",
+      "language": "rust",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/types.rs",
+      "language": "rust",
+      "sizeLines": 697,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/website_profile.rs",
+      "language": "rust",
+      "sizeLines": 614,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/yt_dlp.rs",
+      "language": "rust",
+      "sizeLines": 483,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/types_test.rs",
+      "language": "rust",
+      "sizeLines": 77,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui.slint",
+      "language": "slint",
+      "sizeLines": 436,
+      "fileCategory": "code"
+    }
+  ],
+  "totalFiles": 87,
+  "filteredByIgnore": 0,
+  "estimatedComplexity": "moderate",
+  "stats": {
+    "filesScanned": 87,
+    "byCategory": {
+      "config": 11,
+      "code": 51,
+      "docs": 25
+    },
+    "byLanguage": {
+      "json": 10,
+      "pid": 1,
+      "unknown": 1,
+      "markdown": 25,
+      "rust": 48,
+      "toml": 1,
+      "slint": 1
+    }
+  }
+}

@@ -6,6 +6,7 @@
 use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -54,6 +55,7 @@ impl Default for TikTokResolver {
     }
 }
 
+#[async_trait]
 impl PlatformResolver for TikTokResolver {
     fn platform(&self) -> Platform {
         Platform::TikTok
@@ -63,7 +65,7 @@ impl PlatformResolver for TikTokResolver {
         url_matcher::get_platform_patterns(Platform::TikTok).to_vec()
     }
 
-    fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+    async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         let mut ytdlp = crate::yt_dlp::YtDlp::new();
 
         // 如果有 tokens，转换为 cookie 文件注入 yt-dlp

@@ -259,7 +259,12 @@ impl FxTwitterResolver {
         if let Some(ref media) = tweet.media {
             if let Some(ref all) = media.all {
                 for item in all {
-                    if item.media_type.as_deref() == Some("video") {
+                    // 优先检查 media_type === "video"
+                    // 但也要处理 media_type 为 undefined 但有 variants 的情况
+                    let has_video_type = item.media_type.as_deref() == Some("video");
+                    let has_variants = item.variants.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+
+                    if has_video_type || has_variants {
                         // 优先从 variants 获取最高质量的视频 URL
                         if let Some(ref variants) = item.variants {
                             // 找最高的 bitrate 的 mp4 视频

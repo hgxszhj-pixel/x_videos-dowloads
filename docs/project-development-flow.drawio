@@ -1,0 +1,240 @@
+<mxfile>
+  <diagram name="Project Development Workflow">
+    <mxGraphModel dx="1200" dy="900" grid="1" guides="1">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="x_videos-dowloads 开发流程" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=20;fontStyle=bold;" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="300" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Main Flow - Row 1 -->
+        <mxCell id="p1" value="需求分析&#xa;/Spec" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F3FF;strokeColor=#0066CC;fontSize=14;align=center;" vertex="1" parent="1">
+          <mxGeometry x="80" y="100" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="p2" value="技术设计&#xa;/Plan" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F3FF;strokeColor=#0066CC;fontSize=14;align=center;" vertex="1" parent="1">
+          <mxGeometry x="240" y="100" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="p3" value="编码实现&#xa;/Build" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F3FF;strokeColor=#0066CC;fontSize=14;align=center;" vertex="1" parent="1">
+          <mxGeometry x="400" y="100" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="p4" value="Code Review" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F3FF;strokeColor=#0066CC;fontSize=14;align=center;" vertex="1" parent="1">
+          <mxGeometry x="560" y="100" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="p5" value="测试验证&#xa;/Test" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F3FF;strokeColor=#0066CC;fontSize=14;align=center;" vertex="1" parent="1">
+          <mxGeometry x="720" y="100" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="p6" value="部署上线&#xa;/Ship" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#90EE90;strokeColor=#228B22;fontSize=14;align=center;" vertex="1" parent="1">
+          <mxGeometry x="880" y="100" width="120" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Arrows Row 1 -->
+        <mxCell id="a1" edge="1" parent="1" source="p1" target="p2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a2" edge="1" parent="1" source="p2" target="p3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a3" edge="1" parent="1" source="p3" target="p4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a4" edge="1" parent="1" source="p4" target="p5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="a5" edge="1" parent="1" source="p5" target="p6">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Loop Arrow -->
+        <mxCell id="loop" edge="1" parent="1" source="p6" target="p1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="940" y="180"/>
+              <mxPoint x="940" y="220"/>
+              <mxPoint x="140" y="220"/>
+              <mxPoint x="140" y="180"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="loop_label" value="迭代优化" style="text;html=1;align=center;fontSize=11;fontColor=#666666;" vertex="1" connectable="0" parent="loop">
+          <mxGeometry x="0.5" y="1.5" relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- TDD Sub-flow -->
+        <mxCell id="tdd_label" value="TDD 工作流:" style="text;html=1;align=right;fontSize=11;fontStyle=bold;" vertex="1" parent="1">
+          <mxGeometry x="200" y="200" width="80" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tdd1" value="Write Test (RED)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#FF6600;fontSize=12;align=center;" vertex="1" parent="1">
+          <mxGeometry x="290" y="195" width="110" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tdd2" value="Write Code (GREEN)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CCE5FF;strokeColor=#0066CC;fontSize=12;align=center;" vertex="1" parent="1">
+          <mxGeometry x="420" y="195" width="110" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tdd3" value="Refactor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6FFE6;strokeColor=#228B22;fontSize=12;align=center;" vertex="1" parent="1">
+          <mxGeometry x="550" y="195" width="100" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tdd_a1" edge="1" parent="1" source="tdd1" target="tdd2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="tdd_a2" edge="1" parent="1" source="tdd2" target="tdd3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 2: Core Principles -->
+        <mxCell id="section2" value="核心原则" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF5E6;strokeColor=#FF6600;fontSize=14;fontStyle=bold;align=center;" vertex="1" parent="1">
+          <mxGeometry x="80" y="300" width="130" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="pr1" value="1. Think Before Coding&#xa;不假设，主动提问" style="text;html=1;align=left;fontSize=11;spacing=5;" vertex="1" parent="1">
+          <mxGeometry x="80" y="350" width="220" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="pr2" value="2. Simplicity First&#xa;最小代码解决问题" style="text;html=1;align=left;fontSize=11;spacing=5;" vertex="1" parent="1">
+          <mxGeometry x="80" y="395" width="220" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="pr3" value="3. Surgical Changes&#xa;只触碰必须改的" style="text;html=1;align=left;fontSize=11;spacing=5;" vertex="1" parent="1">
+          <mxGeometry x="80" y="440" width="220" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="pr4" value="4. Goal-Driven Execution&#xa;定义成功标准，循环验证" style="text;html=1;align=left;fontSize=11;spacing=5;" vertex="1" parent="1">
+          <mxGeometry x="80" y="485" width="220" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 3: Quality Checklist -->
+        <mxCell id="section3" value="质量检查清单" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6FFE6;strokeColor=#228B22;fontSize=14;fontStyle=bold;align=center;" vertex="1" parent="1">
+          <mxGeometry x="340" y="300" width="140" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="q1" value="✓ cargo build 通过" style="text;html=1;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="350" width="160" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="q2" value="✓ cargo test 通过" style="text;html=1;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="380" width="160" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="q3" value="✓ cargo clippy 无警告" style="text;html=1;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="410" width="160" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="q4" value="✓ 无硬编码 secrets" style="text;html=1;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="440" width="160" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 4: Project Architecture -->
+        <mxCell id="section4" value="项目架构" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#FF6600;fontSize=14;fontStyle=bold;align=center;" vertex="1" parent="1">
+          <mxGeometry x="560" y="300" width="130" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="arch1" value="ResolverRegistry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CCE5FF;strokeColor=#0066CC;fontSize=11;align=center;" vertex="1" parent="1">
+          <mxGeometry x="570" y="350" width="120" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="arch1_sub" value="TikTok/DouYin/Bilibili&#xa;ZhiXueYun/yt-dlp" style="text;html=1;align=center;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="570" y="388" width="120" height="35" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="arch2" value="VideoDownloader" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CCE5FF;strokeColor=#0066CC;fontSize=11;align=center;" vertex="1" parent="1">
+          <mxGeometry x="570" y="430" width="120" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="arch2_sub" value="Native/YtDlp&#xa;DownloadStrategy" style="text;html=1;align=center;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="570" y="468" width="120" height="35" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="arch3" value="GUI (Slint)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CCE5FF;strokeColor=#0066CC;fontSize=11;align=center;" vertex="1" parent="1">
+          <mxGeometry x="720" y="350" width="100" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="arch3_sub" value="batch/multi-URL&#xa;progress" style="text;html=1;align=center;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="720" y="388" width="100" height="35" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="arch4" value="HTTP Client" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CCE5FF;strokeColor=#0066CC;fontSize=11;align=center;" vertex="1" parent="1">
+          <mxGeometry x="720" y="430" width="100" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="arch4_sub" value="pool/retry/cookie" style="text;html=1;align=center;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="720" y="468" width="100" height="35" as="geometry"/>
+        </mxCell>
+
+        <!-- Architecture connections -->
+        <mxCell id="aconn1" edge="1" parent="1" source="arch1" target="arch2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="aconn2" edge="1" parent="1" source="arch2" target="arch3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="aconn3" edge="1" parent="1" source="arch3" target="arch4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 5: Git Workflow -->
+        <mxCell id="section5" value="Git 工作流" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6FFE6;strokeColor=#228B22;fontSize=14;fontStyle=bold;align=center;" vertex="1" parent="1">
+          <mxGeometry x="880" y="300" width="130" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="git1" value="1. branch" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="890" y="350" width="110" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="git2" value="2. commit&#xa;(feat/fix/perf)" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="890" y="380" width="110" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="git3" value="3. PR review" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="890" y="420" width="110" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="git4" value="4. merge to master" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="890" y="450" width="120" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 6: Error Handling -->
+        <mxCell id="section6" value="错误处理原则" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6E6;strokeColor=#CC0000;fontSize=14;fontStyle=bold;align=center;" vertex="1" parent="1">
+          <mxGeometry x="80" y="560" width="130" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="err1" value="• 每个层级都要处理错误" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="610" width="200" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="err2" value="• 不静默吞掉错误" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="640" width="200" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="err3" value="• 失败要响亮 (verbose)" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="670" width="200" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 7: Security -->
+        <mxCell id="section7" value="安全检查" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6E6;strokeColor=#CC0000;fontSize=14;fontStyle=bold;align=center;" vertex="1" parent="1">
+          <mxGeometry x="340" y="560" width="130" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="sec1" value="• 无硬编码 credentials" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="350" y="610" width="200" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="sec2" value="• 命令注入防护 (shell_words)" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="350" y="640" width="200" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="sec3" value="• SQL/XSS 防护" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="350" y="670" width="200" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Section 8: Agent Selection -->
+        <mxCell id="section8" value="Agent 选择" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF5E6;strokeColor=#FF6600;fontSize=14;fontStyle=bold;align=center;" vertex="1" parent="1">
+          <mxGeometry x="560" y="560" width="130" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="agt1" value="planner → 复杂功能/重构" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="570" y="610" width="200" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="agt2" value="code-reviewer → 代码修改后" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="570" y="640" width="200" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="agt3" value="tdd-guide → Bug修复/新功能" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="570" y="670" width="200" height="25" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

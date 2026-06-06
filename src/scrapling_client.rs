@@ -99,12 +99,9 @@ impl ScraplingClient {
             let deadline = std::time::Duration::from_secs(timeout_secs);
 
             loop {
-                match start.elapsed().cmp(&deadline) {
-                    std::cmp::Ordering::Greater => {
-                        let _ = child.kill();
-                        return Err(anyhow!("Scrapling fetch timed out"));
-                    }
-                    _ => {}
+                if start.elapsed() > deadline {
+                    let _ = child.kill();
+                    return Err(anyhow!("Scrapling fetch timed out"));
                 }
 
                 line.clear();

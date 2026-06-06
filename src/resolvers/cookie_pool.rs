@@ -79,6 +79,28 @@ impl CookiePool {
         }
     }
 
+    /// Check if any valid cookies exist
+    pub fn _has_valid(&self) -> bool {
+        self.valid_count() > 0
+    }
+
+    /// Get remaining hits for current cookie
+    pub fn _remaining_hits(&self) -> Option<u32> {
+        let entries = self.entries.read().ok()?;
+        entries
+            .iter()
+            .filter(|e| e.valid)
+            .min_by_key(|e| e.last_used)
+            .map(|e| self.max_hits_per_cookie.saturating_sub(e.hit_count))
+    }
+
+    /// Check if cookie needs refresh (less than 20% hits remaining)
+    pub fn _needs_refresh(&self) -> bool {
+        self._remaining_hits()
+            .map(|r| r < self.max_hits_per_cookie / 5)
+            .unwrap_or(true)
+    }
+
     /// Get a valid cookie entry using LRU strategy
     ///
     /// Returns the cookies if a valid entry exists, None otherwise.

@@ -5,6 +5,7 @@
 use crate::resolvers::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
 use crate::types::VideoInfo;
 use crate::history::Platform;
+use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// Bilibili 解析器
@@ -42,6 +43,7 @@ impl Default for BilibiliResolver {
     }
 }
 
+#[async_trait]
 impl PlatformResolver for BilibiliResolver {
     fn platform(&self) -> Platform {
         Platform::Bilibili
@@ -51,7 +53,7 @@ impl PlatformResolver for BilibiliResolver {
         url_matcher::get_platform_patterns(Platform::Bilibili).to_vec()
     }
 
-    fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+    async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         let mut ytdlp = crate::yt_dlp::YtDlp::new();
 
         // 如果有 cookies，设置 cookie 文件

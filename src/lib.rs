@@ -5,6 +5,7 @@
 pub mod collaboration;
 pub mod config;
 pub mod core;
+pub mod danmaku;
 pub mod downloader;
 pub mod fxtwitter;
 pub mod gui;

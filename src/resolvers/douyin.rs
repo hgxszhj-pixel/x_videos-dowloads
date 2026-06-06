@@ -6,6 +6,7 @@
 use crate::resolvers::{PlatformResolver, ResolverError, DouYinApiClient, extract_modal_id, CookieFileManager, url_matcher};
 use crate::types::{VideoInfo, VideoFormat};
 use crate::history::Platform;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -53,6 +54,7 @@ impl Default for DouYinResolver {
     }
 }
 
+#[async_trait]
 impl PlatformResolver for DouYinResolver {
     fn platform(&self) -> Platform {
         Platform::DouYin
@@ -62,7 +64,7 @@ impl PlatformResolver for DouYinResolver {
         url_matcher::get_platform_patterns(Platform::DouYin).to_vec()
     }
 
-    fn get_video_info(&self, url: &str) -> anyhow::Result<VideoInfo, ResolverError> {
+    async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         // 检查是否是 feed URL (jingxuan/sports 等) 或包含 modal_id
         let modal_id = extract_modal_id(url);
         let is_feed_url = url.contains("jingxuan") || url.contains("sports") || url.contains("recommend");

@@ -4,7 +4,6 @@
 
 use crate::types::{DownloadError, VideoFormat, VideoInfo};
 use anyhow::Result;
-use shell_words::quote;
 use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, info, warn};
