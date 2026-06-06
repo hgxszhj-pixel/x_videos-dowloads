@@ -284,7 +284,10 @@ impl BatchManager {
                                         let before_pct = &line[..pct_pos];
                                         if let Some(space_pos) = before_pct.rfind(' ') {
                                             if let Ok(pct) = before_pct[space_pos+1..].parse::<f64>() {
-                                                progress_store.store((pct * 100.0) as u32, Ordering::Relaxed);
+                                                // 确保值有效 (0-100 范围)
+                                                if pct.is_finite() && pct >= 0.0 && pct <= 100.0 {
+                                                    progress_store.store((pct * 100.0) as u32, Ordering::Relaxed);
+                                                }
                                             }
                                         }
                                     }
