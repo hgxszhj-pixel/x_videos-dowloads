@@ -4,15 +4,18 @@
 
 mod collaboration;
 mod config;
+mod core;
 mod downloader;
 mod fxtwitter;
 mod gui;
 mod history;
 mod http_client;
 mod i18n;
+mod muxer;
 mod resolvers;
 mod scrapling_client;
 mod scrapling_extractor;
+mod subtitle;
 mod types;
 mod website_profile;
 mod yt_dlp;
@@ -311,7 +314,7 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
             // 根据解析器决定的下载策略选择下载方式
             if info.download_strategy == DownloadStrategy::Native {
                 info!("使用原生下载...");
-                let result = download_with_native(&info, &cli, start_time).await?;
+                let result = download_with_native(info, &cli, start_time).await?;
                 if result.success {
                     history.add_entry_with_all(url.clone(), Some(info.title.clone()), Some(result.output_path.clone()), Some(result.file_size), None, history::DownloadStatus::Completed, None)?;
                 }
@@ -357,7 +360,7 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig)
     info!("使用解析器: {:?}", resolver.platform());
 
     // 尝试解析器获取视频信息
-    match resolver.get_video_info(url) {
+    match resolver.get_video_info(url).await {
         Ok(info) => {
             info!("Resolver 解析成功!");
             return Ok(info);
@@ -492,7 +495,7 @@ async fn download_with_native(
     let output_path_str = output_path.to_str().unwrap().to_string();
 
     let output = tokio::process::Command::new("wget")
-        .args(&[
+        .args([
             "-q", "--show-progress",
             "-O", &output_path_str,
             "--user-agent", &user_agent,

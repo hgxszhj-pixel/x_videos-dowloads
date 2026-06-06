@@ -1,9 +1,9 @@
 # 项目交接文档 (Handoff)
 
 **项目**: x_videos-dowloads (Rust x.com 视频下载器)
-**更新时间**: 2026-06-02
+**更新时间**: 2026-06-06
 **当前分支**: gitbutler/workspace
-**Git**: `81b83e8`
+**Git**: `8498ee4` (性能升级 Phase 1-4 完成)
 
 ---
 
@@ -17,13 +17,31 @@
 
 ## 核心模块
 
-| 解析器 | 文件 | 支持平台 |
-|--------|------|----------|
-| TikTok/DouYin/Bilibili | tiktok/douyin/bilibili.rs | 各平台 |
-| ZhiXueYunResolver | zhixueyun.rs | zhixueyun.com (PDF) |
-| YtDlpResolver | mod.rs | 所有平台 (fallback) |
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| TikTok/DouYin/Bilibili | resolvers/tiktok/douyin/bilibili.rs | 各平台 |
+| ZhiXueYunResolver | resolvers/zhixueyun.rs | zhixueyun.com (PDF) |
+| YtDlpResolver | resolvers/mod.rs | 所有平台 (fallback) |
 | FxTwitterResolver | fxtwitter.rs | x.com 视频解析 |
-| CookiePool | cookie_pool.rs | Cookie 池管理 |
+| CookiePool | resolvers/cookie_pool.rs | Cookie 池管理 |
+| **Core 模块** | `src/core/` | 下载/混流/字幕核心功能 |
+
+---
+
+## src/core/ 模块架构
+
+```
+src/core/
+├── mod.rs          # 统一导出: downloader, muxer, subtitle
+├── downloader.rs   # 视频下载引擎 (保留在根目录)
+├── muxer.rs        # FFmpeg 音视频混流
+└── subtitle.rs     # 字幕下载和格式转换
+```
+
+**导出方式**:
+```rust
+use crate::core::{VideoDownloader, mux, Subtitle, SubtitleFormat, ...};
+```
 
 ---
 
@@ -78,8 +96,8 @@
 | 检查项 | 状态 |
 |--------|------|
 | cargo build | ✅ 0 errors |
-| cargo test | ✅ 307 通过 (升级后 +14) |
-| clippy | ✅ |
+| cargo test | ✅ 307 通过 (149 lib + 158 binary) |
+| clippy | ✅ 0 errors (dead code warnings for muxer/subtitle) |
 
 ---
 
@@ -94,13 +112,33 @@
 - 移除 `url.to_lowercase()` 冗余分配
 - 简化 `select_resolver` 逻辑
 
-### Phase 3: 下载器优化 ⚠️
-- `merge_segments` 使用 `std::fs` 阻塞 I/O
-- 待 v0.2.0 使用 `tokio::fs` + `spawn_blocking` 重构
+### Phase 3: 下载器优化 ✅
+- `merge_segments` 使用 `spawn_blocking` 异步化
+- 避免阻塞 async runtime
 
 ### Phase 4: 测试补全 ✅
 - 新增 8 个下载器测试
 - 测试覆盖: 307 通过
+
+---
+
+## Phase 2 功能增强 (upgrade-plan-v1.md)
+
+### 2.1 字幕支持 ✅
+- `src/subtitle.rs` - 完整实现
+- SubtitleFormat (SRT, VTT, ASS)
+- vtt_to_srt 转换
+- download_subtitle, save_subtitle 函数
+
+### 2.2 弹幕支持 ❌
+- **未实现** — 待开发
+- 需要: `src/danmaku.rs` (新建)
+- API 参考: `https://api.bilibili.com/x/v1/dm/list?pid={bvid}`
+
+### 2.3 FFmpeg 混流 ✅
+- `src/muxer.rs` - 完整实现
+- check_ffmpeg, get_media_info, mux, mux_with_quality
+- MuxerConfig, MediaInfo, MediaStream structs
 
 ---
 
@@ -114,13 +152,8 @@
 - Slint ProgressIndicator 可能不会实时刷新
 - DEBUG 输出证明数据在更新，但 UI 渲染有延迟
 
----
-
-## 抖音 Cookie 问题
-
-yt-dlp 报错 "Fresh cookies needed": 退出登录 → 清除 cookies → 重新登录 → 导出 Netscape 格式
-
-配置: `~/.config/x-video-downloader/config.toml`
+### 抖音 Cookie 问题
+- yt-dlp 报错 "Fresh cookies needed": 退出登录 → 清除 cookies → 重新登录 → 导出 Netscape 格式
 
 ---
 
@@ -137,3 +170,18 @@ cargo run -- --gui                                               # GUI
 
 - yt-dlp stderr: `[download] 45.0% of ~2.50MB`
 - 详细日志: `RUST_LOG=debug`
+
+---
+
+## 未完成工作 (upgrade-plan-v1.md)
+
+| Phase | 任务 | 状态 |
+|-------|------|------|
+| 1.1 | Platform Trait 重构 | ❌ 未开始 |
+| 1.2 | 核心层分离 | ⚠️ 部分完成 (core/ 骨架) |
+| 2.1 | 字幕支持 | ✅ 完成 |
+| 2.2 | 弹幕支持 | ❌ 未实现 |
+| 2.3 | FFmpeg 混流 | ✅ 完成 |
+| 3 | 认证系统增强 | ❌ 未开始 |
+| 4 | 批量下载增强 | ❌ 未开始 |
+| 5 | 用户体验优化 | ❌ 未开始 |

@@ -4,13 +4,16 @@
 
 pub mod collaboration;
 pub mod config;
+pub mod core;
 pub mod downloader;
 pub mod fxtwitter;
 pub mod gui;
 pub mod history;
 pub mod http_client;
 pub mod i18n;
+pub mod muxer;
 pub mod resolvers;
+pub mod subtitle;
 pub mod types;
 pub mod website_profile;
 pub mod yt_dlp;
