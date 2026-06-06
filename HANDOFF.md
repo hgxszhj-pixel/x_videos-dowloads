@@ -19,12 +19,12 @@
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| TikTok/DouYin/Bilibili | resolvers/tiktok/douyin/bilibili.rs | 各平台 |
-| ZhiXueYunResolver | resolvers/zhixueyun.rs | zhixueyun.com (PDF) |
-| YtDlpResolver | resolvers/mod.rs | 所有平台 (fallback) |
-| FxTwitterResolver | fxtwitter.rs | x.com 视频解析 |
-| CookiePool | resolvers/cookie_pool.rs | Cookie 池管理 |
-| **Core 模块** | `src/core/` | 下载/混流/字幕核心功能 |
+| **Platform** | `src/platform/` | 平台解析器 (原 resolvers/) |
+| TikTok/DouYin/Bilibili | platform/tiktok/douyin/bilibili.rs | 各平台 |
+| ZhiXueYunResolver | platform/zhixueyun.rs | zhixueyun.com (PDF) |
+| YtDlpResolver | platform/mod.rs | 所有平台 (fallback) |
+| CookiePool | platform/cookie_pool.rs | Cookie 池管理 |
+| **Core 模块** | `src/core/` | 下载/混流/字幕/弹幕核心功能 |
 
 ---
 
@@ -32,10 +32,25 @@
 
 ```
 src/core/
-├── mod.rs          # 统一导出: downloader, muxer, subtitle
+├── mod.rs          # 统一导出: downloader, muxer, subtitle, danmaku
 ├── downloader.rs   # 视频下载引擎 (保留在根目录)
 ├── muxer.rs        # FFmpeg 音视频混流
-└── subtitle.rs     # 字幕下载和格式转换
+├── subtitle.rs     # 字幕下载和格式转换
+└── danmaku.rs      # Bilibili 弹幕下载和 ASS 转换
+```
+
+## src/platform/ 模块架构
+
+```
+src/platform/
+├── mod.rs          # PlatformResolver trait + ResolverRegistry
+├── tiktok.rs       # TikTok 解析器
+├── douyin.rs       # 抖音解析器
+├── bilibili.rs     # Bilibili 解析器
+├── douyin_api.rs   # 抖音 API 客户端
+├── zhixueyun.rs    # 智学云解析器
+├── cookie_pool.rs  # Cookie 池管理
+└── url_matcher.rs  # URL 平台匹配
 ```
 
 **导出方式**:
@@ -173,14 +188,23 @@ cargo run -- --gui                                               # GUI
 
 ---
 
+## Phase 1.1: Platform Trait 重构 ✅
+- `src/platform/mod.rs` — PlatformResolver trait (lines 67-103)
+- `src/platform/tiktok.rs`, `douyin.rs`, `bilibili.rs` 等实现
+- 重命名 resolvers/ → platform/ (10 files updated)
+- trait 接口: platform(), supports_url(), get_video_info(), get_subtitles(), get_danmaku()
+
+## Phase 1.2: 核心层分离 ✅
+- `src/core/mod.rs` — 统一导出 downloader, muxer, subtitle, danmaku
+
 ## 未完成工作 (upgrade-plan-v1.md)
 
 | Phase | 任务 | 状态 |
 |-------|------|------|
-| 1.1 | Platform Trait 重构 | ❌ 未开始 |
-| 1.2 | 核心层分离 | ⚠️ 部分完成 (core/ 骨架) |
+| 1.1 | Platform Trait 重构 | ✅ 完成 |
+| 1.2 | 核心层分离 | ✅ 完成 |
 | 2.1 | 字幕支持 | ✅ 完成 |
-| 2.2 | 弹幕支持 | ❌ 未实现 |
+| 2.2 | 弹幕支持 | ✅ 完成 |
 | 2.3 | FFmpeg 混流 | ✅ 完成 |
 | 3 | 认证系统增强 | ❌ 未开始 |
 | 4 | 批量下载增强 | ❌ 未开始 |
