@@ -24,7 +24,8 @@
 | ZhiXueYunResolver | platform/zhixueyun.rs | zhixueyun.com (PDF) |
 | YtDlpResolver | platform/mod.rs | 所有平台 (fallback) |
 | CookiePool | platform/cookie_pool.rs | Cookie 池管理 |
-| **Core 模块** | `src/core/` | 下载/混流/字幕/弹幕核心功能 |
+| **Core 模块** | `src/core/` | 下载/混流/字幕/弹幕/队列核心功能 |
+| **Queue** | `src/queue.rs` | 下载队列状态管理 (暂停/恢复/重试) |
 
 ---
 
@@ -32,11 +33,12 @@
 
 ```
 src/core/
-├── mod.rs          # 统一导出: downloader, muxer, subtitle, danmaku
+├── mod.rs          # 统一导出: downloader, muxer, subtitle, danmaku, queue
 ├── downloader.rs   # 视频下载引擎 (保留在根目录)
 ├── muxer.rs        # FFmpeg 音视频混流
 ├── subtitle.rs     # 字幕下载和格式转换
-└── danmaku.rs      # Bilibili 弹幕下载和 ASS 转换
+├── danmaku.rs      # Bilibili 弹幕下载和 ASS 转换
+└── queue.rs        # 下载队列管理 (状态机, 并行控制)
 ```
 
 ## src/platform/ 模块架构
