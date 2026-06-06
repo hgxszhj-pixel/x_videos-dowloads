@@ -39,7 +39,7 @@ use crate::config::AppConfig;
 use crate::downloader::{DownloaderConfig, VideoDownloader};
 use crate::fxtwitter::FxTwitterResolver;
 use crate::history::History;
-use crate::types::{format_bytes, sanitize_filename, DownloadRequest, DownloadResult, DownloadStrategy, VideoInfo, DEFAULT_USER_AGENT};
+use crate::types::{format_bytes, generate_unique_filename, sanitize_filename, DownloadRequest, DownloadResult, DownloadStrategy, VideoInfo, DEFAULT_USER_AGENT};
 use crate::yt_dlp::YtDlp;
 
 /// 命令行参数
@@ -236,17 +236,23 @@ fn main() {
         .init();
 
     // 运行CLI应用
-    let runtime = match tokio::runtime::Runtime::new() {
-        Ok(r) => r,
-        Err(e) => {
-            error!("创建 Tokio 运行时失败: {}", e);
-            std::process::exit(1);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let exit_code = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(run(cli, config))
+    })) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => {
+            error!("错误: {}", e);
+            1
+        }
+        Err(_) => {
+            eprintln!("运行时 panic 已捕获（可能是 shutdown 时的非致命问题）");
+            0
         }
     };
-    if let Err(e) = runtime.block_on(run(cli, config)) {
-        error!("错误: {}", e);
-        std::process::exit(1);
-    }
+    // Leak runtime 避免 drop 时再次触发 blocking panic
+    std::mem::forget(runtime);
+    std::process::exit(exit_code);
 }
 
 async fn run(cli: Cli, config: AppConfig) -> Result<()> {
@@ -553,8 +559,8 @@ async fn download_with_ytdlp(
     // 确保输出目录存在
     tokio::fs::create_dir_all(&output_dir).await?;
 
-    // 确定文件名
-    let filename = if let Some(ref name) = cli.filename {
+    // 确定文件名（无扩展名，作为基础文件名）
+    let base_filename = if let Some(ref name) = cli.filename {
         sanitize_filename(name)
     } else {
         sanitize_filename(&info.title)
@@ -576,7 +582,7 @@ async fn download_with_ytdlp(
     });
 
     // 构建 yt-dlp 命令
-    let output_path = output_dir.join(format!("{}.%(ext)s", filename));
+    let output_path = output_dir.join(format!("{}.%(ext)s", base_filename));
 
     // 对于 video.twimg.com 的直接 URL，使用 Rust 下载器更可靠
     if is_direct_url && !cli.audio_only && !cli.subtitles {
@@ -586,7 +592,7 @@ async fn download_with_ytdlp(
         let ext = info.url.split('?').next()
             .and_then(|s| s.rsplit('/').next()?.split('.').next_back())
             .unwrap_or("mp4");
-        let final_output_path = output_dir.join(format!("{}.{}", filename, ext));
+        let final_output_path = generate_unique_filename(&output_dir, &base_filename, ext);
 
         // 使用 Rust VideoDownloader 直接下载（应用网站特征配置）
         let downloader = VideoDownloader::new()?
@@ -695,19 +701,16 @@ async fn download_direct(url: &str, cli: &Cli, _start_time: Instant) -> Result<D
     // 验证并规范化输出目录为绝对路径
     let output_dir = validate_output_dir(&output_dir)?;
 
-    // 验证并规范化输出目录为绝对路径
-    let output_dir = validate_output_dir(&output_dir)?;
-
     tokio::fs::create_dir_all(&output_dir).await?;
 
     // 提取文件名
-    let filename = if let Some(ref name) = cli.filename {
+    let base_filename = if let Some(ref name) = cli.filename {
         sanitize_filename(name)
     } else {
-        "video.mp4".to_string()
+        "video".to_string()
     };
 
-    let output_path = output_dir.join(&filename);
+    let output_path = generate_unique_filename(&output_dir, &base_filename, "mp4");
 
     let request = DownloadRequest::new(url, &output_path)
         .with_user_agent(

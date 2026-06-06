@@ -9,6 +9,8 @@
 //! - danmaku - 弹幕处理
 //! - queue - 下载队列管理
 
+#![allow(unused_imports)]
+
 // Re-export from main downloader
 pub use crate::downloader::{VideoDownloader, DownloaderConfig};
 pub use crate::types::DownloadResult;

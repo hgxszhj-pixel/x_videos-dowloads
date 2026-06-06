@@ -35,7 +35,82 @@ pub enum ResolverError {
     Network(String),
     /// 解析失败
     ParseFailed(String),
+    /// 详细错误 (含平台/URL/操作提示)
+    Detailed {
+        /// 失败的平台
+        platform: Platform,
+        /// 失败的 URL
+        url: String,
+        /// 错误消息
+        message: String,
+        /// 建议的操作
+        action: String,
+    },
 }
+
+impl ResolverError {
+    /// 将当前错误转换为详细错误 (添加上下文)
+    pub fn with_context(self, url: String, platform: Platform, action: String) -> Self {
+        let (message, existing_platform) = match self {
+            ResolverError::AuthenticationRequired => ("需要登录认证".to_string(), platform),
+            ResolverError::ContentUnavailable(msg) => (msg, platform),
+            ResolverError::Network(msg) => (msg, platform),
+            ResolverError::ParseFailed(msg) => (msg, platform),
+            ResolverError::Detailed { message, platform: p, .. } => (message, p),
+        };
+        ResolverError::Detailed {
+            platform: existing_platform,
+            url,
+            message,
+            action,
+        }
+    }
+
+    /// 获取建议的操作提示
+    pub fn suggested_action(&self) -> Option<String> {
+        match self {
+            ResolverError::AuthenticationRequired => {
+                Some("请更新 Cookie 后重试 (抖音/哔哩哔哩需要 Fresh cookies)".to_string())
+            }
+            ResolverError::ContentUnavailable(msg) => {
+                if msg.contains(" login") || msg.contains("登录") || msg.contains("权限") {
+                    Some("请检查账号是否登录，或尝试更新 Cookie".to_string())
+                } else {
+                    Some("视频可能已下架或仅限特定地区观看".to_string())
+                }
+            }
+            ResolverError::Network(msg) => {
+                if msg.contains("rate") || msg.contains("限流") || msg.contains("429") {
+                    Some("请求过于频繁，请稍后再试或使用代理".to_string())
+                } else if msg.contains("timeout") || msg.contains("超时") {
+                    Some("网络超时，请检查网络连接或使用代理".to_string())
+                } else {
+                    Some("请检查网络连接，或尝试使用 --proxy 参数".to_string())
+                }
+            }
+            ResolverError::ParseFailed(_) => {
+                Some("视频格式可能不支持，尝试使用 yt-dlp fallback".to_string())
+            }
+            ResolverError::Detailed { action, .. } => {
+                if action.is_empty() { None } else { Some(action.clone()) }
+            }
+        }
+    }
+
+    /// 获取错误消息的简短描述
+    pub fn brief(&self) -> String {
+        match self {
+            ResolverError::AuthenticationRequired => "需要登录认证".to_string(),
+            ResolverError::ContentUnavailable(msg) => format!("内容不可用: {}", msg),
+            ResolverError::Network(msg) => format!("网络错误: {}", msg),
+            ResolverError::ParseFailed(msg) => format!("解析失败: {}", msg),
+            ResolverError::Detailed { platform, message, .. } => {
+                format!("[{}] {}", platform.display_name(), message)
+            }
+        }
+    }
+}
+
 impl std::fmt::Display for ResolverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -43,6 +118,9 @@ impl std::fmt::Display for ResolverError {
             ResolverError::ContentUnavailable(msg) => write!(f, "内容不可用: {}", msg),
             ResolverError::Network(msg) => write!(f, "网络错误: {}", msg),
             ResolverError::ParseFailed(msg) => write!(f, "解析失败: {}", msg),
+            ResolverError::Detailed { platform, url, message, action } => {
+                write!(f, "[{}] {} ({})\n提示: {}", platform.display_name(), message, url, action)
+            }
         }
     }
 }

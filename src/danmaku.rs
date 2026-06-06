@@ -4,17 +4,17 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// 弹幕格式
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DanmakuFormat {
     /// XML 格式 (Bilibili)
-    Xml,
+    _Xml,
     /// JSON 格式
-    Json,
+    _Json,
     /// ASS 字幕格式
-    Ass,
+    _Ass,
 }
 
 /// 弹幕条目
@@ -27,7 +27,7 @@ pub struct DanmakuEntry {
     /// 弹幕颜色 (RGB)
     pub color: u32,
     /// 弹幕发送者 ID 哈希
-    pub uid_hash: String,
+    pub _uid_hash: String,
     /// 弹幕内容
     pub text: String,
 }
@@ -114,7 +114,7 @@ pub fn parse_xml_danmaku(xml: &str) -> Result<Vec<DanmakuEntry>> {
                     time,
                     type_,
                     color,
-                    uid_hash,
+                    _uid_hash: uid_hash,
                     text,
                 });
             }
@@ -125,6 +125,7 @@ pub fn parse_xml_danmaku(xml: &str) -> Result<Vec<DanmakuEntry>> {
 }
 
 /// 将弹幕转换为 ASS 格式
+#[allow(unused_variables)]
 pub fn danmaku_to_ass(danmaku: &[DanmakuEntry], width: u32, height: u32) -> String {
     let mut ass = String::new();
 
@@ -133,7 +134,7 @@ pub fn danmaku_to_ass(danmaku: &[DanmakuEntry], width: u32, height: u32) -> Stri
     ass.push_str("Title: Bilibili Danmaku\n");
     ass.push_str("ScriptType: v4.00+\n");
     ass.push_str("PlayDepth: 0\n");
-    ass.push_str("\n");
+    ass.push('\n');
 
     // V4+ Styles
     ass.push_str("[V4+ Styles]\n");
@@ -188,7 +189,7 @@ fn format_timestamp(seconds: f64) -> String {
 #[allow(dead_code)]
 pub async fn save_danmaku(danmaku: &[DanmakuEntry], path: &Path, format: DanmakuFormat, width: u32, height: u32) -> Result<()> {
     let content = match format {
-        DanmakuFormat::Ass => danmaku_to_ass(danmaku, width, height),
+        DanmakuFormat::_Ass => danmaku_to_ass(danmaku, width, height),
         _ => anyhow::bail!("only ASS format supported for saving"),
     };
 
@@ -229,18 +230,18 @@ mod tests {
     #[test]
     fn test_danmaku_to_ass() {
         let entries = vec![
-            DanmakuEntry {
+                       DanmakuEntry {
                 time: 1.0,
                 type_: 1,
                 color: 0xFFFFFF,
-                uid_hash: "abc".to_string(),
+                _uid_hash: "abc".to_string(),
                 text: "Hello".to_string(),
             },
             DanmakuEntry {
                 time: 3.0,
                 type_: 3,
                 color: 0xFF0000,
-                uid_hash: "def".to_string(),
+                _uid_hash: "def".to_string(),
                 text: "Top".to_string(),
             },
         ];

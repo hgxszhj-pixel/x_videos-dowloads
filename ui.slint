@@ -1,4 +1,4 @@
-import { ProgressIndicator } from "std-widgets.slint";
+import { ProgressIndicator, Slider } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "X Video Downloader";
@@ -42,6 +42,34 @@ export component AppWindow inherits Window {
     in-out property <int> batch-total: 0;
     in-out property <string> batch-status: "";
     in-out property <float> batch-progress: 0.0;
+    in-out property <int> batch-concurrency: 3;
+
+    // Per-video progress (5 slots)
+    in-out property <string> per1-title: "";
+    in-out property <float> per1-progress: 0.0;
+    in-out property <string> per1-speed: "";
+    in-out property <string> per1-status: "";
+    in-out property <bool> per1-visible: false;
+    in-out property <string> per2-title: "";
+    in-out property <float> per2-progress: 0.0;
+    in-out property <string> per2-speed: "";
+    in-out property <string> per2-status: "";
+    in-out property <bool> per2-visible: false;
+    in-out property <string> per3-title: "";
+    in-out property <float> per3-progress: 0.0;
+    in-out property <string> per3-speed: "";
+    in-out property <string> per3-status: "";
+    in-out property <bool> per3-visible: false;
+    in-out property <string> per4-title: "";
+    in-out property <float> per4-progress: 0.0;
+    in-out property <string> per4-speed: "";
+    in-out property <string> per4-status: "";
+    in-out property <bool> per4-visible: false;
+    in-out property <string> per5-title: "";
+    in-out property <float> per5-progress: 0.0;
+    in-out property <string> per5-speed: "";
+    in-out property <string> per5-status: "";
+    in-out property <bool> per5-visible: false;
 
     // History/Bookmark list
     in-out property <string> selected-tab: "history";
@@ -268,23 +296,98 @@ export component AppWindow inherits Window {
                     indeterminate: false;
                     height: 16px;
                 }
-                // Per-URL progress list (from JSON)
-                if root.download-list-progress != "": Rectangle {
-                    background: white;
-                    border-radius: 4px;
-                    VerticalLayout {
-                        padding: 8px;
-                        spacing: 4px;
-                        Text {
-                            text: root.download-list-progress;
-                            font-size: 11px;
-                            color: #333;
-                            wrap: word-wrap;
+                // Per-URL progress list (5 fixed slots)
+                VerticalLayout {
+                    spacing: 4px;
+                    padding: 4px;
+                    // Slot 1
+                    if per1-visible: Rectangle {
+                        background: white;
+                        border-radius: 4px;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 2px;
+                            Text { text: per1-title; font-size: 11px; color: #333; font-weight: 600; }
+                            HorizontalLayout {
+                                ProgressIndicator { progress: per1-progress / 100.0; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per1-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                            }
+                            HorizontalLayout {
+                                Text { text: per1-speed; font-size: 10px; color: #666; }
+                                Text { text: per1-status; font-size: 10px; font-weight: 600; }
+                            }
                         }
-                        if root.download-list-remaining > 0: Text {
-                            text: "... and " + root.download-list-remaining + " more download(s)";
-                            font-size: 11px;
-                            color: #888;
+                    }
+                    // Slot 2
+                    if per2-visible: Rectangle {
+                        background: white;
+                        border-radius: 4px;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 2px;
+                            Text { text: per2-title; font-size: 11px; color: #333; font-weight: 600; }
+                            HorizontalLayout {
+                                ProgressIndicator { progress: per2-progress / 100.0; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per2-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                            }
+                            HorizontalLayout {
+                                Text { text: per2-speed; font-size: 10px; color: #666; }
+                                Text { text: per2-status; font-size: 10px; font-weight: 600; }
+                            }
+                        }
+                    }
+                    // Slot 3
+                    if per3-visible: Rectangle {
+                        background: white;
+                        border-radius: 4px;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 2px;
+                            Text { text: per3-title; font-size: 11px; color: #333; font-weight: 600; }
+                            HorizontalLayout {
+                                ProgressIndicator { progress: per3-progress / 100.0; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per3-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                            }
+                            HorizontalLayout {
+                                Text { text: per3-speed; font-size: 10px; color: #666; }
+                                Text { text: per3-status; font-size: 10px; font-weight: 600; }
+                            }
+                        }
+                    }
+                    // Slot 4
+                    if per4-visible: Rectangle {
+                        background: white;
+                        border-radius: 4px;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 2px;
+                            Text { text: per4-title; font-size: 11px; color: #333; font-weight: 600; }
+                            HorizontalLayout {
+                                ProgressIndicator { progress: per4-progress / 100.0; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per4-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                            }
+                            HorizontalLayout {
+                                Text { text: per4-speed; font-size: 10px; color: #666; }
+                                Text { text: per4-status; font-size: 10px; font-weight: 600; }
+                            }
+                        }
+                    }
+                    // Slot 5
+                    if per5-visible: Rectangle {
+                        background: white;
+                        border-radius: 4px;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 2px;
+                            Text { text: per5-title; font-size: 11px; color: #333; font-weight: 600; }
+                            HorizontalLayout {
+                                ProgressIndicator { progress: per5-progress / 100.0; height: 8px; horizontal-stretch: 1; }
+                                Text { text: (per5-progress / 100.0 * 100.0).round() + "%"; font-size: 10px; color: #666; }
+                            }
+                            HorizontalLayout {
+                                Text { text: per5-speed; font-size: 10px; color: #666; }
+                                Text { text: per5-status; font-size: 10px; font-weight: 600; }
+                            }
                         }
                     }
                 }
@@ -386,6 +489,28 @@ export component AppWindow inherits Window {
                             color: black;
                             vertical-alignment: center;
                         }
+                    }
+                }
+
+                Text {
+                    text: "Concurrency (parallel downloads)";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #555;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Slider {
+                        value: root.batch-concurrency;
+                        minimum: 1;
+                        maximum: 6;
+                        changed => { root.batch-concurrency = self.value; }
+                    }
+                    Text {
+                        text: root.batch-concurrency + " parallel";
+                        font-size: 12px;
+                        color: #333;
+                        vertical-alignment: center;
                     }
                 }
 

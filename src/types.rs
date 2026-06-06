@@ -192,6 +192,13 @@ impl From<crate::platform::ResolverError> for DownloadError {
                     action: Some("检查URL是否支持".to_string()),
                 }
             }
+            crate::platform::ResolverError::Detailed { message, .. } => {
+                DownloadError {
+                    error_type: DownloadErrorType::Unknown(message.clone()),
+                    message: message.clone(),
+                    action: None,
+                }
+            }
         }
     }
 }
@@ -557,6 +564,28 @@ pub fn sanitize_filename(name: &str) -> String {
     sanitized
 }
 
+/// 生成唯一的文件名，避免覆盖已存在的文件
+/// 如果 `base_name.ext` 已存在，尝试 `base_name (1).ext`、`base_name (2).ext` 等
+pub fn generate_unique_filename(
+    output_dir: &std::path::Path,
+    base_name: &str,
+    ext: &str,
+) -> std::path::PathBuf {
+    let mut counter = 0;
+    loop {
+        let filename = if counter == 0 {
+            format!("{}.{}", base_name, ext)
+        } else {
+            format!("{} ({}).{}", base_name, counter, ext)
+        };
+        let path = output_dir.join(&filename);
+        if !path.exists() {
+            return path;
+        }
+        counter += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,6 +707,45 @@ mod tests {
         assert_eq!(sanitize_filename("video with spaces.mp4"), "video_with_spaces.mp4");
         assert_eq!(sanitize_filename("../../../etc/passwd"), "video");
         assert_eq!(sanitize_filename("/absolute/path"), "video");
+    }
+
+    #[test]
+    fn test_generate_unique_filename_first_available() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = generate_unique_filename(temp_dir.path(), "video", "mp4");
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "video.mp4");
+    }
+
+    #[test]
+    fn test_generate_unique_filename_avoids_conflict() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // 创建 "video.mp4"
+        std::fs::write(temp_dir.path().join("video.mp4"), b"existing").unwrap();
+        let path = generate_unique_filename(temp_dir.path(), "video", "mp4");
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "video (1).mp4");
+    }
+
+    #[test]
+    fn test_generate_unique_filename_multiple_conflicts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // 创建 "video.mp4", "video (1).mp4"
+        std::fs::write(temp_dir.path().join("video.mp4"), b"1").unwrap();
+        std::fs::write(temp_dir.path().join("video (1).mp4"), b"2").unwrap();
+        let path = generate_unique_filename(temp_dir.path(), "video", "mp4");
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "video (2).mp4");
+    }
+
+    #[test]
+    fn test_generate_unique_filename_gap_reuse() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // 创建 "video.mp4", "video (1).mp4", "video (2).mp4"
+        std::fs::write(temp_dir.path().join("video.mp4"), b"1").unwrap();
+        std::fs::write(temp_dir.path().join("video (1).mp4"), b"2").unwrap();
+        std::fs::write(temp_dir.path().join("video (2).mp4"), b"3").unwrap();
+        // 删除 "video (1).mp4"，下次应该生成 "video (1).mp4"（填坑）
+        std::fs::remove_file(temp_dir.path().join("video (1).mp4")).unwrap();
+        let path = generate_unique_filename(temp_dir.path(), "video", "mp4");
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "video (1).mp4");
     }
 
     #[test]

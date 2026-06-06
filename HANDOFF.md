@@ -104,7 +104,11 @@ use crate::core::{VideoDownloader, mux, Subtitle, SubtitleFormat, ...};
 - URL 输入框支持空格或逗号分隔多个 URL
 - Fetch Info 逐个解析 URL 并加入下载池
 - Download 按钮从下载池批量下载所有视频
-- 并行下载使用 `future::join_all`
+- **并行下载**使用 `BatchManager` + `tokio::sync::Semaphore`（用户可配置1-6 并发）
+- 每视频独立进度（通过 `Arc<AtomicU32>` 原子量轮询）
+- JSON 列表显示各视频进度 / 速度 / 状态
+- 失败继续全部跑完，完成后显示失败列表 + error-message提示
+- 并发数通过 Settings 面板滑块配置（`batch-concurrency` 属性）
 
 ---
 
@@ -209,5 +213,5 @@ cargo run -- --gui                                               # GUI
 | 2.2 | 弹幕支持 | ✅ 完成 |
 | 2.3 | FFmpeg 混流 | ✅ 完成 |
 | 3 | 认证系统增强 | ❌ 未开始 |
-| 4 | 批量下载增强 | ❌ 未开始 |
+| 4 | 批量下载增强 | ✅ 完成 |
 | 5 | 用户体验优化 | ❌ 未开始 |

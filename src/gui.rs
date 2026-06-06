@@ -8,9 +8,10 @@ use crate::fxtwitter::FxTwitterResolver;
 use crate::history::{History, Platform};
 use crate::i18n;
 use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver};
-use crate::types::{format_bytes, sanitize_filename, DownloadProgress, DownloadRequest, VideoInfo, DEFAULT_USER_AGENT};
+use crate::types::{format_bytes, sanitize_filename, generate_unique_filename, DownloadProgress, DownloadRequest, VideoInfo, DEFAULT_USER_AGENT};
 use crate::yt_dlp::YtDlp;
-use futures::future;
+use tokio::sync::Semaphore;
+use futures::future::join_all;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -21,6 +22,7 @@ slint::include_modules!();
 
 /// Per-URL download progress state
 #[derive(Clone)]
+#[allow(dead_code)]
 struct UrlProgress {
     #[allow(dead_code)]
     url: String,
@@ -33,7 +35,7 @@ struct UrlProgress {
 }
 
 impl UrlProgress {
-    fn new(url: String, title: String) -> Self {
+    fn _new(url: String, title: String) -> Self {
         Self {
             url,
             title,
@@ -45,7 +47,7 @@ impl UrlProgress {
         }
     }
 
-    fn with_atoms(url: String, title: String) -> Self {
+    fn _with_atoms(url: String, title: String) -> Self {
         Self {
             url,
             title,
@@ -57,7 +59,7 @@ impl UrlProgress {
         }
     }
 
-    fn to_json(&self) -> String {
+    fn _to_json(&self) -> String {
         format!(
             r#"{{"title":{},"percent":{},"speed":{},"status":{}}}"#,
             serde_json::to_string(&self.title).unwrap_or_default(),
@@ -66,6 +68,327 @@ impl UrlProgress {
             serde_json::to_string(&self.status).unwrap_or_default()
         )
     }
+}
+
+/// 单个批量下载项的状态
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchItemStatus {
+    Pending,
+    Downloading,
+    Paused,
+    Completed,
+    Failed(String),
+    Cancelled,
+}
+
+/// 单个视频的批量下载状态项
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct BatchItem {
+    url: String,
+    title: String,
+    status: BatchItemStatus,
+    progress: f32,          // 0.0 - 100.0
+    speed: u64,             // bytes/s
+    #[allow(dead_code)]
+    bytes_downloaded: u64,
+    #[allow(dead_code)]
+    total_bytes: u64,
+    error_message: Option<String>,
+    progress_arc: Arc<AtomicU32>,   // 存储 0-10000，整数
+    speed_arc: Arc<AtomicU64>,
+}
+
+impl BatchItem {
+    fn new(url: String, title: String) -> Self {
+        Self {
+            url,
+            title,
+            status: BatchItemStatus::Pending,
+            progress: 0.0,
+            speed: 0,
+            bytes_downloaded: 0,
+            total_bytes: 0,
+            error_message: None,
+            progress_arc: Arc::new(AtomicU32::new(0)),
+            speed_arc: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn update_from_atoms(&mut self) {
+        let pct = self.progress_arc.load(Ordering::Relaxed) as f32 / 100.0;
+        self.progress = pct;
+        self.speed = self.speed_arc.load(Ordering::Relaxed);
+    }
+
+    fn status_label(&self) -> String {
+        match &self.status {
+            BatchItemStatus::Pending => "pending".into(),
+            BatchItemStatus::Downloading => format!("{:.1}%", self.progress),
+            BatchItemStatus::Paused => "paused".into(),
+            BatchItemStatus::Completed => "done".into(),
+            BatchItemStatus::Failed(e) => format!("failed: {}", e),
+            BatchItemStatus::Cancelled => "cancelled".into(),
+        }
+    }
+}
+
+///批量并行下载管理器
+#[derive(Debug)]
+pub struct BatchManager {
+    items: RwLock<Vec<BatchItem>>,
+    #[allow(dead_code)]
+    concurrency: usize,
+    sem: Arc<Semaphore>,
+}
+
+impl BatchManager {
+    pub fn new(concurrency: usize) -> Self {
+        Self {
+            items: RwLock::new(Vec::new()),
+            concurrency,
+            sem: Arc::new(Semaphore::new(concurrency)),
+        }
+    }
+
+    pub fn add(&self, url: String, title: String) {
+        let item = BatchItem::new(url, title);
+        self.items.write().unwrap_or_else(|e| e.into_inner()).push(item);
+    }
+
+    pub(crate) fn items(&self) -> Vec<BatchItem> {
+        self.items.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn update_all_from_atoms(&self) {
+        let mut items = self.items.write().unwrap_or_else(|e| e.into_inner());
+        for item in items.iter_mut() {
+            item.update_from_atoms();
+        }
+    }
+
+    pub fn stats(&self) -> BatchStats {
+        let items = self.items.read().unwrap_or_else(|e| e.into_inner());
+        BatchStats {
+            total: items.len(),
+            pending: items.iter().filter(|i| i.status == BatchItemStatus::Pending).count(),
+            downloading: items.iter().filter(|i| i.status == BatchItemStatus::Downloading).count(),
+            completed: items.iter().filter(|i| i.status == BatchItemStatus::Completed).count(),
+            failed: items.iter().filter(|i| matches!(i.status, BatchItemStatus::Failed(_))).count(),
+        }
+    }
+
+    /// 重试所有失败项
+    pub fn retry_failed(&self) {
+        let mut items = self.items.write().unwrap_or_else(|e| e.into_inner());
+        for item in items.iter_mut() {
+            if matches!(item.status, BatchItemStatus::Failed(_)) {
+                item.status = BatchItemStatus::Pending;
+                item.progress = 0.0;
+                item.error_message = None;
+                item.progress_arc.store(0, Ordering::Relaxed);
+                item.speed_arc.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
+ /// 下载单个视频（由 start 调用）
+    async fn download_single(
+        item: BatchItem,
+        output_dir: String,
+        cookie: String,
+        sem: Arc<Semaphore>,
+        _app_weak: slint::Weak<AppWindow>,
+    ) -> bool {
+
+        // 获取并发许可
+        let _permit = sem.acquire_owned().await;
+
+        let video_url = item.url.clone();
+        let title = item.title.clone();
+        let progress_arc = item.progress_arc.clone();
+        let speed_arc = item.speed_arc.clone();
+        let is_direct = video_url.contains("video.twimg.com");
+
+        let output_path = std::path::Path::new(&output_dir);
+        if !output_path.exists() {
+            let _ = std::fs::create_dir_all(output_path);
+        }
+
+        let filename = sanitize_filename(&title);
+        let output_file = generate_unique_filename(output_path, &filename, "mp4");
+
+        let download_success = if is_direct {
+            let config = DownloaderConfig {
+                user_agent: Some(DEFAULT_USER_AGENT.to_string()),
+                proxy: None,
+                ..Default::default()
+            };
+            if let Ok(downloader) = VideoDownloader::with_config(config) {
+                let request = DownloadRequest::new(&video_url, &output_file)
+                    .with_user_agent(DEFAULT_USER_AGENT.to_string());
+                // Direct URL 下载：用 progress callback
+                let progress_for_cb = progress_arc.clone();
+                let speed_for_cb = speed_arc.clone();
+                let progress_callback: Arc<dyn Fn(DownloadProgress) + Send + Sync> =
+                    Arc::new(move |p: DownloadProgress| {
+                        progress_for_cb.store((p.percent * 100.0) as u32, Ordering::Relaxed);
+                        speed_for_cb.store(p.speed as u64, Ordering::Relaxed);
+                    });
+                match downloader.download(&request, Some(progress_callback)).await {
+                    Ok(r) => r.success,
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        } else {
+            // yt-dlp 下载
+            let mut ytdlp = YtDlp::new();
+            if !cookie.is_empty() {
+                let cookie_path = std::path::PathBuf::from(&cookie);
+                if cookie_path.exists() {
+                    ytdlp = ytdlp.with_cookie_file(cookie_path);
+                }
+            }
+            let args = ytdlp.build_download_args(
+                &video_url,
+                &output_file.to_string_lossy(),
+                Some("best"),
+                false,
+                false,
+            );
+            let child = tokio::process::Command::new(&ytdlp.executable)
+                .args(&args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
+
+            match child {
+                Ok(mut child) => {
+                    let child_stderr = child.stderr.take();
+                    let progress_store = progress_arc.clone();
+                    let speed_store = speed_arc.clone();
+
+                    let stderr_handle = tokio::spawn(async move {
+                        if let Some(stderr) = child_stderr {
+                            use tokio::io::AsyncBufReadExt;
+                            let mut reader = tokio::io::BufReader::new(stderr);
+                            let mut line = String::new();
+                            while reader.read_line(&mut line).await.ok() != Some(0) {
+                                if line.contains("[download]") && line.contains('%') {
+                                    if let Some(pct_pos) = line.find('%') {
+                                        let before_pct = &line[..pct_pos];
+                                        if let Some(space_pos) = before_pct.rfind(' ') {
+                                            if let Ok(pct) = before_pct[space_pos+1..].parse::<f64>() {
+                                                progress_store.store((pct * 100.0) as u32, Ordering::Relaxed);
+                                            }
+                                        }
+                                    }
+                                    if let Some(at_pos) = line.find("at ") {
+                                        let after_at = &line[at_pos + 3..];
+                                        if let Some(s_pos) = after_at.rfind('s') {
+                                            let speed_part = &after_at[..s_pos].trim();
+                                            let mut num_str = String::new();
+                                            for c in speed_part.chars() {
+                                                if c.is_numeric() || c == '.' { num_str.push(c); }
+                                            }
+                                            if let Ok(speed_val) = num_str.parse::<f64>() {
+                                                let mbps = speed_val * 1_000_000.0;
+                                                speed_store.store(mbps as u64, Ordering::Relaxed);
+                                            }
+                                        }
+                                    }
+                                }
+                                line.clear();
+                            }
+                        }
+                    });
+
+                    let status = child.wait().await;
+                    let _ = stderr_handle.await;
+                    status.map(|s| s.success()).unwrap_or(false)
+                }
+                Err(_) => false,
+            }
+        };
+
+        download_success
+    }
+
+ /// 启动批量下载（并发控制）
+    pub async fn start(
+        &self,
+        output_dir: String,
+        cookie: String,
+        app_weak: slint::Weak<AppWindow>,
+    ) {
+        let items = self.items.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let sem = self.sem.clone();
+
+        let futures: Vec<_> = items.iter().map(|item| {
+            let sem = sem.clone();
+            let item = item.clone();
+            let output_dir = output_dir.clone();
+            let cookie = cookie.clone();
+            let app_weak = app_weak.clone();
+            async move {
+                Self::download_single(item, output_dir, cookie, sem, app_weak).await
+            }
+        }).collect();
+
+        let results = join_all(futures).await;
+
+        // 更新完成状态
+        {
+            let mut items = self.items.write().unwrap_or_else(|e| e.into_inner());
+            for (i, result) in results.iter().enumerate() {
+                if i < items.len() {
+                    items[i].status = if *result {
+                        BatchItemStatus::Completed
+                    } else {
+                        BatchItemStatus::Failed("download failed".into())
+                    };
+                    items[i].progress = if *result { 100.0 } else { items[i].progress };
+                }
+            }
+        }
+
+        //通知 UI
+        let stats = self.stats();
+        let app_update = app_weak.clone();
+        let failed_count = stats.failed;
+        let failed_items: Vec<String> = if failed_count > 0 {
+            let items = self.items.read().unwrap_or_else(|e| e.into_inner());
+            items.iter()
+                .filter(|i| matches!(i.status, BatchItemStatus::Failed(_)))
+                .map(|i| format!("[{}] {}", i.title, i.error_message.clone().unwrap_or_default()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        slint::invoke_from_event_loop(move || {
+            if let Some(app) = app_update.upgrade() {
+                app.set_batch_status(format!("Done: {}/{} success, {}/{} failed",
+                    stats.completed, stats.total, stats.failed, stats.total).into());
+                app.set_batch_progress(100.0);
+                app.set_is_downloading(false);
+                if failed_count > 0 {
+                    let msg = format!("{} video(s) failed: {}", failed_count, failed_items.join("; "));
+                    app.set_error_message(msg.into());
+                }
+            }
+        }).ok();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BatchStats {
+    pub total: usize,
+    pub pending: usize,
+    pub downloading: usize,
+    pub completed: usize,
+    pub failed: usize,
 }
 
 struct SharedState {
@@ -468,7 +791,7 @@ pub fn run_gui() {
             };
 
             if !pool.is_empty() {
-                // Batch download mode
+                // Batch download mode (parallel via BatchManager)
                 let total = pool.len();
                 app.set_batch_total(total as i32);
                 app.set_batch_current(0);
@@ -476,329 +799,142 @@ pub fn run_gui() {
                 app.set_batch_progress(0.0);
                 app.set_is_downloading(true);
 
-                let app_weak_for_progress = app_weak.clone();
                 let pool_clone = pool.clone();
-                let history_clone = history.clone();
                 let output_dir_clone = output_dir.clone();
                 let cookie_clone = cookie.clone();
 
-                // Use the runtime's handle to spawn tasks without consuming it
-                let rt_handle = rt.clone();
+                // 并发数从 SharedState 或默认值读取
+                let concurrency = 3;
 
-                rt_handle.spawn(async move {
-                        let total = pool_clone.len();
-                        let mut success_count = 0;
-                        let mut fail_count = 0;
-                        let completed = Arc::new(AtomicU32::new(0));
-                        let completion_mutex = Arc::new(tokio::sync::Mutex::new(()));
+                // 创建 BatchManager
+                let manager = Arc::new(BatchManager::new(concurrency));
 
-                        // Initialize progress list for all URLs (show max 3, track remaining)
-                        let max_display = 3;
-                        let initial_progress: Vec<UrlProgress> = pool_clone.iter().map(|(_, vi)| UrlProgress::new(vi.url.clone(), vi.title.clone())).collect();
-                        let display_progress = if initial_progress.len() > max_display {
-                            initial_progress.iter().take(max_display).cloned().collect()
-                        } else {
-                            initial_progress.clone()
-                        };
-                        let remaining = pool_clone.len().saturating_sub(display_progress.len()) as i32;
-                        let initial_json = format!(
-                            "[{}]",
-                            display_progress.iter().map(|p| p.to_json()).collect::<Vec<_>>().join(",")
-                        );
-                        let app_init = app_weak_for_progress.clone();
+                // 添加所有视频到管理器
+                for (_, video_info) in pool_clone.iter().cloned() {
+                    manager.add(video_info.url.clone(), video_info.title.clone());
+                }
+
+                // UI 轮询线程：每 200ms 读取所有原子量并更新 UI
+                let manager_for_poll = manager.clone();
+                let app_poll = app_weak.clone();
+                std::thread::spawn(move || {
+                    let mut last_batch_progress: i32 = -1;
+                    let mut consecutive_skips = 0;
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+
+                        manager_for_poll.update_all_from_atoms();
+                        // 临时获取 items 和 stats 避免 RwLock 冲突
+                        let items_for_ui = manager_for_poll.items();
+                        let stats_for_ui = manager_for_poll.stats();
+                        let items = items_for_ui;
+                        let stats = stats_for_ui;
+
+                        // 检查是否全部结束
+                        if stats.total > 0 && stats.downloading == 0 && stats.pending == 0 {
+                            break;
+                        }
+
+                        // 聚合总进度
+                        let total_progress: f32 = items.iter().map(|i| i.progress).sum::<f32>() / stats.total as f32;
+                        let batch_pct = (total_progress * 100.0) as i32;
+
+                        // 节流：跳过微小变化
+                        if last_batch_progress >= 0 && (batch_pct - last_batch_progress).abs() < 2 && consecutive_skips < 10 {
+                            consecutive_skips += 1;
+                            continue;
+                        }
+                        consecutive_skips = 0;
+                        last_batch_progress = batch_pct;
+
+                        // 构造 JSON 列表
+                        let json_items: Vec<String> = items.iter().map(|item| {
+                            let speed_str = if item.speed > 0 { format_bytes(item.speed) } else { String::new() };
+                            format!(
+                                r#"{{"title":{},"percent":{},"speed":{},"status":{},"error":{},"url":{}"}}"#,
+                                serde_json::to_string(&item.title).unwrap_or_default(),
+                                item.progress,
+                                serde_json::to_string(&speed_str).unwrap_or_default(),
+                                serde_json::to_string(&item.status_label()).unwrap_or_default(),
+                                serde_json::to_string(&item.error_message.clone().unwrap_or_default()).unwrap_or_default(),
+                                serde_json::to_string(&item.url).unwrap_or_default(),
+                            )
+                        }).collect();
+                        let _json = format!("[{}]", json_items.join(","));
+
+                        let app_update = app_poll.clone();
                         slint::invoke_from_event_loop(move || {
-                            if let Some(app) = app_init.upgrade() {
-                                app.set_download_list_progress(initial_json.into());
-                                app.set_download_list_remaining(remaining);
-                                app.set_batch_total(total as i32);
-                                app.set_batch_current(0);
-                                app.set_is_downloading(true);
+                            if let Some(app) = app_update.upgrade() {
+                                app.set_batch_progress(batch_pct as f32);
+                                app.set_batch_status(format!("{}/{}/{} done", stats.completed, stats.failed, stats.total).into());
+                                // 填充 5 个槽
+                                for (i, item) in items.iter().take(5).enumerate() {
+                                    let speed_str = if item.speed > 0 { format_bytes(item.speed) } else { String::new() };
+                                    let status_str = item.status_label();
+                                    match i {
+                                        0 => {
+                                            app.set_per1_title(item.title.clone().into());
+                                            app.set_per1_progress(item.progress);
+                                            app.set_per1_speed(speed_str.into());
+                                            app.set_per1_status(status_str.into());
+                                            app.set_per1_visible(true);
+                                        }
+                                        1 => {
+                                            app.set_per2_title(item.title.clone().into());
+                                            app.set_per2_progress(item.progress);
+                                            app.set_per2_speed(speed_str.into());
+                                            app.set_per2_status(status_str.into());
+                                            app.set_per2_visible(true);
+                                        }
+                                        2 => {
+                                            app.set_per3_title(item.title.clone().into());
+                                            app.set_per3_progress(item.progress);
+                                            app.set_per3_speed(speed_str.into());
+                                            app.set_per3_status(status_str.into());
+                                            app.set_per3_visible(true);
+                                        }
+                                        3 => {
+                                            app.set_per4_title(item.title.clone().into());
+                                            app.set_per4_progress(item.progress);
+                                            app.set_per4_speed(speed_str.into());
+                                            app.set_per4_status(status_str.into());
+                                            app.set_per4_visible(true);
+                                        }
+                                        4 => {
+                                            app.set_per5_title(item.title.clone().into());
+                                            app.set_per5_progress(item.progress);
+                                            app.set_per5_speed(speed_str.into());
+                                            app.set_per5_status(status_str.into());
+                                            app.set_per5_visible(true);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                // 隐藏多余的槽
+                                for i in items.len()..5 {
+                                    match i {
+                                        0 => app.set_per1_visible(false),
+                                        1 => app.set_per2_visible(false),
+                                        2 => app.set_per3_visible(false),
+                                        3 => app.set_per4_visible(false),
+                                        4 => app.set_per5_visible(false),
+                                        _ => {}
+                                    }
+                                }
                             }
                         }).ok();
-
-                        // Create all futures first then join them
-                        let mut futures = Vec::new();
-
-                        for (_idx, (url, video_info)) in pool_clone.into_iter().enumerate() {
-                            let video_url = video_info.url.clone();
-                            let title = video_info.title.clone();
-                            let _is_direct_url = video_url.contains("video.twimg.com");
-                            let output_dir_clone = output_dir_clone.clone();
-                            let cookie_clone = cookie_clone.clone();
-                            let history_clone = history_clone.clone();
-                            let app_update = app_weak_for_progress.clone();
-                            let completed_clone = completed.clone();
-                            let completion_mutex_clone = completion_mutex.clone();
-                            let total_clone = total;
-                            let _ = _idx; // suppress unused warning
-
-                            // Create progress tracker with atomic cells
-                            let progress = UrlProgress::with_atoms(url.clone(), title.clone());
-                            let progress_arc = progress.progress_arc.clone().expect("progress_arc must be Some");
-                            let speed_arc = progress.speed_arc.clone().expect("speed_arc must be Some");
-
-                            // Clone for callback and yt-dlp stderr parsing
-                            let progress_for_callback = progress_arc.clone();
-                            let speed_for_callback = speed_arc.clone();
-                            let progress_for_ytdlp = progress_arc.clone();
-                            let speed_for_ytdlp = speed_arc.clone();
-
-                            // Start UI update polling thread for this URL
-                            let app_poll = app_weak_for_progress.clone();
-                            let progress_poll = progress_arc.clone();
-                            let speed_poll = speed_arc.clone();
-                            let title_poll = title.clone();
-                            std::thread::spawn(move || {
-                                let mut last_update: i32 = -1;
-                                let mut consecutive_skips = 0;
-                                while progress_poll.load(Ordering::Relaxed) < 10000 {
-                                    std::thread::sleep(std::time::Duration::from_millis(200));
-                                    let current = progress_poll.load(Ordering::Relaxed) as i32;
-                                    // Skip if change is too small but limit skips to 10
-                                    if last_update >= 0 && (current - last_update).abs() < 2 && consecutive_skips < 10 {
-                                        consecutive_skips += 1;
-                                        continue;
-                                    }
-                                    consecutive_skips = 0;
-                                    last_update = current;
-                                    let pct = current as f32 / 100.0;
-                                    let speed_val = speed_poll.load(Ordering::Relaxed);
-                                    let speed_str = if speed_val > 0 {
-                                        format_bytes(speed_val)
-                                    } else {
-                                        String::new()
-                                    };
-                                    let app_clone = app_poll.clone();
-                                    let title_clone = title_poll.clone();
-                                    let pct_for_status = current as f32;
-                                    let speed_str_clone = speed_str.clone();
-                                    slint::invoke_from_event_loop(move || {
-                                        if let Some(app) = app_clone.upgrade() {
-                                            // Use batch-progress to show real-time progress (store as 0-100 integer)
-                                            app.set_batch_progress(pct_for_status);
-                                            app.set_download_speed(speed_str_clone.clone().into());
-                                            // Try to update JSON but don't rely on it for display
-                                            let current_json = app.get_download_list_progress().to_string();
-                                            if let Ok(mut items) = serde_json::from_str::<Vec<serde_json::Value>>(&format!("[{}]", current_json.trim_start_matches('[').trim_end_matches(']'))) {
-                                                let mut updated = false;
-                                                for item in items.iter_mut() {
-                                                    if let Some(title_val) = item.get("title").and_then(|t| t.as_str()) {
-                                                        if title_val.contains(&title_clone) || title_clone.contains(title_val) {
-                                                            item["percent"] = serde_json::Value::from(pct);
-                                                            item["speed"] = serde_json::Value::from(speed_str_clone.clone());
-                                                            updated = true;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                                if updated {
-                                                    let new_json = items.iter()
-                                                        .map(|i| serde_json::to_string(i).unwrap_or_default())
-                                                        .collect::<Vec<_>>()
-                                                        .join(",");
-                                                    app.set_download_list_progress(format!("[{}]", new_json).into());
-                                                }
-                                            }
-                                        }
-                                    }).ok();
-                                }
-                            });
-
-                            let progress_callback: Arc<dyn Fn(crate::types::DownloadProgress) + Send + Sync> =
-                                Arc::new(move |p: crate::types::DownloadProgress| {
-                                    progress_for_callback.store((p.percent * 100.0) as u32, Ordering::Relaxed);
-                                    speed_for_callback.store(p.speed as u64, Ordering::Relaxed);
-                                });
-                            let _progress_callback = progress_callback;
-
-                            futures.push(async move {
-                            // Download based on URL type
-                            let is_direct = video_url.contains("video.twimg.com");
-                            let download_success = if is_direct {
-                                let config = DownloaderConfig {
-                                    user_agent: Some(DEFAULT_USER_AGENT.to_string()),
-                                    proxy: None,
-                                    ..Default::default()
-                                };
-                                if let Ok(downloader) = VideoDownloader::with_config(config) {
-                                    let output_path = std::path::Path::new(&output_dir_clone);
-                                    if !output_path.exists() {
-                                        let _ = std::fs::create_dir_all(output_path);
-                                    }
-                                    let filename = sanitize_filename(&title);
-                                    let output_file = output_path.join(format!("{}.mp4", filename));
-                                    let request = DownloadRequest::new(&video_url, &output_file)
-                                        .with_user_agent(DEFAULT_USER_AGENT.to_string());
-                                    match downloader.download(&request, Some(_progress_callback)).await {
-                                        Ok(r) => r.success,
-                                        _ => false,
-                                    }
-                                } else {
-                                    false
-                                }
-                            } else {
-                                let output_path = std::path::Path::new(&output_dir_clone);
-                                if !output_path.exists() {
-                                    let _ = std::fs::create_dir_all(output_path);
-                                }
-                                let filename = sanitize_filename(&title);
-                                let output_file = output_path.join(format!("{}.%(ext)s", filename));
-                                let mut ytdlp = YtDlp::new();
-                                if !cookie_clone.is_empty() {
-                                    let cookie_path = std::path::PathBuf::from(&cookie_clone);
-                                    if cookie_path.exists() {
-                                        ytdlp = ytdlp.with_cookie_file(cookie_path);
-                                    }
-                                }
-                                let args = ytdlp.build_download_args(
-                                    &video_url,
-                                    &output_file.to_string_lossy(),
-                                    Some("best"),
-                                    false,
-                                    false,
-                                );
-                                // Use tokio async process to capture progress from stderr
-                                let child = tokio::process::Command::new(&ytdlp.executable)
-                                    .args(&args)
-                                    .stdout(std::process::Stdio::piped())
-                                    .stderr(std::process::Stdio::piped())
-                                    .spawn()
-                                    .map_err(|e| anyhow::anyhow!("Failed to spawn yt-dlp: {}", e)).ok();
-
-                                let download_status = if let Some(mut c) = child {
-                                    // Take stderr before spawning async task
-                                    let child_stderr = c.stderr.take();
-                                    let progress_store = progress_for_ytdlp.clone();
-                                    let speed_store = speed_for_ytdlp.clone();
-                                    let stderr_handle = tokio::spawn(async move {
-                                        if let Some(stderr) = child_stderr {
-                                            use tokio::io::AsyncBufReadExt;
-                                            let mut reader = tokio::io::BufReader::new(stderr);
-                                            let mut line = String::new();
-                                            while reader.read_line(&mut line).await.ok() != Some(0) {
-                                                // Parse yt-dlp progress: `[download]  45.0% of ~2.50MB at  2.50MiB/s ETA 00:15
-                                                if line.contains("[download]") && line.contains('%') {
-                                                    // Extract percentage
-                                                    if let Some(pct_pos) = line.find('%') {
-                                                        let before_pct = &line[..pct_pos];
-                                                        if let Some(space_pos) = before_pct.rfind(' ') {
-                                                            if let Ok(pct) = before_pct[space_pos+1..].parse::<f64>() {
-                                                                progress_store.store((pct * 100.0) as u32, Ordering::Relaxed);
-                                                            }
-                                                        }
-                                                    }
-                                                    // Extract speed - look for "at " followed by a number
-                                                    if let Some(at_pos) = line.find("at ") {
-                                                        let after_at = &line[at_pos + 3..];
-                                                        // Find 's' at the end of speed unit (use rfind to avoid "MiB" matching first)
-                                                        if let Some(s_pos) = after_at.rfind('s') {
-                                                            let speed_part = after_at[..s_pos].trim();
-                                                            // Parse speed value - collect leading digits and decimal
-                                                            let mut num_str = String::new();
-                                                            for c in speed_part.chars() {
-                                                                if c.is_numeric() || c == '.' {
-                                                                    num_str.push(c);
-                                                                } else {
-                                                                    break;
-                                                                }
-                                                            }
-                                                            if let Ok(speed_val) = num_str.parse::<f64>() {
-                                                                // Determine multiplier based on what comes after the number
-                                                                let after_num = &speed_part[num_str.len()..];
-                                                                let speed_bytes = if after_num.starts_with("KiB") || after_num.starts_with("KB") {
-                                                                    speed_val * 1024.0
-                                                                } else if after_num.starts_with("MiB") || after_num.starts_with("MB") {
-                                                                    speed_val * 1024.0 * 1024.0
-                                                                } else if after_num.starts_with("GiB") || after_num.starts_with("GB") {
-                                                                    speed_val * 1024.0 * 1024.0 * 1024.0
-                                                                } else {
-                                                                    speed_val * 1024.0 // default to KiB
-                                                                };
-                                                                speed_store.store(speed_bytes as u64, Ordering::Relaxed);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                line.clear();
-                                            }
-                                        }
-                                    });
-
-                                    // Wait for the process to complete
-                                    let status = c.wait().await.map(|s| s.success()).unwrap_or(false);
-                                    let _ = stderr_handle.await;
-                                    // Mark as complete
-                                    progress_arc.store(10000, Ordering::Relaxed);
-                                    status
-                                } else {
-                                    false
-                                };
-                                download_status
-                            };
-
-                            // Record to history
-                            let status = if download_success {
-                                crate::history::DownloadStatus::Completed
-                            } else {
-                                crate::history::DownloadStatus::Failed
-                            };
-
-                            if let Ok(mut h) = history_clone.write() {
-                                let _ = h.add_entry_with_all(
-                                    url.clone(),
-                                    Some(title.clone()),
-                                    None, None, None,
-                                    status,
-                                    None,
-                                );
-                            }
-
-                            // Update completion count and UI
-                            let count = completed_clone.fetch_add(1, Ordering::Relaxed) + 1;
-                            let _guard = completion_mutex_clone.lock();
-                            slint::invoke_from_event_loop(move || {
-                                if let Some(app) = app_update.upgrade() {
-                                    app.set_batch_current(count as i32);
-                                    app.set_batch_status(format!("Downloading {}/{}...", count, total_clone).into());
-                                    app.set_batch_progress((count as f32 / total_clone as f32) * 100.0);
-                                    // Update download-list-progress with current URL status
-                                    let _status_json = if download_success { "completed" } else { "failed" };
-                                    let current_progress = app.get_download_list_progress().to_string();
-                                    // Parse and update (simplified - just show completed/failed)
-                                    let new_progress = format!("[{}]", current_progress.trim_start_matches('[').trim_end_matches(']'));
-                                    app.set_download_list_progress(new_progress.into());
-                                }
-                            }).ok();
-
-                            download_success
-                            });
-                        }
-
-                        // Wait for all downloads to complete
-                        let results = future::join_all(futures).await;
-
-                        // Count successes and failures
-                        for result in results {
-                            if result {
-                                success_count += 1;
-                            } else {
-                                fail_count += 1;
-                            }
-                        }
-
-                        // Clear pool and update UI
-                    if let Ok(mut s) = shared.write() {
-                        s.download_pool = Vec::new();
                     }
+                });
 
-                    let app_finish = app_weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        if let Some(app) = app_finish.upgrade() {
-                            app.set_is_downloading(false);
-                            app.set_batch_status(format!("Done: {}/{} success, {}/{} failed", success_count, total, fail_count, total).into());
-                            app.set_batch_progress(100.0);
-                        }
-                    }).ok();
+                // 启动下载
+                let manager_start = manager.clone();
+                let output_dir_clone = output_dir_clone.clone();
+                let cookie_clone = cookie_clone.clone();
+                let _history_clone = history.clone();
+                let app_start = app_weak.clone();
+
+                rt_handle.spawn(async move {
+                    manager_start.start(output_dir_clone, cookie_clone, app_start).await;
                 });
             } else {
                 // Single download mode (original behavior)
@@ -903,7 +1039,7 @@ pub fn run_gui() {
                         let download_result: Result<String, String>;
 
                         if is_direct_url {
-                            let output_file = output_path.join(format!("{}.mp4", filename));
+                            let output_file = generate_unique_filename(output_path, &filename, "mp4");
 
                             let config = DownloaderConfig {
                                 user_agent: Some(DEFAULT_USER_AGENT.to_string()),
@@ -1154,7 +1290,7 @@ pub fn run_gui() {
                                 let _ = std::fs::create_dir_all(output_path);
                             }
                             let filename = sanitize_filename(&title_for_history);
-                            let output_file = output_path.join(format!("{}.mp4", filename));
+                            let output_file = generate_unique_filename(output_path, &filename, "mp4");
                             let request = DownloadRequest::new(&video_url, &output_file)
                                 .with_user_agent(DEFAULT_USER_AGENT.to_string());
                             match downloader.download(&request, None).await {

@@ -4,7 +4,6 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use tracing::debug;
 
 /// 字幕信息
 #[derive(Debug, Clone)]
@@ -90,7 +89,7 @@ pub fn vtt_to_srt(vtt_content: &str) -> String {
             let times = line.split("-->").collect::<Vec<_>>();
             if times.len() == 2 {
                 let start = parse_vtt_time(times[0].trim());
-                let end = parse_vtt_time(times[1].trim().split_whitespace().next().unwrap_or(""));
+                let end = parse_vtt_time(times[1].split_whitespace().next().unwrap_or(""));
 
                 srt_output.push_str(&format!("{}\n", subtitle_index));
                 srt_output.push_str(&format!("{}\n", format_srt_time(start, end)));

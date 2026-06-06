@@ -174,6 +174,7 @@ pub async fn mux(
 }
 
 /// 混流并指定质量
+#[allow(clippy::too_many_arguments)]
 pub async fn mux_with_quality(
     video_path: &Path,
     audio_path: &Path,
