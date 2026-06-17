@@ -343,23 +343,29 @@ impl YtDlp {
         args
     }
 
-    /// 检查 yt-dlp 是否可用
+    /// 检查 yt-dlp 是否可用（带缓存，避免重复进程创建）
     pub fn is_available(&self) -> bool {
-        Command::new(&self.executable)
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            Command::new(&self.executable)
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        })
     }
 
-    /// 获取 yt-dlp 版本
+    /// 获取 yt-dlp 版本（带缓存）
     pub fn version(&self) -> Option<String> {
-        Command::new(&self.executable)
-            .arg("--version")
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        static CACHED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        CACHED.get_or_init(|| {
+            Command::new(&self.executable)
+                .arg("--version")
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        }).clone()
     }
 }
 
