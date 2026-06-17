@@ -304,7 +304,29 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null  # 详细日志（抑制 tokio pan
 
 ## 下一步建议
 
-1. **格式选择器完善**: 在支持的平台上（Bilibili、抖音）测试格式选择
-2. **进度条优化**: 考虑 channel 推送替代轮询
-3. **协作下载**: 完善 P2P 协作系统的 NAT 穿透
-4. **tokio panic 修复**: 调查嵌套 runtime 问题，切换到 #[tokio::main] 宏
+1. ~~格式选择器完善~~ - ✅ 已完成 (format_id 传递到 DownloadRequest)
+2. ~~进度条优化~~ - ✅ 已完成 (阈值过滤 1%)
+3. ~~tokio panic 修复~~ - ✅ 已完成 (OnceCell 懒加载)
+4. **格式选择器完善**: 在支持的平台上（Bilibili、抖音）测试格式选择
+5. **协作下载**: 完善 P2P 协作系统的 NAT 穿透
+
+---
+
+## 今日完成 (2026-06-17)
+
+### 1. 进度条优化 - 阈值过滤
+- **文件**: `src/downloader.rs`
+- **内容**: 只在进度变化 ≥1% 时调用 callback
+- **提交**: de4347a
+
+### 2. tokio shutdown panic 修复
+- **根因**: ZhiXueYunResolver::new() 在 async context 中调用 reqwest::blocking::Client
+- **修复**: 改用 OnceCell 懒加载，添加 new_preinit() 方法
+- **文件**: `src/platform/zhixueyun.rs`, `src/main.rs`
+- **提交**: 79494f9
+
+### 3. 格式选择器 - format_id 传递
+- **问题**: selected_format_id 存在但未传递给 DownloadRequest
+- **修复**: start_download_impl 添加 format_id 参数，下载时传递
+- **文件**: `src/gui_dioxus.rs`
+- **提交**: 0d64257
