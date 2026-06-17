@@ -52,7 +52,36 @@ const URL_PATTERNS: &[UrlPattern] = &[
     },
 ];
 
-/// 从 URL 检测平台
+/// 从 URL 提取 hostname 并转换为小写（一次性完成，避免重复分配）
+///
+/// # Arguments
+/// * `url` - 待处理的 URL
+///
+/// # Returns
+/// 小写的 hostname，或 None
+pub fn extract_hostname_and_lower(url: &str) -> Option<String> {
+    extract_hostname(url).map(|h| h.to_lowercase())
+}
+
+/// 从已小写化的 hostname 检测平台 (精确域名匹配)
+///
+/// # Arguments
+/// * `host_lower` - 已小写化的 hostname
+///
+/// # Returns
+/// 检测到的平台，如果都不匹配则返回 `Platform::Other`
+pub fn detect_platform_by_host(host_lower: &str) -> Platform {
+    for pattern in URL_PATTERNS {
+        for p in pattern.patterns {
+            if host_lower == *p || host_lower.ends_with(&format!(".{}", *p)) {
+                return pattern.platform.clone();
+            }
+        }
+    }
+    Platform::Other
+}
+
+/// 从 URL 检测平台 (精确域名匹配)
 ///
 /// # Arguments
 /// * `url` - 待检测的 URL
@@ -60,21 +89,55 @@ const URL_PATTERNS: &[UrlPattern] = &[
 /// # Returns
 /// 检测到的平台，如果都不匹配则返回 `Platform::Other`
 pub fn detect_platform(url: &str) -> Platform {
-    let url_lower = url.to_lowercase();
-
-    for pattern in URL_PATTERNS {
-        for p in pattern.patterns {
-            if url_lower.contains(p) {
-                return pattern.platform.clone();
-            }
-        }
+    if let Some(host_lower) = extract_hostname_and_lower(url) {
+        return detect_platform_by_host(&host_lower);
     }
-
     Platform::Other
 }
 
-/// 检查 URL 是否匹配给定平台
+/// 从 URL 提取 hostname
+fn extract_hostname(url: &str) -> Option<String> {
+    // 尝试解析为 URL
+    if let Ok(parsed) = url::Url::parse(url) {
+        if let Some(host) = parsed.host_str() {
+            return Some(host.to_string());
+        }
+    }
+    // 回退：手动提取 "://" 和 "/" 之间的部分
+    if let Some(host_start) = url.find("://") {
+        let after_scheme = &url[host_start + 3..];
+        if let Some(host_end) = after_scheme.find(['/', '?', '#']) {
+            return Some(after_scheme[..host_end].to_string());
+        } else {
+            return Some(after_scheme.to_string());
+        }
+    }
+    None
+}
+
+/// 检查已小写化的 hostname 是否匹配给定平台 (精确域名匹配)
 ///
+/// # Arguments
+/// * `host_lower` - 已小写化的 hostname
+/// * `platform` - 要检测的平台
+///
+/// # Returns
+/// 如果 hostname 匹配该平台则返回 `true`
+#[allow(dead_code)]
+pub fn url_matches_platform_by_host(host_lower: &str, platform: Platform) -> bool {
+    for pattern in URL_PATTERNS {
+        if pattern.platform == platform {
+            for p in pattern.patterns {
+                if host_lower == *p || host_lower.ends_with(&format!(".{}", *p)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 检查 URL hostname 是否匹配给定平台 (精确域名匹配)
 /// # Arguments
 /// * `url` - 待检测的 URL
 /// * `platform` - 要检测的平台
@@ -83,18 +146,9 @@ pub fn detect_platform(url: &str) -> Platform {
 /// 如果 URL 匹配该平台则返回 `true`
 #[allow(dead_code)]
 pub fn url_matches_platform(url: &str, platform: Platform) -> bool {
-    let url_lower = url.to_lowercase();
-
-    for pattern in URL_PATTERNS {
-        if pattern.platform == platform {
-            for p in pattern.patterns {
-                if url_lower.contains(p) {
-                    return true;
-                }
-            }
-        }
+    if let Some(host_lower) = extract_hostname_and_lower(url) {
+        return url_matches_platform_by_host(&host_lower, platform);
     }
-
     false
 }
 

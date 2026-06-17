@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use chrono::{DateTime, Utc};
 
 /// 默认 User-Agent 常量
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -281,6 +282,8 @@ pub struct DownloadRequest {
     pub user_agent: Option<String>,
     /// Cookie文件路径
     pub cookie_file: Option<PathBuf>,
+    /// 定时下载时间（可选）
+    pub schedule_time: Option<DateTime<Utc>>,
 }
 
 impl DownloadRequest {
@@ -294,6 +297,7 @@ impl DownloadRequest {
             download_subtitles: false,
             user_agent: None,
             cookie_file: None,
+            schedule_time: None,
         }
     }
 

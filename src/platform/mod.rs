@@ -10,6 +10,7 @@ mod douyin_api;
 mod cookie_utils;
 mod cookie_pool;
 mod zhixueyun;
+mod youtube;
 pub mod url_matcher;
 pub use token_manager::TokenManager;
 pub use tiktok::TikTokResolver;
@@ -19,6 +20,7 @@ pub use douyin_api::{DouYinApiClient, extract_modal_id};
 pub use cookie_utils::CookieFileManager;
 pub use cookie_pool::CookiePool;
 pub use zhixueyun::ZhiXueYunResolver;
+pub use youtube::YouTubeResolver;
 pub mod zhixueyun_token;
 use crate::types::VideoInfo;
 use crate::history::Platform;
@@ -49,6 +51,37 @@ pub enum ResolverError {
 }
 
 impl ResolverError {
+    /// 净化 URL 用于用户显示 - 移除查询参数中的敏感信息
+    fn sanitize_url_for_display(url: &str) -> String {
+        // 解析 URL 并移除敏感查询参数
+        if let Ok(mut parsed) = url::Url::parse(url) {
+            // 移除可能包含 token/session 的参数
+            let sensitive_params = ["token", "session", "auth", "msToken", "csrf", "sig"];
+            let query_pairs: Vec<(String, String)> = parsed.query_pairs().to_owned()
+                .into_iter()
+                .filter(|(key, _)| !sensitive_params.iter().any(|s| key.to_lowercase().contains(s)))
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+
+            // 如果所有参数都被移除，返回不含查询的 URL
+            if query_pairs.is_empty() {
+                parsed.set_query(None);
+            } else {
+                let query_string = query_pairs.into_iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
+                parsed.set_query(Some(&query_string));
+            }
+
+            parsed.to_string()
+        } else {
+            // 如果解析失败，至少移除明显的 token 模式
+            let sanitized = regex::Regex::new(r"(\?|&)(token|session|auth|msToken|csrf|sig)=[^&]+")
+                .map(|re| re.replace_all(url, "").to_string())
+                .unwrap_or_else(|_| url.to_string());
+            // 清理多余的 ? 或 &
+            sanitized.trim_end_matches(['?', '&']).to_string()
+        }
+    }
+
     /// 将当前错误转换为详细错误 (添加上下文)
     pub fn with_context(self, url: String, platform: Platform, action: String) -> Self {
         let (message, existing_platform) = match self {
@@ -119,7 +152,12 @@ impl std::fmt::Display for ResolverError {
             ResolverError::Network(msg) => write!(f, "网络错误: {}", msg),
             ResolverError::ParseFailed(msg) => write!(f, "解析失败: {}", msg),
             ResolverError::Detailed { platform, url, message, action } => {
-                write!(f, "[{}] {} ({})\n提示: {}", platform.display_name(), message, url, action)
+                let sanitized_url = Self::sanitize_url_for_display(url);
+                write!(f, "[{}] {}\n提示: {}", platform.display_name(), message, action)?;
+                if !sanitized_url.is_empty() && sanitized_url != *url {
+                    write!(f, "\nURL: {}", sanitized_url)?;
+                }
+                Ok(())
             }
         }
     }
@@ -149,12 +187,14 @@ pub trait PlatformResolver: Send + Sync {
     fn platform(&self) -> Platform;
     /// 获取支持的 URL 模式列表
     fn supported_url_patterns(&self) -> Vec<&'static str>;
-    /// 检查是否支持此 URL
+    /// 检查是否支持此 URL (精确域名匹配)
     fn supports_url(&self, url: &str) -> bool {
-        // Case-insensitive pattern matching without allocation
-        self.supported_url_patterns()
-            .iter()
-            .any(|pattern| url.to_lowercase().contains(pattern))
+        url_matcher::url_matches_platform(url, self.platform())
+    }
+    /// 检查是否支持此 URL 的 hostname（小写化版本，避免重复 to_lowercase）
+    /// 默认实现复用 supports_url
+    fn supports_url_by_host(&self, host_lower: &str) -> bool {
+        url_matcher::url_matches_platform_by_host(host_lower, self.platform())
     }
     /// 获取视频信息
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError>;
@@ -262,10 +302,16 @@ impl ResolverRegistry {
     pub fn register<R: PlatformResolver + 'static>(&mut self, resolver: R) {
         self.resolvers.push(Box::new(resolver));
     }
-    /// 根据 URL 选择合适的解析器
+    /// 根据 URL 选择合适的解析器（缓存 hostname 避免重复 to_lowercase）
     pub fn select_resolver(&self, url: &str) -> &dyn PlatformResolver {
+        // 一次性提取并小写化 hostname，避免每个 resolver 重复调用 to_lowercase
+        let host_lower = match url_matcher::extract_hostname_and_lower(url) {
+            Some(h) => h,
+            None => return &*self.default_resolver,
+        };
+
         for resolver in &self.resolvers {
-            if resolver.supports_url(url) {
+            if resolver.supports_url_by_host(&host_lower) {
                 return resolver.as_ref();
             }
         }
@@ -298,6 +344,30 @@ impl ResolverRegistry {
                 Err(e)
             }
         }
+    }
+
+    /// 尝试所有已注册的解析器，返回第一个成功的结果
+    #[allow(dead_code)]
+    pub async fn try_resolve_all(&self, url: &str) -> Result<VideoInfo, ResolverError> {
+        // 首先尝试 URL 匹配的解析器
+        let primary = self.select_resolver(url);
+        if let Ok(info) = primary.get_video_info(url).await {
+            return Ok(info);
+        }
+        tracing::warn!("Primary resolver failed, trying all registered resolvers");
+
+        // 尝试所有已注册的解析器
+        for resolver in &self.resolvers {
+            if resolver.platform() == primary.platform() {
+                continue; // 跳过已尝试的主解析器
+            }
+            match resolver.get_video_info(url).await {
+                Ok(info) => return Ok(info),
+                Err(_) => continue,
+            }
+        }
+
+        Err(ResolverError::ParseFailed(format!("所有解析器均失败 for URL: {}", url)))
     }
 }
 impl Default for ResolverRegistry {

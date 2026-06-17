@@ -8,7 +8,7 @@ mod core;
 mod danmaku;
 mod downloader;
 mod fxtwitter;
-mod gui;
+mod gui_dioxus;
 mod history;
 mod http_client;
 mod i18n;
@@ -32,7 +32,7 @@ use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
-use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver, ZhiXueYunResolver, CookiePool};
+use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver, ZhiXueYunResolver, CookiePool, YouTubeResolver};
 use crate::collaboration::server::ws::WsServer;
 use crate::collaboration::CollaborationClient;
 use crate::config::AppConfig;
@@ -166,6 +166,11 @@ enum DownloadMode {
     Custom,
 }
 
+/// 检测是否为 x.com (Twitter) URL
+fn is_x_com_url(url: &str) -> bool {
+    url.contains("x.com/") || url.contains("twitter.com/")
+}
+
 fn main() {
     // 设置语言环境，避免 ICU4X 日语分词模型错误
     std::env::set_var("LANG", "en_US.UTF-8");
@@ -201,7 +206,7 @@ fn main() {
 
     // 如果指定了 --gui，则启动GUI模式
     if cli.gui {
-        gui::run_gui();
+        gui_dioxus::run_gui();
         return;
     }
 
@@ -238,24 +243,16 @@ fn main() {
         .with_target(false)
         .init();
 
-    // 运行CLI应用
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let exit_code = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runtime.block_on(run(cli, config))
-    })) {
-        Ok(Ok(())) => 0,
-        Ok(Err(e)) => {
-            error!("错误: {}", e);
-            1
-        }
-        Err(_) => {
-            eprintln!("运行时 panic 已捕获（可能是 shutdown 时的非致命问题）");
-            0
-        }
-    };
-    // Leak runtime 避免 drop 时再次触发 blocking panic
-    std::mem::forget(runtime);
-    std::process::exit(exit_code);
+    // 运行CLI应用 - 使用当前线程 runtime 避免 blocking pool panic
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(run(cli, config)).unwrap_or_else(|e| {
+        error!("错误: {}", e);
+    });
+    std::process::exit(0);
 }
 
 async fn run(cli: Cli, config: AppConfig) -> Result<()> {
@@ -347,7 +344,28 @@ async fn run(cli: Cli, config: AppConfig) -> Result<()> {
 
 /// 获取视频信息（使用 ResolverRegistry 统一调度）
 async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig) -> Result<VideoInfo> {
-    // 创建 ResolverRegistry 并注册所有解析器
+    // x.com 专用解析器链: FxTwitter > yt-dlp > Scrapling
+    if is_x_com_url(url) {
+        info!("检测到 x.com URL，使用专用解析链");
+
+        // 1. 尝试 FxTwitter (最佳选择)
+        let fxtwitter = if let Some(ref proxy) = cli.proxy {
+            FxTwitterResolver::with_proxy(proxy)?
+        } else {
+            FxTwitterResolver::new()
+        };
+
+        if let Ok(info) = fxtwitter.get_video_info(url).await {
+            info!("FxTwitter 解析成功!");
+            return Ok(info);
+        }
+        info!("FxTwitter 解析失败，尝试 yt-dlp...");
+
+        // 2. yt-dlp fallback
+        return fetch_with_ytdlp(ytdlp, url, cli, config).await;
+    }
+
+    // 其他平台: ResolverRegistry > yt-dlp > FxTwitter > Scrapling
     let mut registry = ResolverRegistry::new();
 
     // 创建 DouYinResolver 并注入 msToken
@@ -359,29 +377,53 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig)
     }
     registry.register(douyin_resolver);
 
-    // 优先使用 DouYin cookie 文件（如果配置了）
-    let dy_cookie_file = config.douyin_cookie_file.clone();
-
     registry.register(TikTokResolver::new());
     registry.register(BilibiliResolver::new());
+    registry.register(YouTubeResolver::new());
     registry.register(ZhiXueYunResolver::new(Arc::new(CookiePool::new(24, 100))));
 
-    // 使用 ResolverRegistry 选择合适的解析器
     let resolver = registry.select_resolver(url);
     info!("使用解析器: {:?}", resolver.platform());
 
-    // 尝试解析器获取视频信息
-    match resolver.get_video_info(url).await {
-        Ok(info) => {
-            info!("Resolver 解析成功!");
+    // 尝试解析器
+    if let Ok(info) = resolver.get_video_info(url).await {
+        info!("Resolver 解析成功!");
+        return Ok(info);
+    }
+    info!("Resolver 解析失败，尝试 yt-dlp...");
+
+    // yt-dlp fallback
+    if let Ok(info) = fetch_with_ytdlp(ytdlp, url, cli, config).await {
+        return Ok(info);
+    }
+    info!("yt-dlp 也失败，尝试 FxTwitter...");
+
+    // FxTwitter
+    let fxtwitter = if let Some(ref proxy) = cli.proxy {
+        FxTwitterResolver::with_proxy(proxy)?
+    } else {
+        FxTwitterResolver::new()
+    };
+
+    if let Ok(info) = fxtwitter.get_video_info(url).await {
+        info!("FxTwitter 解析成功!");
+        return Ok(info);
+    }
+    info!("FxTwitter 也失败，尝试 Scrapling...");
+
+    // Scrapling 最后尝试
+    if let Ok(client) = scrapling_client::ScraplingClient::new() {
+        if let Ok(info) = client.get_video_info(url).await {
+            info!("Scrapling 解析成功!");
             return Ok(info);
-        }
-        Err(e) => {
-            info!("Resolver 解析失败: {}，尝试 yt-dlp...", e);
         }
     }
 
-    // yt-dlp 作为 fallback
+    anyhow::bail!("所有解析器均失败");
+}
+
+/// 使用 yt-dlp 获取视频信息
+async fn fetch_with_ytdlp(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig) -> Result<VideoInfo> {
     let mut yt = ytdlp.clone();
 
     if let Some(ref ua) = cli.user_agent {
@@ -392,9 +434,9 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig)
         yt = yt.with_cookie_file(cookie.clone());
     }
 
-    // 抖音 URL 使用 DouYin cookie 文件（如果配置了）
-    if url.contains("douyin.com") && dy_cookie_file.is_some() {
-        if let Some(ref dy_cookie) = dy_cookie_file {
+    // 抖音 URL 使用 DouYin cookie 文件
+    if url.contains("douyin.com") {
+        if let Some(ref dy_cookie) = config.douyin_cookie_file {
             if dy_cookie.exists() {
                 info!("使用 DouYin cookie 文件: {:?}", dy_cookie);
                 yt = yt.with_cookie_file(dy_cookie.clone());
@@ -406,43 +448,7 @@ async fn get_video_info(ytdlp: &YtDlp, url: &str, cli: &Cli, config: &AppConfig)
         yt = yt.with_proxy(proxy.clone());
     }
 
-    match yt.get_video_info(url) {
-        Ok(info) => Ok(info),
-        Err(e) => {
-            info!("yt-dlp 也失败: {}", e);
-            // 最后尝试 FxTwitter
-            let fxtwitter = if let Some(ref proxy) = cli.proxy {
-                FxTwitterResolver::with_proxy(proxy)?
-            } else {
-                FxTwitterResolver::new()
-            };
-            match fxtwitter.get_video_info(url).await {
-                Ok(info) => {
-                    info!("FxTwitter API 解析成功!");
-                    Ok(info)
-                }
-                Err(fx_err) => {
-                    info!("FxTwitter 也失败: {}，尝试 Scrapling...", fx_err);
-                    match scrapling_client::ScraplingClient::new() {
-                        Ok(client) => {
-                            match client.get_video_info(url).await {
-                                Ok(info) => {
-                                    info!("Scrapling 解析成功!");
-                                    Ok(info)
-                                }
-                                Err(scrapling_err) => {
-                                    Err(anyhow::anyhow!("Resolver 失败: {} | yt-dlp 失败: {} | FxTwitter 失败: {} | Scrapling 失败: {}", e, e, fx_err, scrapling_err))
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            Err(anyhow::anyhow!("Resolver 失败: {} | yt-dlp 失败: {} | FxTwitter 失败: {}", e, e, fx_err))
-                        }
-                    }
-                }
-            }
-        }
-    }
+    yt.get_video_info(url)
 }
 
 /// 打印可用格式

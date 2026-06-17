@@ -212,17 +212,26 @@ impl FxTwitterResolver {
                                 if let Some(ref fmt_url) = fmt.url {
                                     let resolution = Self::extract_resolution_from_url(fmt_url);
 
-                                    // 从 URL 路径推断扩展名（忽略 query string），避免 API 返回不准确的 container 值
-                                    let ext = fmt_url.split('?').next()
-                                        .and_then(|s| s.rsplit('/').next_back()?.split('.').next_back())
-                                        .unwrap_or("mp4")
-                                        .to_string();
+                                    // 优先使用 container 字段，否则从 URL 推断或默认 mp4
+                                    let ext = fmt.container.clone()
+                                        .or_else(|| {
+                                            fmt_url.split('?').next()
+                                                .and_then(|s| s.rsplit('/').next_back()?.split('.').next_back())
+                                                .map(|e| e.to_string())
+                                                .filter(|e| !e.is_empty() && e.len() <= 5)
+                                        })
+                                        .unwrap_or_else(|| "mp4".to_string());
+
+                                    // 估算文件大小: bitrate(bps) × duration(s) / 8 = bytes
+                                    let filesize = fmt.bitrate.and_then(|br| {
+                                        video_info.duration.map(|dur| (br * dur) / 8)
+                                    });
 
                                     video_info.formats.push(VideoFormat {
                                         format_id: format!("fxtwitter_{}", idx),
                                         ext,
                                         resolution,
-                                        filesize: None,
+                                        filesize,
                                         bitrate: fmt.bitrate,
                                         codec: fmt.codec.clone(),
                                         audio_only: false,
@@ -296,22 +305,38 @@ impl FxTwitterResolver {
                                 }
                             }
                         }
-                        // 其次从 formats 获取
+                        // 其次从 formats 获取 - 选择最佳质量（最高比特率 + 分辨率）
                         if let Some(ref formats) = item.formats {
-                            // 优先选择 mp4 格式的高分辨率
+                            let mut best_format: Option<&FxFormat> = None;
+                            let mut best_quality: u64 = 0;
+
                             for fmt in formats {
                                 if let Some(fmt_url) = &fmt.url {
-                                    if (fmt_url.contains("1280x720") || fmt_url.contains("1920x1080")) && !fmt_url.contains(".m3u8") {
-                                        return Ok(fmt_url.clone());
+                                    if fmt_url.contains(".m3u8") {
+                                        continue;
+                                    }
+                                    // 基于比特率 + 分辨率评估质量
+                                    let quality = fmt.bitrate.unwrap_or(0);
+                                    let resolution_bonus = if fmt_url.contains("1920x1080") {
+                                        100_000_000
+                                    } else if fmt_url.contains("1280x720") {
+                                        50_000_000
+                                    } else if fmt_url.contains("720x") || fmt_url.contains("x720") {
+                                        25_000_000
+                                    } else {
+                                        0
+                                    };
+                                    let total_quality = quality + resolution_bonus;
+                                    if total_quality > best_quality {
+                                        best_quality = total_quality;
+                                        best_format = Some(fmt);
                                     }
                                 }
                             }
-                            // 返回第一个非 m3u8 的 URL
-                            for fmt in formats {
+
+                            if let Some(fmt) = best_format {
                                 if let Some(ref fmt_url) = fmt.url {
-                                    if !fmt_url.contains(".m3u8") {
-                                        return Ok(fmt_url.clone());
-                                    }
+                                    return Ok(fmt_url.clone());
                                 }
                             }
                         }

@@ -105,63 +105,72 @@ impl CookiePool {
     ///
     /// Returns the cookies if a valid entry exists, None otherwise.
     /// Updates the last_used timestamp and increments hit_count.
+    ///
+    /// Optimization: Uses read lock for scanning, write lock only for update.
+    /// This allows concurrent reads while still maintaining thread safety.
     pub fn get(&self) -> Option<HashMap<String, String>> {
-        let mut entries = self.entries.write().ok()?;
+        // Phase 1: Read lock - find LRU candidate (no mutation, just scanning)
+        let candidate_idx = {
+            let entries = self.entries.read().ok()?;
+            let now = Instant::now();
+            let mut oldest_idx: Option<usize> = None;
+            let mut oldest_time: Option<Instant> = None;
+            let mut oldest_created: Option<Instant> = None;
 
-        // Find the oldest valid entry
-        let now = Instant::now();
-        let mut oldest_idx: Option<usize> = None;
-        let mut oldest_time: Option<Instant> = None;
-        let mut oldest_created: Option<Instant> = None;
-
-        for (i, entry) in entries.iter_mut().enumerate() {
-            if !entry.valid {
-                continue;
-            }
-
-            // Check TTL expiration
-            if now.duration_since(entry.created_at) > self.ttl {
-                entry.valid = false;
-                continue;
-            }
-
-            // Check hit count limit
-            if entry.hit_count >= self.max_hits_per_cookie {
-                entry.valid = false;
-                continue;
-            }
-
-            // Select the oldest by last_used (LRU)
-            // When last_used is equal, prefer the newer entry (created later)
-            let dominated = match (oldest_time, oldest_created) {
-                (Some(ot), Some(oc)) => {
-                    entry.last_used < ot || (entry.last_used == ot && entry.created_at > oc)
+            for (i, entry) in entries.iter().enumerate() {
+                if !entry.valid {
+                    continue;
                 }
-                (None, None) => oldest_idx.is_none(),  // Only dominate if we haven't selected yet
-                _ => false,
-            };
-            if dominated {
-                oldest_idx = Some(i);
-                oldest_time = Some(entry.last_used);
-                oldest_created = Some(entry.created_at);
-            }
-        }
 
-        // Return the oldest valid entry
-        if let Some(idx) = oldest_idx {
+                // Check TTL expiration
+                if now.duration_since(entry.created_at) > self.ttl {
+                    continue;
+                }
+
+                // Check hit count limit
+                if entry.hit_count >= self.max_hits_per_cookie {
+                    continue;
+                }
+
+                // Select the oldest by last_used (LRU)
+                // When last_used is equal, prefer the newer entry (created later)
+                let dominated = match (oldest_time, oldest_created) {
+                    (Some(ot), Some(oc)) => {
+                        entry.last_used < ot || (entry.last_used == ot && entry.created_at > oc)
+                    }
+                    (None, None) => oldest_idx.is_none(),  // Only dominate if we haven't selected yet
+                    _ => false,
+                };
+                if dominated {
+                    oldest_idx = Some(i);
+                    oldest_time = Some(entry.last_used);
+                    oldest_created = Some(entry.created_at);
+                }
+            }
+
+            oldest_idx
+        };
+
+        // Phase 2: Write lock - update the selected entry only
+        if let Some(idx) = candidate_idx {
+            let mut entries = self.entries.write().ok()?;
             let entry = &mut entries[idx];
-            entry.last_used = now;
-            entry.hit_count += 1;
 
-            // Immediately invalidate if exhausted
-            if entry.hit_count >= self.max_hits_per_cookie {
-                entry.valid = false;
+            // Re-validate under write lock (another thread might have updated)
+            if entry.valid && entry.hit_count < self.max_hits_per_cookie {
+                entry.last_used = Instant::now();
+                entry.hit_count += 1;
+
+                // Immediately invalidate if exhausted
+                if entry.hit_count >= self.max_hits_per_cookie {
+                    entry.valid = false;
+                }
+
+                return Some(entry.cookies.clone());
             }
-
-            Some(entry.cookies.clone())
-        } else {
-            None
         }
+
+        None
     }
 
     /// Invalidate all cookie entries for a specific account

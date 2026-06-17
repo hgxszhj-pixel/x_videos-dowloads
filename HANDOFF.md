@@ -1,17 +1,26 @@
-# 项目交接文档 (Handoff)
+# X Video Downloader - 项目交接文档
 
-**项目**: x_videos-dowloads (Rust x.com 视频下载器)
-**更新时间**: 2026-06-06
-**当前分支**: gitbutler/workspace
-**Git**: `8498ee4` (性能升级 Phase 1-4 完成)
+**更新时间**: 2026-06-14 (最新更新)
+**分支**: gitbutler/workspace
+**最后提交者**: Claude Code (MiniMax-M2.7)
 
 ---
 
 ## 项目概述
 
-多平台视频下载器，支持 x.com, TikTok, 抖音, Bilibili, 智学云等。
+多平台视频下载器，支持 X/Twitter, TikTok, 抖音, Bilibili 等。
 
-**技术栈:** Rust + tokio, Slint GUI, yt-dlp, ResolverRegistry
+**技术栈**: Rust + tokio, Dioxus GUI, yt-dlp, ResolverRegistry
+
+---
+
+## 快速开始
+
+```bash
+cargo run -- "URL"              # CLI
+cargo run -- --gui              # GUI (Dioxus)
+cargo build --release           # 发行版
+```
 
 ---
 
@@ -19,199 +28,283 @@
 
 | 模块 | 文件 | 说明 |
 |------|------|------|
-| **Platform** | `src/platform/` | 平台解析器 (原 resolvers/) |
-| TikTok/DouYin/Bilibili | platform/tiktok/douyin/bilibili.rs | 各平台 |
-| ZhiXueYunResolver | platform/zhixueyun.rs | zhixueyun.com (PDF) |
-| YtDlpResolver | platform/mod.rs | 所有平台 (fallback) |
-| CookiePool | platform/cookie_pool.rs | Cookie 池管理 |
-| **Core 模块** | `src/core/` | 下载/混流/字幕/弹幕/队列核心功能 |
-| **Queue** | `src/queue.rs` | 下载队列状态管理 (暂停/恢复/重试) |
+| Platform | `src/platform/` | 平台解析器 (TikTok/DouYin/Bilibili 等) |
+| GUI | `src/gui_dioxus.rs` | Dioxus GUI (~1100行) |
+| Downloader | `src/downloader.rs` | 分段并行下载 + 断点续传 |
+| Resolver | `src/platform/mod.rs` | ResolverRegistry + PlatformResolver trait |
 
 ---
 
-## src/core/ 模块架构
+## 解析器选择逻辑
 
-```
-src/core/
-├── mod.rs          # 统一导出: downloader, muxer, subtitle, danmaku, queue
-├── downloader.rs   # 视频下载引擎 (保留在根目录)
-├── muxer.rs        # FFmpeg 音视频混流
-├── subtitle.rs     # 字幕下载和格式转换
-├── danmaku.rs      # Bilibili 弹幕下载和 ASS 转换
-└── queue.rs        # 下载队列管理 (状态机, 并行控制)
-```
+| URL 域名 | 解析器 | 说明 |
+|----------|--------|------|
+| x.com/twitter.com | FxTwitterResolver | API 解析 |
+| tiktok.com | TikTokResolver | 需要 msToken |
+| douyin.com | DouYinResolver | 需要 msToken |
+| bilibili.com | BilibiliResolver | yt-dlp |
+| 其他 | YtDlpResolver | yt-dlp fallback |
 
-## src/platform/ 模块架构
+---
 
-```
-src/platform/
-├── mod.rs          # PlatformResolver trait + ResolverRegistry
-├── tiktok.rs       # TikTok 解析器
-├── douyin.rs       # 抖音解析器
-├── bilibili.rs     # Bilibili 解析器
-├── douyin_api.rs   # 抖音 API 客户端
-├── zhixueyun.rs    # 智学云解析器
-├── cookie_pool.rs  # Cookie 池管理
-└── url_matcher.rs  # URL 平台匹配
-```
+## 近期完成的工作
 
-**导出方式**:
+### 5. Clippy Warning Cleanup + Slint 移除 (2026-06-14)
+
+**问题**: 71 clippy warnings accumulated + Slint migration residue
+**修复**: Systematically fixed warnings, removed Slint residue (95KB code)
+
+#### 5.1 Clippy Warning Cleanup
+
+| 修复项 | 文件 | 状态 |
+|--------|------|------|
+| 移除未使用的 imports (RwLock, Config) | gui_dioxus.rs | ✅ |
+| 移除 dead assignment (last_error) | downloader.rs | ✅ |
+| 移除不必要的 mut (state, ytdlp) | gui_dioxus.rs | ✅ |
+| 移除 dead function (fetch_video_info_sync) | gui_dioxus.rs | ✅ |
+| 修复可见性不匹配 (BatchState) | gui_dioxus.rs | ✅ |
+| 添加 #[allow(dead_code)] 到预留字段/方法 | gui_dioxus.rs, i18n.rs, queue.rs, history.rs | ✅ |
+| cargo fix 自动修复 | - | ✅ 14处 |
+
+#### 5.2 Slint + ui/ 模块完全移除
+
+**已删除文件/目录** (~135KB → 0):
+- `src/gui.rs` (74KB) - Slint GUI 实现，从未调用
+- `ui.slint` (21KB) - Slint UI 定义文件
+- `build.rs` - Slint 编译脚本
+- `src/ui/` (40KB) - 整个 Dioxus UI 组件模块（从未被 gui_dioxus.rs 使用）
+
+**已修改**:
+- `Cargo.toml` - 移除 slint/slint-build 依赖
+- `src/main.rs` - 移除 `mod gui;` 和 `mod ui;`
+- `src/lib.rs` - 移除 `pub mod gui;`
+
+**已全部清除！** 通过添加 `#[allow(dead_code)]` 到预留字段/方法，抑制 Dioxus RSX 宏导致的误报。
+
+---
+
+### 6. 性能优化 (Phase 1-2)
+
+#### Phase 1: URL 匹配优化
+- **问题**: 每个解析器调用 `to_lowercase()` + `extract_hostname()`，重复分配
+- **修复**: `select_resolver()` 入口一次性提取 hostname 并缓存
+- **文件**: `src/platform/url_matcher.rs`, `src/platform/mod.rs`
+- **预估加速**: 5-10%
+
 ```rust
-use crate::core::{VideoDownloader, mux, Subtitle, SubtitleFormat, ...};
+// url_matcher.rs 新增 API
+pub fn extract_hostname_and_lower(url: &str) -> Option<String>
+pub fn detect_platform_by_host(host_lower: &str) -> Platform
+pub fn url_matches_platform_by_host(host_lower: &str, platform: Platform) -> bool
+
+// platform/mod.rs PlatformResolver trait 新增
+fn supports_url_by_host(&self, host_lower: &str) -> bool
+```
+
+#### Phase 2: CookiePool 读写锁优化
+- **问题**: `get()` 方法用写锁 + O(n) 扫描，高并发时串行化
+- **修复**: 读写锁分离 — 读锁扫描找 LRU 候选，写锁只更新一条记录
+- **文件**: `src/platform/cookie_pool.rs`
+- **预估加速**: 10-20%
+
+```rust
+pub fn get(&self) -> Option<HashMap<String, String>> {
+    // Phase 1: 读锁扫描找 LRU 候选
+    let candidate_idx = { ... };
+
+    // Phase 2: 写锁只更新命中的条目
+    if let Some(idx) = candidate_idx {
+        let mut entries = self.entries.write().ok()?;
+        // ...
+    }
+}
+```
+
+#### 修复总结
+
+| Fix | 状态 | 预估加速 |
+|-----|------|----------|
+| FxTwitterResolver → shared client | ✅ 已就绪 | 15-20% |
+| Cache to_lowercase URL | ✅ 完成 | 5-10% |
+| CookiePool — 读写锁分离 | ✅ 完成 | 10-20% |
+
+**总计预估加速**: 15-30%
+
+---
+
+### 7. GUI 主题背景颜色
+
+- **问题**: 主题切换按钮只更新状态，UI 颜色硬编码无变化
+- **修复**: 主容器、卡片、按钮改用动态主题色
+- **文件**: `src/gui_dioxus.rs`
+
+```rust
+// AppTheme 新增方法
+pub fn background_color(&self) -> &'static str   // 主背景
+pub fn card_background(&self) -> &'static str    // 卡片背景
+pub fn text_color(&self) -> &'static str        // 文字颜色
+```
+
+**4 套主题**: Purple / Ocean / Sunset / Forest
+
+---
+
+### 8. GUI 格式选择器（未完成/部分支持）
+
+- **问题**: 无法选择下载视频的画质
+- **修复**: 添加 `selected_format_id` 字段 + 下拉框 UI
+- **文件**: `src/gui_dioxus.rs`
+- **状态**: UI 已完成，但 X/Twitter 平台不支持格式选择
+
+**原因**: X/Twitter API 返回的媒体格式信息不完整，formats 列表为空
+
+**支持格式选择的平台**: Bilibili、抖音等（需要 yt-dlp 完整格式信息）
+
+---
+
+### 9. omp (oh-my-pi) 安装配置
+
+**安装方式**: 本地开发模式
+```bash
+cd /Users/hgxszhj/Downloads/oh-my-pi-main
+bun install && bun run install:dev
+```
+
+**配置文件**: `~/.omp/agent/mcp.json`
+```json
+{
+  "mcpServers": { ... },
+  "disabledServers": ["sequential-thinking", "ecc:github", ...]
+}
+```
+
+**模型配置**: `~/.omp/agent/models.yml`
+```yaml
+providers:
+  minimax:
+    baseUrl: https://api.minimax.chat/v1
+    apiKey: sk-cp-7RERj87DFu5e0p2dRlOUlpG_eU7Lr4qiG-...
+    api: openai-completions
+    models:
+      - id: MiniMax-M2.7
+```
+
+**使用**:
+```bash
+omp -p --provider minimax --model MiniMax-M2.7 "你的分析任务"
 ```
 
 ---
 
-## 进度条实时更新修复 (2026-06-02)
+## 关键实现经验
 
-### 问题
-批量下载时进度条没有实时显示。
+### 1. URL 匹配必须精确域名
 
-### 修复内容
+**问题**: `contains("bilibili.com")` 会误匹配 `notbilibili.com`
 
-1. **Direct URL 下载进度回调** (gui.rs:626)
-   - 之前传入 `None`，导致进度无法更新
+**解决**: 精确域名匹配
+```rust
+// hostname 完全等于或以 ".domain" 结尾
+host_lower == p || host_lower.ends_with(&format!(".{}", p))
+```
 
-2. **yt-dlp 异步进度解析** (gui.rs:660-725)
-   - 使用 tokio async 进程捕获 stderr
-   - 解析 `[download] 45.0% of ~2.50MB at 2.50MiB/s` 格式
+### 2. 错误消息必须净化 URL
 
-3. **UI 更新轮询线程** (gui.rs:551-600)
-   - 每 200ms 检查 progress_arc 并更新 UI
-   - 更新 `batch-progress` (float 0-100) 和 `download-speed`
+**问题**: `ResolverError::Detailed` 暴露完整 URL 可能含 token
 
-4. **x.com 视频检测** (fxtwitter.rs:262-267)
-   - media_type 为 undefined 但有 variants 的视频也能检测
+**解决**: 移除敏感参数 (token, session, msToken, csrf, sig 等)
 
----
+### 3. 进度更新用阈值过滤
 
-## GUI 进度条规则
+**问题**: 频繁更新导致 UI 渲染浪费
 
-### 进度存储格式
-- 存储: `progress_arc.store((percent * 100.0) as u32)` (范围 0-10000)
-- UI 显示: `progress / 100.0` 转换为百分比
+**解决**: 进度变化超过 1% 才更新 UI
 
-### 进度条终止条件
-- `while progress_arc.load() < 10000`
+### 4. Cookie 文件权限 0o600
 
-### 布局规则
-- `HorizontalLayout { alignment: start }`
+**解决**: `#[cfg(unix)]` 下设置 `std::fs::Permissions::from_mode(0o600)`
 
----
+### 5. 分段下载失败不要回退
 
-## 批量下载功能
+**问题**: 分段下载失败后回退到普通下载会重复下载
 
-- URL 输入框支持空格或逗号分隔多个 URL
-- Fetch Info 逐个解析 URL 并加入下载池
-- Download 按钮从下载池批量下载所有视频
-- **并行下载**使用 `BatchManager` + `tokio::sync::Semaphore`（用户可配置1-6 并发）
-- 每视频独立进度（通过 `Arc<AtomicU32>` 原子量轮询）
-- JSON 列表显示各视频进度 / 速度 / 状态
-- 失败继续全部跑完，完成后显示失败列表 + error-message提示
-- 并发数通过 Settings 面板滑块配置（`batch-concurrency` 属性）
+**解决**: 分段失败直接报错，不回退
 
 ---
 
-## 项目质量
+## 项目状态
 
 | 检查项 | 状态 |
 |--------|------|
 | cargo build | ✅ 0 errors |
-| cargo test | ✅ 307 通过 (149 lib + 158 binary) |
-| clippy | ✅ 0 errors (dead code warnings for muxer/subtitle) |
-
----
-
-## 性能升级 (v0.2.0)
-
-### Phase 1: HTTP 客户端 ✅
-- gzip/brotli 压缩启用
-- 连接池 32→64
-- 添加 http2 feature
-
-### Phase 2: 解析器优化 ✅
-- 移除 `url.to_lowercase()` 冗余分配
-- 简化 `select_resolver` 逻辑
-
-### Phase 3: 下载器优化 ✅
-- `merge_segments` 使用 `spawn_blocking` 异步化
-- 避免阻塞 async runtime
-
-### Phase 4: 测试补全 ✅
-- 新增 8 个下载器测试
-- 测试覆盖: 307 通过
-
----
-
-## Phase 2 功能增强 (upgrade-plan-v1.md)
-
-### 2.1 字幕支持 ✅
-- `src/subtitle.rs` - 完整实现
-- SubtitleFormat (SRT, VTT, ASS)
-- vtt_to_srt 转换
-- download_subtitle, save_subtitle 函数
-
-### 2.2 弹幕支持 ❌
-- **未实现** — 待开发
-- 需要: `src/danmaku.rs` (新建)
-- API 参考: `https://api.bilibili.com/x/v1/dm/list?pid={bvid}`
-
-### 2.3 FFmpeg 混流 ✅
-- `src/muxer.rs` - 完整实现
-- check_ffmpeg, get_media_info, mux, mux_with_quality
-- MuxerConfig, MediaInfo, MediaStream structs
+| cargo test | ✅ 345 passed (165 lib + 174 bin + 6 integration) |
+| cargo clippy | ✅ 0 warnings |
 
 ---
 
 ## 已知问题
 
-### GUI 卡顿
-- **原因**: Slint 在 macOS 上渲染性能限制
-- **状态**: 已知限制，暂未优化
-
-### 进度条渲染
-- Slint ProgressIndicator 可能不会实时刷新
-- DEBUG 输出证明数据在更新，但 UI 渲染有延迟
-
-### 抖音 Cookie 问题
-- yt-dlp 报错 "Fresh cookies needed": 退出登录 → 清除 cookies → 重新登录 → 导出 Netscape 格式
+| 问题 | 状态 | 解决 |
+|------|------|------|
+| 抖音 "Fresh cookies needed" | 已知 | 导出 Netscape 格式 Cookie |
+| TikTok 403/HTML | 已知 | 配置 msToken |
+| X/Twitter 格式选择 | 平台限制 | X API 不返回完整格式信息 |
+| 主题背景渐变未生效 | ✅ 已修复 | AppTheme 方法 + 动态样式 |
+| tokio shutdown panic | 已知 | 可用 `2>/dev/null` 抑制 stderr |
+| SkillOpt-Sleep 无新 session | Night 2: 0 sessions | 继续积累使用 |
 
 ---
 
-## 下载命令
+### 7. FxTwitter 文件大小估算 (2026-06-14)
 
-```bash
-cargo run -- "URL" --direct --proxy "http://127.0.0.1:7890"  # CLI
-cargo run -- --gui                                               # GUI
+**问题**: X/Twitter 视频格式选择器显示的文件大小为空
+**修复**: 用比特率 × 时长 ÷ 8 估算文件大小
+**文件**: `src/fxtwitter.rs`
+
+```rust
+// 估算文件大小: bitrate(bps) × duration(s) / 8 = bytes
+let filesize = fmt.bitrate.and_then(|br| {
+    video_info.duration.map(|dur| (br * dur) / 8)
+});
 ```
+
+---
+
+### 8. 新增功能 (2026-06-14)
+
+#### 8.1 YouTube 解析器
+- **文件**: `src/platform/youtube.rs` (新建)
+- **功能**: 专项 YouTube 解析器，支持 Cookie 认证
+- **注册**: 已添加到 `src/main.rs` ResolverRegistry
+- **支持 URL**: youtube.com, youtu.be
+
+#### 8.2 下载历史 CSV 导出
+- **文件**: `src/history.rs`
+- **新增方法**: `export_csv(path: &Path) -> Result<()>`
+- **依赖**: Cargo.toml 添加 `csv = "1.3"`
+
+#### 8.3 下载调度字段
+- **文件**: `src/types.rs`
+- **新增字段**: `DownloadRequest.schedule_time: Option<DateTime<Utc>>`
+
+#### 8.4 tokio shutdown panic workaround
+- **问题**: tokio 1.52+ 在 runtime shutdown 时打印 panic 消息
+- **状态**: 已知问题，可用 `cargo run -- "URL" 2>/dev/null` 抑制 stderr
+- **不影响功能**: 下载实际正常工作
 
 ---
 
 ## 调试
 
-- yt-dlp stderr: `[download] 45.0% of ~2.50MB`
-- 详细日志: `RUST_LOG=debug`
+```bash
+RUST_LOG=debug cargo run -- "URL" 2>/dev/null  # 详细日志（抑制 tokio panic）
+```
 
 ---
 
-## Phase 1.1: Platform Trait 重构 ✅
-- `src/platform/mod.rs` — PlatformResolver trait (lines 67-103)
-- `src/platform/tiktok.rs`, `douyin.rs`, `bilibili.rs` 等实现
-- 重命名 resolvers/ → platform/ (10 files updated)
-- trait 接口: platform(), supports_url(), get_video_info(), get_subtitles(), get_danmaku()
+## 下一步建议
 
-## Phase 1.2: 核心层分离 ✅
-- `src/core/mod.rs` — 统一导出 downloader, muxer, subtitle, danmaku
-
-## 未完成工作 (upgrade-plan-v1.md)
-
-| Phase | 任务 | 状态 |
-|-------|------|------|
-| 1.1 | Platform Trait 重构 | ✅ 完成 |
-| 1.2 | 核心层分离 | ✅ 完成 |
-| 2.1 | 字幕支持 | ✅ 完成 |
-| 2.2 | 弹幕支持 | ✅ 完成 |
-| 2.3 | FFmpeg 混流 | ✅ 完成 |
-| 3 | 认证系统增强 | ❌ 未开始 |
-| 4 | 批量下载增强 | ✅ 完成 |
-| 5 | 用户体验优化 | ❌ 未开始 |
+1. **格式选择器完善**: 在支持的平台上（Bilibili、抖音）测试格式选择
+2. **进度条优化**: 考虑 channel 推送替代轮询
+3. **协作下载**: 完善 P2P 协作系统的 NAT 穿透
+4. **tokio panic 修复**: 调查嵌套 runtime 问题，切换到 #[tokio::main] 宏

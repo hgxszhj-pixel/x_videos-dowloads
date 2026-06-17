@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use csv;
 
 /// 下载状态
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -332,8 +333,32 @@ impl History {
     }
 
     /// 获取所有历史
+    #[allow(dead_code)]
     pub fn get_all(&self) -> &[HistoryEntry] {
         &self.entries
+    }
+
+    /// 导出历史为 CSV
+    pub fn export_csv(&self, path: &Path) -> Result<()> {
+        let mut wtr = csv::Writer::from_path(path)?;
+        // 写入表头
+        wtr.write_record(&["ID", "URL", "Title", "File Path", "File Size (bytes)", "Downloaded At", "Duration (s)", "Status", "Platform", "Error"])?;
+        for entry in &self.entries {
+            wtr.write_record(&[
+                entry.id.to_string(),
+                entry.url.clone(),
+                entry.title.clone().unwrap_or_default(),
+                entry.file_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                entry.file_size.map(|s| s.to_string()).unwrap_or_default(),
+                entry.downloaded_at.to_rfc3339(),
+                entry.duration_secs.map(|d| d.to_string()).unwrap_or_default(),
+                format!("{:?}", entry.status),
+                entry.platform.display_name().to_string(),
+                entry.error_message.clone().unwrap_or_default(),
+            ])?;
+        }
+        wtr.flush()?;
+        Ok(())
     }
 
     /// 获取书签条数

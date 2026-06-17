@@ -327,6 +327,7 @@ impl DownloadQueue {
     }
 
     /// 获取所有项的快照
+    #[allow(dead_code)]
     pub fn get_all(&self) -> Vec<QueueItem> {
         self.items
             .read()

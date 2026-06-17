@@ -35,6 +35,16 @@ impl CookieFileManager {
         }
 
         std::fs::write(&cookie_file, content).ok()?;
+
+        // 设置严格的文件权限 (0o600 = 仅所有者可读写)
+        // 防止其他用户读取敏感 cookie 信息
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            let _ = std::fs::set_permissions(&cookie_file, perms);
+        }
+
         Some(cookie_file)
     }
 }

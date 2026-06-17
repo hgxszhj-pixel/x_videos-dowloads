@@ -218,9 +218,11 @@ impl VideoDownloader {
                 if self.config.parallel_segments > 0 && size > SEGMENT_SIZE_THRESHOLD {
                     match self.parallel_download(request, size, progress_callback.clone()).await {
                         Ok(result) => return Ok(result),
-                        Err(_e) => {
-                            warn!("分段下载失败，尝试普通下载");
-                            // 回退到普通下载
+                        Err(e) => {
+                            // 分段下载失败（可能是合并失败），不要再回退到普通下载
+                            // 否则会重新下载整个文件，造成时间浪费
+                            warn!("分段下载失败: {:?}，不再尝试普通下载（避免重复下载）", e);
+                            // 直接继续到重试逻辑，不要回退到普通下载
                         }
                     }
                 }
