@@ -323,7 +323,7 @@ impl VideoDownloader {
             .collect()
     }
 
-    /// 设置进度跟踪
+    /// 设置进度跟踪（用于轮询模式）
     fn setup_progress_tracking(&self, total_size: u64, task_id: &str) -> (Arc<AtomicU64>, Arc<AtomicBool>, Arc<Mutex<DownloadProgress>>) {
         let total_downloaded = Arc::new(AtomicU64::new(0));
         let download_active = Arc::new(AtomicBool::new(true));
@@ -333,6 +333,19 @@ impl VideoDownloader {
                 .with_status(DownloadStatus::Downloading)
         ));
         (total_downloaded, download_active, progress)
+    }
+
+    /// 设置进度跟踪（用于 channel 推送模式）
+    /// 返回: (进度发送端, 下载状态, 当前进度)
+    fn setup_channel_progress_tracking(&self, total_size: u64, task_id: &str) -> (tokio::sync::mpsc::Sender<u64>, Arc<AtomicBool>, Arc<Mutex<DownloadProgress>>) {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<u64>(100);
+        let download_active = Arc::new(AtomicBool::new(true));
+        let progress = Arc::new(Mutex::new(
+            DownloadProgress::new(task_id.to_string())
+                .with_total_bytes(total_size)
+                .with_status(DownloadStatus::Downloading)
+        ));
+        (tx, download_active, progress)
     }
 
     /// 合并分段文件 - 优化版本: 按 offset 排序后顺序写入，消除所有 seek
@@ -514,8 +527,12 @@ impl VideoDownloader {
         let speed_threshold = self.config.speed_threshold_bps;
         let mut current_threads = segments;
 
-        // 启动后台进度报告任务（每 0.5 秒更新一次）
+        // 启动后台进度报告任务（channel 推送 + 阈值过滤）
+        // 只在进度变化超过 1% 时才调用 callback，减少 UI 渲染开销
         let progress_task = tokio::spawn(async move {
+            let mut last_reported_percent: f64 = -1.0;
+            let mut last_downloaded: u64 = 0;
+
             while download_active_clone.load(Ordering::Relaxed) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -539,6 +556,23 @@ impl VideoDownloader {
 
                 let mut progress = progress_clone.lock().await;
                 progress.update(downloaded, speed, current_threads);
+
+                // 阈值过滤：只在校验和变化超过 1% 时才回调
+                let current_percent = if progress.total_bytes > 0 {
+                    (progress.bytes_downloaded as f64 / progress.total_bytes as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                let should_report = (current_percent - last_reported_percent).abs() >= 1.0
+                    || downloaded < last_downloaded; // 下载量减少说明有新数据阶段
+
+                if !should_report {
+                    continue;
+                }
+
+                last_reported_percent = current_percent;
+                last_downloaded = downloaded;
 
                 // Clone outside lock to avoid holding lock during potentially slow callback
                 let callback_progress = progress.clone();
