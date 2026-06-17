@@ -62,15 +62,26 @@ struct DownloadContext {
 pub struct ZhiXueYunResolver {
     cookie_pool: Arc<CookiePool>,
     token: std::sync::RwLock<Option<String>>,
-    client: Arc<reqwest::blocking::Client>,
+    client: once_cell::sync::OnceCell<reqwest::blocking::Client>,
     /// 缓存的认证头（避免每次克隆 BASE_HEADERS）
     cached_headers: std::sync::RwLock<Option<HeaderMap>>,
 }
 
 impl ZhiXueYunResolver {
-    /// 创建新的 ZhiXueYunResolver
+    /// 创建新的 ZhiXueYunResolver（懒加载 client）
     #[allow(dead_code)]
     pub fn new(cookie_pool: Arc<CookiePool>) -> Self {
+        Self {
+            cookie_pool,
+            token: std::sync::RwLock::new(None),
+            client: once_cell::sync::OnceCell::new(),
+            cached_headers: std::sync::RwLock::new(None),
+        }
+    }
+
+    /// 预初始化 blocking client（在任何 async runtime 外调用）
+    #[allow(dead_code)]
+    pub fn new_preinit() -> Self {
         let client = reqwest::blocking::Client::builder()
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
             .tcp_keepalive(std::time::Duration::from_secs(120))
@@ -79,11 +90,24 @@ impl ZhiXueYunResolver {
             .build()
             .unwrap_or_else(|e| panic!("Failed to build ZhiXueYun HTTP client: {}", e));
         Self {
-            cookie_pool,
+            cookie_pool: Arc::new(CookiePool::new(24, 100)),
             token: std::sync::RwLock::new(None),
-            client: Arc::new(client),
+            client: once_cell::sync::OnceCell::from(client),
             cached_headers: std::sync::RwLock::new(None),
         }
+    }
+
+    /// 获取或创建 blocking client
+    fn get_client(&self) -> &reqwest::blocking::Client {
+        self.client.get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+                .tcp_keepalive(std::time::Duration::from_secs(120))
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(600))
+                .build()
+                .unwrap_or_else(|e| panic!("Failed to build ZhiXueYun HTTP client: {}", e))
+        })
     }
 
     /// 设置认证 token（支持运行时动态更新）
@@ -186,7 +210,7 @@ impl ZhiXueYunResolver {
         );
 
         let headers = self.get_auth_headers(Some(token))?;
-        let response = self.client
+        let response = self.get_client()
             .get(&url)
             .headers(headers.clone())
             .send()
@@ -231,7 +255,7 @@ impl ZhiXueYunResolver {
         );
 
         let headers = self.get_auth_headers(Some(token))?;
-        let response = self.client
+        let response = self.get_client()
             .get(&url)
             .headers(headers.clone())
             .send()
@@ -302,7 +326,7 @@ impl ZhiXueYunResolver {
 
             let headers = self.get_auth_headers(Some(token))?;
 
-            match self.client.get(&url).headers(headers.clone()).send() {
+            match self.get_client().get(&url).headers(headers.clone()).send() {
                 Ok(response) if response.status().is_success() => {
                     if let Ok(body) = response.text() {
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
@@ -350,7 +374,7 @@ impl ZhiXueYunResolver {
         for attempt in 0..max_retries {
             let headers = self.get_auth_headers(None)?;
 
-            match self.client.get(url).headers(headers.clone()).send() {
+            match self.get_client().get(url).headers(headers.clone()).send() {
                 Ok(response) if response.status().is_success() => {
                     match response.bytes() {
                         Ok(bytes) => {

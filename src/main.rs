@@ -243,6 +243,13 @@ fn main() {
         .with_target(false)
         .init();
 
+    // 预初始化共享 HTTP 客户端，避免在 runtime 内触发 once_cell panic
+    let _ = crate::http_client::shared();
+
+    // 预初始化 ZhiXueYunResolver 的 blocking client（必须在 runtime 创建前）
+    // 否则 reqwest::blocking::Client 会在 runtime 内创建阻塞池导致 panic
+    let _ = crate::platform::ZhiXueYunResolver::new_preinit();
+
     // 运行CLI应用 - 使用当前线程 runtime 避免 blocking pool panic
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
