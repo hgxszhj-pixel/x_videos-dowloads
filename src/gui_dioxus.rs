@@ -663,10 +663,13 @@ fn AppComponent() -> Element {
                             let progress_arc_clone = progress_arc.clone();
                             let speed_arc_clone = speed_arc.clone();
 
+                            // 提前获取 format_id，避免 borrow 问题
+                            let format_id = state.read().selected_format_id.clone();
+
                             // 使用 spawn 在后台异步执行下载
                             let mut state = state;
                             spawn(async move {
-                                match start_download_impl(&url, &title, Some(progress_arc_clone), Some(speed_arc_clone)).await {
+                                match start_download_impl(&url, &title, Some(progress_arc_clone), Some(speed_arc_clone), format_id).await {
                                     Ok(_) => {
                                         state.write().is_downloading = false;
                                         state.write().status_message = "Download completed".to_string();
@@ -938,6 +941,7 @@ async fn start_download_impl(
     title: &str,
     progress_arc: Option<Arc<AtomicU32>>,
     speed_arc: Option<Arc<AtomicU64>>,
+    format_id: Option<String>,
 ) -> Result<(), String> {
     let config = AppConfig::load().map_err(|e| e.to_string())?;
     let output_dir = if config.output_dir.to_string_lossy().is_empty() {
@@ -958,7 +962,12 @@ async fn start_download_impl(
     };
     let output_path = output_dir.join(&filename);
 
-    let request = DownloadRequest::new(url, &output_path);
+    // 构建 DownloadRequest，传递 format_id
+    let request = if let Some(fid) = format_id {
+        DownloadRequest::new(url, &output_path).with_format_id(fid)
+    } else {
+        DownloadRequest::new(url, &output_path)
+    };
 
     // 创建进度回调
     type ProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync>;
@@ -1000,7 +1009,7 @@ async fn batch_download_impl(
             match fetch_video_info_impl(&url).await {
                 Ok(info) => {
                     // 下载视频
-                    match start_download_impl(&info.url, &info.title, progress_arc, speed_arc).await {
+                    match start_download_impl(&info.url, &info.title, progress_arc, speed_arc, None).await {
                         Ok(_) => (url, true, "completed".to_string(), 1.0),
                         Err(e) => (url, false, format!("failed: {}", e), 0.0),
                     }
