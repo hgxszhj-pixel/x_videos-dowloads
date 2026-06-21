@@ -11,7 +11,7 @@ use notify::{Watcher, RecursiveMode};
 
 use crate::downloader::VideoDownloader;
 use crate::types::DownloadProgress;
-use crate::history::History;
+use crate::history::{History, HistoryEntry, DownloadStatus, Platform};
 use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver};
 use crate::yt_dlp::YtDlp;
 use crate::fxtwitter::FxTwitterResolver;
@@ -20,6 +20,70 @@ use crate::types::{DownloadRequest};
 
 /// 配置热重载状态
 static CONFIG_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 全局 History 实例（使用 Mutex 支持内部可变）
+static GLOBAL_HISTORY: std::sync::Mutex<Option<History>> = std::sync::Mutex::new(None);
+
+/// 初始化全局 History
+fn init_global_history(history: History) {
+    let mut h = GLOBAL_HISTORY.lock().expect("init_global_history: failed to lock GLOBAL_HISTORY");
+    *h = Some(history);
+}
+
+/// 添加下载完成记录到历史（自动清理超过 100 条的旧记录）
+const MAX_HISTORY_ENTRIES: usize = 100;
+
+fn add_completed_download(title: String, url: String, path: Option<PathBuf>) {
+    if let Ok(mut h) = GLOBAL_HISTORY.lock() {
+        if let Some(history) = h.as_mut() {
+            let entry = HistoryEntry {
+                id: uuid::Uuid::new_v4(),
+                url,
+                title: Some(title.clone()),
+                file_path: path,
+                file_size: None,
+                downloaded_at: chrono::Utc::now(),
+                duration_secs: None,
+                status: DownloadStatus::Completed,
+                platform: Platform::Other,
+                error_message: None,
+            };
+            let _ = history.add_entry_with_auto_cleanup(entry, MAX_HISTORY_ENTRIES);
+        }
+    }
+}
+
+/// 获取全局历史的 UI 项目（用于显示）
+fn get_history_items() -> Vec<HistoryItem> {
+    if let Ok(h) = GLOBAL_HISTORY.lock() {
+        if let Some(history) = h.as_ref() {
+            let entries = history.get_entries();
+            return entries.iter().rev().map(|e| {
+                let duration = e.duration_secs.map(|d| format!("{}:{:02}", (d as i64) / 60, (d as i64) % 60)).unwrap_or_default();
+                let completed_at = e.downloaded_at.format("%Y-%m-%d %H:%M").to_string();
+                let path = e.file_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                let platform_name = format!("{:?}", e.platform);
+                HistoryItem {
+                    title: e.title.clone().unwrap_or_default(),
+                    uploader: platform_name,
+                    duration,
+                    path,
+                    completed_at,
+                }
+            }).collect();
+        }
+    }
+    Vec::new()
+}
+
+/// 清空历史
+fn clear_global_history() {
+    if let Ok(mut h) = GLOBAL_HISTORY.lock() {
+        if let Some(history) = h.as_mut() {
+            let _ = history.clear();
+        }
+    }
+}
 
 /// 重新加载配置并触发版本递增
 fn reload_config() {
@@ -57,10 +121,11 @@ pub fn run_gui() {
     }
 
     // 初始化 History
+    // 初始化全局 History 实例（带缓存）
     let data_dir = directories::ProjectDirs::from("com", "x-video-downloader", "X Video Downloader")
         .map(|dirs| dirs.data_dir().to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let _history = match History::new(&data_dir) {
+    let history = match History::new(&data_dir) {
         Ok(h) => h,
         Err(e) => {
             error!("Failed to initialize history: {}", e);
@@ -68,6 +133,7 @@ pub fn run_gui() {
             return;
         }
     };
+    init_global_history(history);
 
     // 启动 Dioxus Desktop
     launch(AppComponent);
@@ -263,6 +329,12 @@ fn AppComponent() -> Element {
     let video_info = use_signal(VideoInfoDisplay::default);
 
     // 启动配置文件监控
+    // 加载历史记录到 UI state
+    use_effect(move || {
+        let history_items = get_history_items();
+        state.write().history = history_items;
+    });
+
     use_effect(move || {
         let config_path = AppConfig::config_path();
         if let Some(path) = config_path {
@@ -672,8 +744,14 @@ fn AppComponent() -> Element {
                                 match start_download_impl(&url, &title, Some(progress_arc_clone), Some(speed_arc_clone), format_id).await {
                                     Ok(_) => {
                                         state.write().is_downloading = false;
+                                        // Stream copy 合并很快，短暂显示合并状态
+                                        state.write().status_message = "🔄 合并中...".to_string();
+                                        // 等待 1.5 秒让 ffmpeg 完成 stream copy 合并
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
                                         state.write().status_message = "Download completed".to_string();
                                         state.write().download_progress = 1.0;
+                                        // 添加到历史记录
+                                        add_completed_download(title.clone(), url.clone(), None);
                                         send_notification("Download Complete", &format!("{} has been downloaded successfully", title));
                                     }
                                     Err(e) => {
@@ -892,10 +970,24 @@ fn AppComponent() -> Element {
                                 "下载历史"
                             }
                         }
-                        button {
-                            onclick: move |_| { state.write().show_history = false; },
-                            style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: #f0f0f0; color: #888; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
-                            "×"
+                        div {
+                            style: "display: flex; gap: 8px;",
+                            button {
+                                onclick: move |_| {
+                                    // 清空全局历史
+                                    clear_global_history();
+                                    // 清空 UI 状态中的历史
+                                    state.write().history.clear();
+                                    state.write().show_history = false;
+                                },
+                                style: "padding: 6px 12px; background: #ff4444; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;",
+                                "🗑️ 清空历史"
+                            }
+                            button {
+                                onclick: move |_| { state.write().show_history = false; },
+                                style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: #f0f0f0; color: #888; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
+                                "×"
+                            }
                         }
                     }
                     if state.read().history.is_empty() {

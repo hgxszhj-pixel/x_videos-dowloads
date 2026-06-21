@@ -278,6 +278,9 @@ impl YtDlp {
             "download:%(progress.downloaded_bytes)s/%(progress.total_bytes)s %(progress.percent)s%%".to_string(),
             "-o".to_string(),
             output_path.to_string(),
+            // 加速合并：允许 ffmpeg 自动处理流映射
+            "--ppa".to_string(),
+            "ffmpeg:-c:v copy -c:a copy -movflags +faststart".to_string(),
             "--concurrent-fragments".to_string(),
             "4".to_string(),
             "--fragment-retries".to_string(),

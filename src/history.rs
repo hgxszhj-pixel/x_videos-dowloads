@@ -5,8 +5,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+use tracing::info;
 use uuid::Uuid;
-use csv;
 
 /// 下载状态
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -182,20 +183,32 @@ impl History {
 
     /// 加载历史记录
     fn load(&mut self) -> Result<()> {
-        if self.history_file.exists() {
+        let start = Instant::now();
+        let history_count = if self.history_file.exists() {
             let content = std::fs::read_to_string(&self.history_file)?;
+            let count = if let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+                entries.len()
+            } else {
+                0
+            };
             self.entries = serde_json::from_str(&content).unwrap_or_default();
-        }
+            count
+        } else {
+            0
+        };
         if self.bookmark_file.exists() {
             let content = std::fs::read_to_string(&self.bookmark_file)?;
             self.bookmarks = serde_json::from_str(&content).unwrap_or_default();
         }
+        info!("History loaded: {} entries in {:?}", history_count, start.elapsed());
         Ok(())
     }
 
     /// 保存历史记录
     fn save(&self) -> Result<()> {
-        std::fs::create_dir_all(self.history_file.parent().unwrap())?;
+        if let Some(parent) = self.history_file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::write(&self.history_file, serde_json::to_string_pretty(&self.entries)?)?;
         std::fs::write(&self.bookmark_file, serde_json::to_string_pretty(&self.bookmarks)?)?;
         Ok(())
@@ -247,6 +260,23 @@ impl History {
     /// 获取最近 N 条历史
     pub fn get_recent(&self, count: usize) -> &[HistoryEntry] {
         &self.entries[..count.min(self.entries.len())]
+    }
+
+    /// 添加历史条目（自动清理超过限制的旧记录）
+    pub fn add_entry_with_auto_cleanup(&mut self, entry: HistoryEntry, max_entries: usize) -> Result<()> {
+        self.entries.insert(0, entry);
+        // 如果超过限制，删除最旧的条目
+        if self.entries.len() > max_entries {
+            self.entries.truncate(max_entries);
+        }
+        self.save()?;
+        Ok(())
+    }
+
+    /// 获取历史条数
+    #[allow(dead_code)]
+    pub fn count(&self) -> usize {
+        self.entries.len()
     }
 
     /// 搜索历史
@@ -338,11 +368,17 @@ impl History {
         &self.entries
     }
 
+    /// 获取所有历史条目的克隆（线程安全访问）
+    pub fn get_entries(&self) -> Vec<HistoryEntry> {
+        self.entries.clone()
+    }
+
     /// 导出历史为 CSV
+    #[allow(dead_code)]
     pub fn export_csv(&self, path: &Path) -> Result<()> {
         let mut wtr = csv::Writer::from_path(path)?;
         // 写入表头
-        wtr.write_record(&["ID", "URL", "Title", "File Path", "File Size (bytes)", "Downloaded At", "Duration (s)", "Status", "Platform", "Error"])?;
+        wtr.write_record(["ID", "URL", "Title", "File Path", "File Size (bytes)", "Downloaded At", "Duration (s)", "Status", "Platform", "Error"])?;
         for entry in &self.entries {
             wtr.write_record(&[
                 entry.id.to_string(),

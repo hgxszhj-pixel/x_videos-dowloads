@@ -139,13 +139,13 @@ impl LanguagePack {
 /// 获取翻译文本
 #[allow(dead_code)]
 pub fn tr(key: &str) -> String {
-    let lang = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG for translation");
+    let lang = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
     lang.texts.get(key).cloned().unwrap_or_else(|| key.to_string())
 }
 
 /// 获取当前字体列表（用于 Slint）
 pub fn get_font_family() -> String {
-    let lang = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG for font family");
+    let lang = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
     let fonts = &lang.fonts;
 
     if fonts.enable_fallback {
@@ -160,14 +160,14 @@ pub fn get_font_family() -> String {
 
 /// 切换语言
 pub fn set_language(lang: &str) {
-    let mut current = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG for language switch");
+    let mut current = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
     *current = LanguagePack::load_builtin(lang);
 }
 
 /// 获取当前语言代码
 #[allow(dead_code)]
 pub fn get_current_lang() -> String {
-    let lang = CURRENT_LANG.lock().expect("i18n: failed to lock CURRENT_LANG to get current language");
+    let lang = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
     lang.lang.clone()
 }
 
