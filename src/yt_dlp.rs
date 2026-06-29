@@ -2,7 +2,7 @@
 //!
 //! 调用 yt-dlp 获取视频信息、解析格式、获取下载链接
 
-use crate::types::{DownloadError, VideoFormat, VideoInfo};
+use crate::types::{DownloadError, DownloadStrategy, VideoFormat, VideoInfo};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::process::Command;
@@ -218,11 +218,22 @@ impl YtDlp {
             .as_str()
             .map(|s| s.to_string());
 
-        let mut video_info = VideoInfo::new(title, url.to_string());
+        let mut video_info = VideoInfo::new(title, url.to_string(), None);
         video_info.description = description;
         video_info.uploader = uploader;
         video_info.duration = duration;
         video_info.thumbnail = thumbnail;
+
+        // 从 yt-dlp JSON 中提取直接视频 URL（优先使用，优于原始 URL）
+        // 某些平台（如 YouTube）URL 在 formats 中，不在顶层
+        let mut direct_url_from_formats: Option<String> = None;
+
+        if let Some(direct_url) = json["url"].as_str() {
+            if !direct_url.is_empty() {
+                info!("使用 yt-dlp 提取的直接视频 URL");
+                video_info.url = direct_url.to_string();
+            }
+        }
 
         // 解析格式列表
         if let Some(formats) = json["formats"].as_array() {
@@ -243,6 +254,15 @@ impl YtDlp {
 
                     let format_note = fmt["format_note"].as_str().map(|s| s.to_string());
 
+                    // 如果顶层没有 url，从 format 中提取第一个有效的视频 URL
+                    if direct_url_from_formats.is_none() && !audio_only {
+                        if let Some(url) = fmt["url"].as_str() {
+                            if !url.is_empty() && url.starts_with("http") {
+                                direct_url_from_formats = Some(url.to_string());
+                            }
+                        }
+                    }
+
                     video_info.formats.push(VideoFormat {
                         format_id: format_id.to_string(),
                         ext,
@@ -254,6 +274,15 @@ impl YtDlp {
                         format_note,
                     });
                 }
+            }
+        }
+
+        // 如果顶层没有 url 但 formats 有，使用第一个有效的，并改用 Direct 策略（支持并行分段）
+        if video_info.url == url || video_info.url.is_empty() {
+            if let Some(url) = direct_url_from_formats {
+                info!("使用 formats 中的直接视频 URL");
+                video_info.url = url;
+                video_info.download_strategy = DownloadStrategy::Native;
             }
         }
 

@@ -64,7 +64,7 @@ fn test_download_status_is_active() {
 
 #[test]
 fn test_video_info_creation() {
-    let info = VideoInfo::new("Test Video".to_string(), "https://x.com/test".to_string());
+    let info = VideoInfo::new("Test Video".to_string(), "https://x.com/test".to_string(), None);
     assert_eq!(info.title, "Test Video");
     assert_eq!(info.url, "https://x.com/test");
     assert!(info.duration.is_none());
