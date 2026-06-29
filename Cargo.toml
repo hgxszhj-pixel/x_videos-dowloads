@@ -53,6 +53,9 @@ bytes = "1.5"
 # 临时文件管理
 tempfile = "3.10"
 
+# LRU 缓存
+lru = "0.10"
+
 # 单例模式
 once_cell = "1.19"
 

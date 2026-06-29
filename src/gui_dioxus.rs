@@ -12,7 +12,7 @@ use notify::{Watcher, RecursiveMode};
 use crate::downloader::VideoDownloader;
 use crate::types::DownloadProgress;
 use crate::history::{History, HistoryEntry, DownloadStatus, Platform};
-use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver};
+use crate::platform::{ResolverRegistry, TikTokResolver, DouYinResolver, BilibiliResolver, YouTubeResolver};
 use crate::yt_dlp::YtDlp;
 use crate::fxtwitter::FxTwitterResolver;
 use crate::config::AppConfig;
@@ -207,10 +207,12 @@ pub struct HistoryItem {
 #[derive(Default, Clone)]
 pub struct VideoInfoDisplay {
     pub url: String,
+    pub original_url: Option<String>,  // 原始 URL（用于 yt-dlp 格式选择）
     pub title: String,
     pub uploader: String,
     pub duration: String,
     pub formats: Vec<VideoFormatDisplay>,  // 存储可选择的格式列表
+    pub download_strategy: crate::types::DownloadStrategy,
 }
 
 #[derive(Default, Clone)]
@@ -741,7 +743,7 @@ fn AppComponent() -> Element {
                             // 使用 spawn 在后台异步执行下载
                             let mut state = state;
                             spawn(async move {
-                                match start_download_impl(&url, &title, Some(progress_arc_clone), Some(speed_arc_clone), format_id).await {
+                                match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), format_id, crate::types::DownloadStrategy::Native).await {
                                     Ok(_) => {
                                         state.write().is_downloading = false;
                                         // Stream copy 合并很快，短暂显示合并状态
@@ -1030,10 +1032,12 @@ fn AppComponent() -> Element {
 /// 同步下载 - 使用 VideoDownloader
 async fn start_download_impl(
     url: &str,
+    original_url: Option<String>,
     title: &str,
     progress_arc: Option<Arc<AtomicU32>>,
     speed_arc: Option<Arc<AtomicU64>>,
     format_id: Option<String>,
+    strategy: crate::types::DownloadStrategy,
 ) -> Result<(), String> {
     let config = AppConfig::load().map_err(|e| e.to_string())?;
     let output_dir = if config.output_dir.to_string_lossy().is_empty() {
@@ -1054,12 +1058,15 @@ async fn start_download_impl(
     };
     let output_path = output_dir.join(&filename);
 
-    // 构建 DownloadRequest，传递 format_id
-    let request = if let Some(fid) = format_id {
-        DownloadRequest::new(url, &output_path).with_format_id(fid)
-    } else {
-        DownloadRequest::new(url, &output_path)
-    };
+    // 构建 DownloadRequest
+    let mut request = DownloadRequest::new(url, &output_path);
+    if let Some(fid) = format_id {
+        request = request.with_format_id(fid);
+    }
+    if let Some(orig_url) = original_url {
+        request = request.with_original_url(orig_url);
+    }
+    request = request.with_strategy(strategy);
 
     // 创建进度回调
     type ProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync>;
@@ -1101,7 +1108,7 @@ async fn batch_download_impl(
             match fetch_video_info_impl(&url).await {
                 Ok(info) => {
                     // 下载视频
-                    match start_download_impl(&info.url, &info.title, progress_arc, speed_arc, None).await {
+                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, info.download_strategy).await {
                         Ok(_) => (url, true, "completed".to_string(), 1.0),
                         Err(e) => (url, false, format!("failed: {}", e), 0.0),
                     }
@@ -1142,18 +1149,28 @@ async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay, String> {
             tiktok_resolver = tiktok_resolver.with_tokens(tokens);
         }
     }
+
+    // 按优先级注册解析器（第一个匹配的会被选中）
+    registry.register(FxTwitterResolver::new()); // x.com/twitter.com
     registry.register(tiktok_resolver);
     registry.register(douyin_resolver);
     registry.register(BilibiliResolver::new());
+    registry.register(YouTubeResolver::new()); // youtube.com
+    // 其他平台使用默认的 YtDlpResolver
 
-    let resolver = registry.select_resolver(url);
-    let result = resolver.get_video_info(url).await;
-
-    match result {
+    // 使用 try_resolve_all 尝试所有解析器
+    match registry.try_resolve_all(url).await {
         Ok(info) => {
             let duration = info.duration.map(|d| format!("{}:{:02}", d / 60, d % 60)).unwrap_or_default();
+            // 如果 url 和输入 url 不同，说明 url 被修改了，保存原始 url
+            let original_url = if info.url != url {
+                Some(url.to_string())
+            } else {
+                None
+            };
             Ok(VideoInfoDisplay {
                 url: info.url.clone(),
+                original_url,
                 title: info.title,
                 uploader: info.uploader.unwrap_or_default(),
                 duration,
@@ -1163,53 +1180,9 @@ async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay, String> {
                     ext: f.ext.clone(),
                     filesize: f.filesize.map(format_file_size).unwrap_or_default(),
                 }).collect(),
+                download_strategy: info.download_strategy,
             })
         }
-        Err(e) => {
-            warn!("Resolver failed: {}, trying direct YtDlp...", e);
-            let ytdlp = YtDlp::new();
-            match ytdlp.get_video_info(url) {
-                Ok(info) => {
-                    let duration = info.duration.map(|d| format!("{}:{:02}", d / 60, d % 60)).unwrap_or_default();
-                    Ok(VideoInfoDisplay {
-                        url: info.url.clone(),
-                        title: info.title,
-                        uploader: info.uploader.unwrap_or_default(),
-                        duration,
-                        formats: info.formats.iter().map(|f| VideoFormatDisplay {
-                            format_id: f.format_id.clone(),
-                            resolution: f.resolution.clone().unwrap_or_default(),
-                            ext: f.ext.clone(),
-                            filesize: f.filesize.map(format_file_size).unwrap_or_default(),
-                        }).collect(),
-                    })
-                }
-                Err(ytdlp_err) => {
-                    warn!("YtDlp also failed: {}", ytdlp_err);
-                    if url.contains("twitter.com") || url.contains("x.com") {
-                        match FxTwitterResolver::new().get_video_info(url).await {
-                            Ok(info) => {
-                                let duration = info.duration.map(|d| format!("{}:{:02}", d / 60, d % 60)).unwrap_or_default();
-                                Ok(VideoInfoDisplay {
-                                    url: info.url.clone(),
-                                    title: info.title,
-                                    uploader: info.uploader.unwrap_or_default(),
-                                    duration,
-                                    formats: info.formats.iter().map(|f| VideoFormatDisplay {
-                                        format_id: f.format_id.clone(),
-                                        resolution: f.resolution.clone().unwrap_or_default(),
-                                        ext: f.ext.clone(),
-                                        filesize: f.filesize.map(format_file_size).unwrap_or_default(),
-                                    }).collect(),
-                                })
-                            }
-                            Err(_) => Err("Failed to fetch video info".to_string()),
-                        }
-                    } else {
-                        Err(format!("Failed to fetch video info: {}", ytdlp_err))
-                    }
-                }
-            }
-        }
+        Err(e) => Err(format!("Failed to fetch video info: {}", e)),
     }
 }
