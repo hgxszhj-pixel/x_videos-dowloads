@@ -1,173 +1,158 @@
 # Handoff Document
 
-## Session: 2026-06-17
+## Session: 2026-06-26
+
+### 已完成
+
+| 改进 | 文件 | 说明 |
+|------|------|------|
+| Claude Code 安全配置改进 | `~/.claude/settings.json` | 添加 22 条 allow/deny 权限规则 |
+| PreToolUse Hooks | `~/.claude/hooks/pre-tool-use/block/` | 新增 3 个危险命令拦截 Hook |
+| CLAUDE.md 安全规则 | `~/.claude/CLAUDE.md` | 添加安全规则和 Sub-Agent 规范 |
+| 第二大脑 Obsidian vault 建设 | `~/obsidian/second-brain/` | llm-wiki 分层结构 + 13 篇文档 |
+
+**改动详情:**
+
+1. **settings.json permissions**:
+   - allow: 22 条（git/cargo/read 常用操作）
+   - deny: 22 条（rm -rf, git push --force, .env/*.key 读取等）
+
+2. **PreToolUse Hooks**:
+   - `curl-bash.json`: 拦截 `curl | bash` 管道命令
+   - `dangerous-rm.json`: 拦截 `rm -rf` 等危险删除
+   - `dangerous-git-force.json`: 拦截 `git push --force` 等危险 git 操作
+
+3. **CLAUDE.md 新增内容**:
+   - 安全规则：禁止读取敏感文件、拦截危险 git 操作
+   - Sub-Agent 规范：Explore/Plan 只读、权限最小化、任务完成后汇报结论
+
+**备份位置:**
+- `~/.claude/settings.json.bak.20260626_*`
+- 回滚：`cp ~/.claude/settings.json.bak.20260626_* ~/.claude/settings.json`
 
 ---
 
-## 1. Codex DeepSeek Configuration Fix
+### 第二大脑 / Obsidian vault 建设
 
-### Problem
-Codex was failing with: `Missing environment variable: ***REDACTED_DEEPSEEK_API_KEY***`
+**Vault**: `~/obsidian/second-brain/`（Obsidian 配置路径）
 
-### Root Cause
-`config.toml` had `env_key` set to the actual API key value instead of an environment variable name.
-
-### Solution
-1. Changed `env_key` from `***REDACTED_DEEPSEEK_API_KEY***` to `DEEPSEEK_API_KEY`
-2. Added `export DEEPSEEK_API_KEY="***REDACTED_DEEPSEEK_API_KEY***"` to `~/.zshrc`
-3. Changed `deepseek-chat` provider from local proxy (`http://127.0.0.1:15721/v1`) to official API (`https://api.deepseek.com/v1`)
-
-### Files Modified
-- `~/.codex/config.toml`
-
----
-
-## 2. GUI History Clear Button
-
-### Problem
-Large `history.json` file causing slow GUI startup due to JSON parsing overhead.
-
-### Solution
-Added "Clear History" button to the history panel in Dioxus GUI.
-
-### Features
-- Red button with trash icon: `🗑️ 清空历史`
-- Clears both UI state and physical `history.json` file (writes `[]`)
-- Located in the history panel header, next to the close button
-
-### Files Modified
-- `src/gui_dioxus.rs` (lines ~895-910)
-
-### Verification
-- `cargo check` passes with 0 errors
-
----
-
-## Recent Commits (for reference)
-
-| Commit | Description |
-|--------|-------------|
-| `227b20b` | docs: update HANDOFF.md with GUI optimization and complete summary |
-| `49b2efd` | perf: cache yt-dlp availability and version checks |
-| `0d64257` | feat: pass format_id to download request for format selection |
-| `79494f9` | fix: resolve tokio runtime panic from blocking client initialization |
-| `de4347a` | perf: add progress threshold filtering to reduce UI updates |
-
----
-
-## Key Architecture Notes
-
-### GUI Startup Flow
+**llm-wiki 分层结构**:
 ```
-run_gui()
-  ├─ YtDlp::new().is_available()  → Already cached via OnceLock ✅
-  ├─ History::new()               → Parses history.json (potential bottleneck)
-  └─ launch(AppComponent)         → Dioxus framework init
+wiki/
+├── concepts/      # 消化的概念页
+│   ├── dioxus-gui.md
+│   ├── rust-downloader-pattern.md
+│   └── yt-dlp-integration.md
+├── entities/      # 实体页（暂无）
+├── raw/
+│   ├── articles/  # toutiao 文章（3篇）
+│   └── papers/     # PDF 转 Markdown（10篇网络安全培训教材）
+├── index.md        # Wiki 索引
+└── log.md          # append-only 操作日志
+sources/
+├── learnings/      # 原始学习笔记（4篇）
+└── projects/       # 项目笔记
 ```
 
-### yt-dlp Check (Already Optimized)
-```rust
-// src/yt_dlp.rs:347 - Uses OnceLock, no repeated process spawns
-pub fn is_available(&self) -> bool {
-    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(|| { ... })
-}
-```
+**安装的 Obsidian 插件**:
+- `share-to-save`: 云朵按钮保存网页到 vault（已配置 `outputFolder: wiki/raw/articles`）
+- `fast-note-sync`: 即时同步 vault 文件变更
 
-### History Clear Method (Already Exists)
-```rust
-// src/history.rs:275
-pub fn clear(&mut self) -> Result<()> {
-    self.entries.clear();
-    self.save()
-}
-```
+**Poppler 已安装**: `brew install poppler` → 可用 `pdftotext` 提取 PDF 文字
 
----
+**存入 vault 的内容**:
 
-## Current Status
+*Toutiao 文章（3篇）*:
+- `wiki/raw/articles/toutiao-claude-code-keng-7-core-tips.md` — Claude Code 7个核心心法
+- `wiki/raw/articles/toutiao-omnigent-agent-framework.md` — omnigent AI Agent 统一框架
+- `wiki/raw/articles/toutiao-cua-driver-hermes-agent.md` — Cua Driver 让 AI 自己操作鼠标
 
-- **GUI**: Functional, with clear history button added
-- **CLI**: Working
-- **Codex**: DeepSeek API configured and working
-- **Build**: `cargo check` passes
+*网络安全培训 PDF（10篇）*:
+- `wiki/raw/papers/4A系统介绍和管理要求.md` — 账号/授权/认证/审计
+- `wiki/raw/papers/IT资产基线治理培训.md`
+- `wiki/raw/papers/安全资产管理培训.md`
+- `wiki/raw/papers/定级备案交流-张若澜.md`
+- `wiki/raw/papers/关注网络信息安全，提高风险防范意识（全省培训）v3.md`
+- `wiki/raw/papers/湖北电信2021年度网络安全管理与技能培训课件0725.md`
+- `wiki/raw/papers/互联网暴露面管理和探雷行动.md`
+- `wiki/raw/papers/日志采集.md`
+- `wiki/raw/papers/渗透测试准备-信息收集.md`
+- `wiki/raw/papers/网络安全工单管控(田丹).md`
 
----
+**MemPalace 知识图谱**: 659 drawers，新增 triples:
+- `x_videos-dowloads → has_learning → Dioxus GUI onclick 须用 tokio::spawn`
+- `x_videos-dowloads → has_learning → 进度条存储格式 0-10000`
+- `claude-code-best-practices → source → toutiao 7个心法`
+- `omnigent → has_capability → AI Agent统一接口框架`
 
-## 4. Video Merge Speed Optimization (2026-06-18)
+**INGEST 的项目经验**:
+- `sources/learnings/dioxus-gui-onclick-crash-root-cause.md` — onclick 不能直接 await
+- `sources/projects/x-videos-downloads.md` — 新增 2 条经验
+- `wiki/concepts/dioxus-gui.md`、`yt-dlp-integration.md`、`rust-downloader-pattern.md`
+- `wiki/index.md`、`wiki/log.md`
 
-### Problem
-- Video merging after download was slow due to default ffmpeg re-encoding
-
-### Solution
-Added `--ffmpeg-args` parameter to yt-dlp for fast stream copy:
-```rust
-"--ffmpeg-args".to_string(),
-"-c:v copy -c:a copy -map 0:v:0 -map 0:a:0 -movflags +faststart".to_string(),
-```
-
-### Key Changes
-- `-c:v copy -c:a copy`: Stream copy (no re-encoding, instant)
-- `-map 0:v:0 -map 0:a:0`: Explicitly map first video/audio tracks
-- `-movflags +faststart`: Enable fast start for web playback
-
-### Files Modified
-- `src/yt_dlp.rs`: Added ffmpeg fast copy arguments
+**参考文章**:
+- [用Claude Code写代码不踩坑：7个核心实操心法](https://www.toutiao.com/article/7654537249421378090/)
+- [omnigent开源：一个框架打通所有Agent](https://www.toutiao.com/article/7654543242981835298/)
+- [Cua Driver让AI自己点鼠标](https://www.toutiao.com/article/7655255272239252008/)
 
 ---
 
-## Pending / Future Work
+## Session: 2026-06-25
 
-1. Monitor if `history.json` growth causes startup delays (100 entry limit added)
-2. Consider adding progress bar during merge phase
+### 已完成
 
----
+| 优化 | 文件 | 说明 |
+|------|------|------|
+| HeadCache 简化 | `src/downloader.rs`, `Cargo.toml` | ~45行 → ~5行，用 `lru` crate 替代手动 LRU 实现 |
 
-## 3. History Panel Fix (2026-06-18)
+**改动详情:**
+- 删除: 手动 Vec + RwLock LRU 实现
+- 新增: `lru = "0.10"` crate
+- 类型: `HeadCache = lru::LruCache<String, u64>`
+- 100条目 LRU 自动管理
 
-### Problem
-- GUI history panel was always empty despite downloads completing
-- `_history` variable in `run_gui()` was created but never used (dropped immediately)
-- `AppState.history` was initialized as empty `Vec::new()` and never populated
-- Download completion callback didn't add entries to history
+**Skills 状态:**
+- ✅ ponytail AGENTS.md 已安装到项目根目录
+- ✅ OpenCLI v1.8.4 已全局安装 (`npm install -g @jackwener/opencli`)
+- ✅ OpenCLI Chrome 扩展已安装 (`~/Downloads/opencli-extension`)
 
-### Solution
-1. **Global History Instance**: Added `GLOBAL_HISTORY: std::sync::Mutex<Option<History>>` with `OnceLock`-style pattern
-2. **Initialization**: Modified `run_gui()` to call `init_global_history(history)` instead of dropping the History
-3. **Download Completion**: `add_completed_download()` called in download success callback
-4. **UI Sync**: `use_effect()` loads history from global state on mount
-5. **Clear History**: Updated to use `clear_global_history()` function
-6. **Auto Cleanup**: Added `MAX_HISTORY_ENTRIES = 100` limit, auto-prunes old entries
+**Tools 验证**:
+- `opencli hackernews top --limit 5` ✅
+- `opencli bilibili hot --limit 5` ✅
 
-### Files Modified
-- `src/gui_dioxus.rs`:
-  - Added global history management functions
-  - Modified download completion callback
-  - Updated clear history button
-  - Added auto cleanup with 100 entry limit
-- `src/history.rs`:
-  - Added `get_entries()` method for thread-safe access
-  - Added `add_entry_with_auto_cleanup()` for automatic pruning
-  - Added `count()` method
-
-### Key Code Additions
-```rust
-static GLOBAL_HISTORY: std::sync::Mutex<Option<History>> = std::sync::Mutex::new(None);
-const MAX_HISTORY_ENTRIES: usize = 100;
-
-fn add_completed_download(title: String, url: String, path: Option<PathBuf>) {
-    if let Ok(mut h) = GLOBAL_HISTORY.lock() {
-        if let Some(history) = h.as_mut() {
-            let entry = HistoryEntry { ... };
-            let _ = history.add_entry_with_auto_cleanup(entry, MAX_HISTORY_ENTRIES);
-        }
-    }
-}
-```
-
-### Verification
-- `cargo check` passes with 0 errors
+**验证**: `cargo check` ✅ `cargo clippy` ✅
 
 ---
 
-_Generated: 2026-06-18_
+## Session: 2026-06-22
+
+### 已完成
+
+| 修复 | 文件 |
+|------|------|
+| Resolver 逻辑修复（x.com 走 FxTwitterResolver） | `src/fxtwitter.rs`, `src/gui_dioxus.rs` |
+| `try_resolve_all` 添加 `default_resolver` 兜底 | `src/platform/mod.rs` |
+| GUI 注册 `YouTubeResolver` | `src/gui_dioxus.rs` |
+| YouTube 直接 URL 提取（从 `formats[]`） | `src/yt_dlp.rs` |
+| YouTube 下载添加 yt-dlp 合并策略（`download_strategy`） | `src/types.rs`, `src/downloader.rs` |
+
+**验证**: `cargo build --release` ✅ `cargo test` ✅ 349 passed
+
+### Skills 安装状态
+- ✅ 已安装 60+ skills
+- ❌ 以下 10 个 skills **不存在**于 skills.sh 生态：Agent Swarm, Playwright Scout, Terminal Sense, CI Fixer, Release Notes, Data Cleaner, Screenshot QA, Changelog Miner, Dependency Guard, Nightly Runner
+
+---
+
+## Session: 2026-06-21
+
+| 修复 | 文件 |
+|------|------|
+| `do_download` 进度回调节流（1% 阈值 + 100ms 间隔） | `src/downloader.rs` |
+| douyin.rs nested Runtime 修复（`spawn_blocking`） | `src/platform/douyin.rs` |
+| STUN 公网 IP 检测集成 | `src/collaboration/{types,server/db,server/handler,client/ws}.rs` |
+| 补充测试：`test_resolver_registry_fallback`, `test_calculate_backoff_default` | — |
+| yt-dlp JSON `url` 字段提取 | `src/yt_dlp.rs` |
+
+**验证**: `cargo build --release` ✅ `cargo test` ✅ 349 passed, GUI 下载 x.com ✅
