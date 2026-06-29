@@ -190,6 +190,16 @@ impl Database {
         Ok(())
     }
 
+    /// 更新设备的公网地址（通过 STUN 检测）
+    pub fn update_device_public_addr(&self, device_id: Uuid, public_ip: &str, public_port: u16) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE devices SET public_ip = ?1, public_port = ?2 WHERE id = ?3",
+            params![public_ip, public_port, device_id.to_string()],
+        )?;
+        Ok(())
+    }
+
     /// 获取团队的所有设备
     pub fn get_team_devices(&self, team_id: Uuid) -> Result<Vec<Device>> {
         let conn = self.conn.lock().unwrap();

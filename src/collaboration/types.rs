@@ -113,6 +113,10 @@ pub enum ClientMessage {
     LeaveTeam {
         device_id: Uuid,
     },
+    UpdatePublicAddr {
+        public_ip: String,
+        public_port: u16,
+    },
 }
 
 /// 服务器消息 (服务器 -> 设备)

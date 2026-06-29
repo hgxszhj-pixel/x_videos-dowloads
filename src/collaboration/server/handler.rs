@@ -10,6 +10,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
+use tracing::info;
 use uuid::Uuid;
 
 /// WebSocket 连接会话信息
@@ -201,6 +202,9 @@ impl MessageHandler {
             ClientMessage::LeaveTeam { .. } => {
                 self.handle_leave_team(device_id).await;
             }
+            ClientMessage::UpdatePublicAddr { public_ip, public_port } => {
+                self.handle_update_public_addr(device_id, public_ip, public_port).await;
+            }
         }
     }
 
@@ -208,6 +212,15 @@ impl MessageHandler {
     async fn handle_heartbeat(&self, device_id: Uuid) {
         if let Err(e) = self.db.update_device_heartbeat(device_id) {
             eprintln!("更新心跳失败: {}", e);
+        }
+    }
+
+    /// 处理公网地址更新（通过 STUN 检测）
+    async fn handle_update_public_addr(&self, device_id: Uuid, public_ip: String, public_port: u16) {
+        if let Err(e) = self.db.update_device_public_addr(device_id, &public_ip, public_port) {
+            eprintln!("更新公网地址失败: {}", e);
+        } else {
+            info!("设备公网地址已更新: {}:{}", public_ip, public_port);
         }
     }
 

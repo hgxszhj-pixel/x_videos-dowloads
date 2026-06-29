@@ -1,6 +1,7 @@
 //! WebSocket 客户端
 
 use crate::collaboration::crypto::auth::AuthToken;
+use crate::collaboration::discovery::get_public_ip_port;
 use crate::collaboration::types::{ClientMessage, ServerMessage};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
@@ -222,6 +223,23 @@ impl CollaborationClient {
         // 更新连接状态为已连接
         self.state.store(2, Ordering::SeqCst);
         info!("WebSocket 连接已建立");
+
+        // 通过 STUN 检测公网地址并通知服务器（非阻塞，失败不影响连接）
+        let write_tx_clone = self.write_tx.clone();
+        tokio::spawn(async move {
+            match get_public_ip_port().await {
+                Ok((public_ip, public_port)) => {
+                    let msg = ClientMessage::UpdatePublicAddr { public_ip: public_ip.clone(), public_port };
+                    if let Ok(json) = serde_json::to_string(&msg) {
+                        let _ = write_tx_clone.send(json).await;
+                        info!("已发送公网地址: {}:{}", public_ip, public_port);
+                    }
+                }
+                Err(e) => {
+                    warn!("STUN 检测失败，无法获取公网地址: {}", e);
+                }
+            }
+        });
 
         Ok(())
     }
