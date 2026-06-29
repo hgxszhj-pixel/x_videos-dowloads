@@ -148,7 +148,7 @@ impl ScraplingClient {
         let title = super::scrapling_extractor::extract_title(&response.html)
             .unwrap_or_else(|| "X.com Video".to_string());
 
-        let mut info = VideoInfo::new(title, video_url);
+        let mut info = VideoInfo::new(title, video_url, None);
 
         // 提取所有可用格式
         let formats = super::scrapling_extractor::extract_all_video_sources(&response.html);

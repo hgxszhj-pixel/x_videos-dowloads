@@ -591,6 +591,7 @@ impl ZhiXueYunResolver {
             formats: vec![],
             created_at: None,
             download_strategy: crate::types::DownloadStrategy::Native,
+            audio_url: None,
         })
     }
 

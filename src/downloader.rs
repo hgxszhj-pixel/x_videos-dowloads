@@ -11,67 +11,30 @@ const SEGMENT_VALIDATION_RATIO: u64 = 90; // 90% - 分段大小验证比例
 const RESUME_MIN_DOWNLOAD_RATIO: u64 = 80; // 80% - 断点续传最小下载比例
 const FILE_SIZE_VALIDATION_RATIO: u64 = 90; // 90% - 最终文件大小验证比例
 
-use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, validate_output_path};
+use crate::types::{DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus, DownloadStrategy, validate_output_path};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use tokio::fs::File;
+use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 /// HEAD 缓存 (P2: 避免重复 HEAD 请求)
-/// 使用 Vec 实现简单 LRU，缓存有效期 5 分钟
-struct HeadCache {
-    entries: RwLock<Vec<(String, u64, Instant)>>,
-    ttl_secs: u64,
-    max_size: usize,
-}
+/// 使用 lru crate 实现，key: URL, value: 文件大小
+type HeadCache = lru::LruCache<String, u64>;
 
-impl HeadCache {
-    fn new() -> Self {
-        Self {
-            entries: RwLock::new(Vec::new()),
-            ttl_secs: 300, // 5 分钟 TTL
-            max_size: 100,
-        }
-    }
-
-    fn get(&self, url: &str) -> Option<u64> {
-        let mut entries = self.entries.write().ok()?;
-        if let Some(pos) = entries.iter().position(|(u, _, _)| u == url) {
-            let (_, size, time) = entries[pos];
-            if time.elapsed() < Duration::from_secs(self.ttl_secs) {
-                // LRU: 移动到末尾
-                let entry = entries.remove(pos);
-                entries.push((entry.0, entry.1, entry.2));
-                return Some(size);
-            }
-        }
-        None
-    }
-
-    fn insert(&self, url: &str, size: u64) {
-        if let Ok(mut entries) = self.entries.write() {
-            // 移除已有条目
-            entries.retain(|(u, _, _)| u != url);
-            // LRU eviction: 超过 max_size 时移除最老的条目
-            if entries.len() >= self.max_size {
-                entries.remove(0); // 移除第一个 (最老)
-            }
-            entries.push((url.to_string(), size, Instant::now()));
-        }
-    }
-}
-
-// 全局 HEAD 缓存实例 - 使用 LazyLock 延迟初始化
-use std::sync::LazyLock;
-static HEAD_CACHE: LazyLock<HeadCache, fn() -> HeadCache> = LazyLock::new(HeadCache::new);
+// 全局 HEAD 缓存实例 - 100 条目，LRU 自动管理
+static HEAD_CACHE: LazyLock<Mutex<HeadCache>, fn() -> Mutex<HeadCache>> =
+    LazyLock::new(|| Mutex::new(lru::LruCache::new(
+        std::num::NonZeroUsize::new(100).unwrap()
+    )));
 
 /// 下载器配置
 #[derive(Debug, Clone)]
@@ -199,6 +162,12 @@ impl VideoDownloader {
         request: &DownloadRequest,
         progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
     ) -> Result<DownloadResult> {
+        // YtDlp 策略使用专门的 yt-dlp 下载方法（支持合并视频+音频）
+        if request.download_strategy == DownloadStrategy::YtDlp {
+            return self.download_with_ytdlp(request, progress_callback).await;
+        }
+
+        // Native 策略：使用 HTTP 直接下载
         let mut last_error = None;
 
         for attempt in 0..self.config.retry_count {
@@ -735,6 +704,10 @@ impl VideoDownloader {
         let mut downloaded: u64 = 0;
         let mut file = File::create(output_path).await?;
 
+        // 进度节流：避免回调风暴（对大文件每个chunk都回调会造成UI卡顿）
+        let mut last_reported_percent: f64 = -1.0;
+        let last_callback_time = std::time::Instant::now();
+
         while let Some(chunk_result) = stream.next().await {
             let chunk: bytes::Bytes = chunk_result?;
 
@@ -753,11 +726,23 @@ impl VideoDownloader {
 
             progress.update(downloaded, speed, 1);
 
-            // 每次chunk都触发回调（不再等待时间间隔），确保UI实时更新
-            // Clone outside lock to avoid blocking the callback with lock held
-            let callback_progress = progress.clone();
-            if let Some(ref callback) = progress_callback {
-                callback(callback_progress);
+            // 阈值过滤：只在校验和变化超过 1% 或时间超过 100ms 时才回调
+            let current_percent = if total > 0 {
+                (downloaded as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            let elapsed_since_last = last_callback_time.elapsed().as_millis() as u64;
+            let should_report = (current_percent - last_reported_percent).abs() >= 1.0
+                || elapsed_since_last >= 100;
+
+            if should_report {
+                last_reported_percent = current_percent;
+                // Clone outside lock to avoid blocking the callback with lock held
+                let callback_progress = progress.clone();
+                if let Some(ref callback) = progress_callback {
+                    callback(callback_progress);
+                }
             }
 
             debug!("下载进度: {}/{} bytes", downloaded, total);
@@ -793,12 +778,12 @@ impl VideoDownloader {
         Ok(DownloadResult::success(output_path.clone(), downloaded, elapsed))
     }
 
-    /// 获取内容长度 (带缓存，TTL 5分钟)
+    /// 获取内容长度 (带缓存)
     async fn get_content_length(&self, url: &str) -> Result<Option<u64>> {
         // 检查缓存
-        if let Some(size) = HEAD_CACHE.get(url) {
+        if let Some(size) = HEAD_CACHE.lock().await.get(url) {
             debug!("HEAD 缓存命中: {} -> {} bytes", url, size);
-            return Ok(Some(size));
+            return Ok(Some(*size));
         }
 
         let response = self.client.head(url).send().await?;
@@ -812,7 +797,7 @@ impl VideoDownloader {
 
             // 缓存结果
             if let Some(size) = length {
-                HEAD_CACHE.insert(url, size);
+                HEAD_CACHE.lock().await.put(url.to_string(), size);
                 debug!("HEAD 缓存存储: {} -> {} bytes", url, size);
             }
 
@@ -893,6 +878,84 @@ impl VideoDownloader {
             downloaded,
             elapsed,
         ))
+    }
+
+    /// 使用 yt-dlp 下载（支持合并视频+音频，适用于 YouTube 等平台）
+    async fn download_with_ytdlp(
+        &self,
+        request: &DownloadRequest,
+        progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
+    ) -> Result<DownloadResult> {
+        use tokio::process::Command;
+
+        let start_time = Instant::now();
+        let output_path = &request.output_path;
+
+        info!("使用 yt-dlp 下载: {} -> {}", request.url, output_path.display());
+
+        // 确保输出目录存在
+        if let Some(parent) = output_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        // 构建 yt-dlp 参数
+        // 使用 original_url（如 YouTube 原始页面 URL）来让 yt-dlp 正确选择格式合并
+        let ytdlp_url = request.original_url.as_ref().unwrap_or(&request.url);
+        let ytdlp = crate::yt_dlp::YtDlp::new();
+        let format = request.format_id.as_deref();
+        let args = ytdlp.build_download_args(
+            ytdlp_url,
+            output_path.to_string_lossy().as_ref(),
+            format,
+            request.audio_only,
+            request.download_subtitles,
+        );
+
+        info!("执行 yt-dlp 命令...");
+
+        // 发送初始进度
+        let initial_progress = DownloadProgress::new("ytdlp".to_string())
+            .with_status(DownloadStatus::Downloading);
+        if let Some(ref cb) = progress_callback {
+            cb(initial_progress);
+        }
+
+        // 执行 yt-dlp，等待完成
+        let output = Command::new(&ytdlp.executable)
+            .args(&args)
+            .output()
+            .await
+            .context("Failed to execute yt-dlp")?;
+
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+
+        if !output.status.success() {
+            tracing::error!("yt-dlp 下载失败: {}", stderr_str);
+            return Err(anyhow!("yt-dlp 下载失败: {}", stderr_str));
+        }
+
+        // 解析进度输出（从 stdout）
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        for line in stdout_str.lines() {
+            if let Some(progress) = parse_ytdlp_progress(line) {
+                if let Some(ref cb) = progress_callback {
+                    cb(progress);
+                }
+            }
+        }
+
+        let elapsed = start_time.elapsed();
+        let final_size = tokio::fs::metadata(output_path).await?.len();
+
+        info!("yt-dlp 下载完成: {} bytes in {:?}", final_size, elapsed);
+
+        Ok(DownloadResult {
+            success: true,
+            output_path: output_path.clone(),
+            file_size: final_size,
+            duration_secs: elapsed.as_secs_f64(),
+            error_message: None,
+        })
     }
 }
 
@@ -1096,11 +1159,8 @@ fn parse_size(s: &str) -> Option<u64> {
     }
 }
 
-// 需要导入 OpenOptions
-use tokio::fs::OpenOptions;
-
-#[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]
@@ -1251,5 +1311,12 @@ mod tests {
         let err = anyhow::anyhow!("404 Not Found");
         let delay = VideoDownloader::calculate_backoff(&Some(err), 2, 30);
         assert_eq!(delay, Duration::from_secs(4)); // 2^2 = 4s
+    }
+
+    #[test]
+    fn test_calculate_backoff_default() {
+        // 无特定错误时使用标准指数退避
+        let delay = VideoDownloader::calculate_backoff(&None, 3, 30);
+        assert_eq!(delay, Duration::from_secs(4)); // 2^(3-1) = 4s
     }
 }

@@ -3,8 +3,11 @@
 //! FxTwitter 是一个第三方 Twitter API，能够解析推文中的链接并返回视频信息
 //! 当 yt-dlp 解析失败时，可以尝试使用此模块
 
+use crate::history::Platform;
+use crate::platform::{url_matcher, PlatformResolver, ResolverError};
 use crate::types::{VideoFormat, VideoInfo};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -185,7 +188,7 @@ impl FxTwitterResolver {
 
         // 构建 VideoInfo - 使用推文文本作为标题
         let title = tweet.text.clone();
-        let mut video_info = VideoInfo::new(title, video_url.clone());
+        let mut video_info = VideoInfo::new(title, video_url.clone(), None);
 
         video_info.uploader = Some(tweet.author.name.clone());
         video_info.description = Some(tweet.text.clone());
@@ -361,6 +364,25 @@ impl FxTwitterResolver {
             }
         }
         None
+    }
+}
+
+#[async_trait]
+impl PlatformResolver for FxTwitterResolver {
+    fn platform(&self) -> Platform {
+        Platform::X
+    }
+
+    fn supported_url_patterns(&self) -> Vec<&'static str> {
+        url_matcher::get_platform_patterns(Platform::X).to_vec()
+    }
+
+    async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
+        Self::get_video_info(self, url).await.map_err(ResolverError::from)
+    }
+
+    fn requires_auth(&self) -> bool {
+        false
     }
 }
 

@@ -225,11 +225,13 @@ pub struct VideoInfo {
     pub created_at: Option<String>,
     /// 下载策略（由解析器决定）
     pub download_strategy: DownloadStrategy,
+    /// 音频流 URL（用于 Merged 策略）
+    pub audio_url: Option<String>,
 }
 
 impl VideoInfo {
     /// 创建新的视频信息
-    pub fn new(title: String, url: String) -> Self {
+    pub fn new(title: String, url: String, audio_url: Option<String>) -> Self {
         Self {
             title,
             description: None,
@@ -240,6 +242,7 @@ impl VideoInfo {
             formats: Vec::new(),
             created_at: Some(chrono::Utc::now().to_rfc3339()),
             download_strategy: DownloadStrategy::YtDlp,
+            audio_url,
         }
     }
 }
@@ -268,8 +271,10 @@ pub struct VideoFormat {
 /// 下载请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadRequest {
-    /// 视频 URL
+    /// 视频 URL（最终下载用的 URL）
     pub url: String,
+    /// 原始 URL（用于 yt-dlp 格式选择，如 YouTube 原始页面 URL）
+    pub original_url: Option<String>,
     /// 输出文件路径
     pub output_path: PathBuf,
     /// 视频格式ID（可选）
@@ -284,6 +289,10 @@ pub struct DownloadRequest {
     pub cookie_file: Option<PathBuf>,
     /// 定时下载时间（可选）
     pub schedule_time: Option<DateTime<Utc>>,
+    /// 下载策略
+    pub download_strategy: DownloadStrategy,
+    /// 音频流 URL（用于 Merged 策略）
+    pub audio_url: Option<String>,
 }
 
 impl DownloadRequest {
@@ -291,6 +300,7 @@ impl DownloadRequest {
     pub fn new(url: impl Into<String>, output_path: impl Into<PathBuf>) -> Self {
         Self {
             url: url.into(),
+            original_url: None,
             output_path: output_path.into(),
             format_id: None,
             audio_only: false,
@@ -298,7 +308,23 @@ impl DownloadRequest {
             user_agent: None,
             cookie_file: None,
             schedule_time: None,
+            download_strategy: DownloadStrategy::YtDlp,
+            audio_url: None,
         }
+    }
+
+    /// 设置原始 URL（用于 yt-dlp 下载）
+    #[allow(dead_code)]
+    pub fn with_original_url(mut self, original_url: String) -> Self {
+        self.original_url = Some(original_url);
+        self
+    }
+
+    /// 设置下载策略
+    #[allow(dead_code)]
+    pub fn with_strategy(mut self, strategy: DownloadStrategy) -> Self {
+        self.download_strategy = strategy;
+        self
     }
 
     /// 设置格式ID
@@ -332,6 +358,13 @@ impl DownloadRequest {
     #[allow(dead_code)]
     pub fn with_cookie_file(mut self, cookie_file: PathBuf) -> Self {
         self.cookie_file = Some(cookie_file);
+        self
+    }
+
+    /// 设置音频流 URL（用于 Merged 策略）
+    #[allow(dead_code)]
+    pub fn with_audio_url(mut self, audio_url: String) -> Self {
+        self.audio_url = Some(audio_url);
         self
     }
 }
@@ -465,8 +498,10 @@ pub enum DownloadStatus {
 /// 下载策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DownloadStrategy {
-    /// 使用原生下载
+    /// 使用原生下载（单流）
     Native,
+    /// 使用原生下载（双流并行下载后合并）
+    Merged,
     /// 使用 yt-dlp 下载
     #[default]
     YtDlp,
@@ -661,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_video_info_new() {
-        let info = VideoInfo::new("Test Video".to_string(), "https://example.com/video.mp4".to_string());
+        let info = VideoInfo::new("Test Video".to_string(), "https://example.com/video.mp4".to_string(), None);
         assert_eq!(info.title, "Test Video");
         assert_eq!(info.url, "https://example.com/video.mp4");
         assert!(info.formats.is_empty());

@@ -367,6 +367,14 @@ impl ResolverRegistry {
             }
         }
 
+        // 最后尝试默认的 YtDlpResolver
+        if primary.platform() != Platform::Other {
+            match self.default_resolver.get_video_info(url).await {
+                Ok(info) => return Ok(info),
+                Err(e) => tracing::warn!("Default resolver also failed: {}", e),
+            }
+        }
+
         Err(ResolverError::ParseFailed(format!("所有解析器均失败 for URL: {}", url)))
     }
 }
@@ -406,8 +414,20 @@ mod tests {
         assert_eq!(tiktok_resolver.platform(), Platform::TikTok);
         let bili_resolver = registry.select_resolver("https://www.bilibili.com/video/BV123");
         assert_eq!(bili_resolver.platform(), Platform::Bilibili);
-        let default_resolver = registry.select_resolver("https://youtube.com/watch");
-        assert_eq!(default_resolver.platform(), Platform::Other); // YtDlp as default
+        // 未知平台回退到默认 YtDlpResolver
+        let default_resolver = registry.select_resolver("https://example.com/video");
+        assert_eq!(default_resolver.platform(), Platform::Other);
+    }
+
+    #[test]
+    fn test_resolver_registry_fallback() {
+        // 验证 select_resolver 对未知平台返回默认 resolver
+        let mut registry = ResolverRegistry::new();
+        registry.register(BilibiliResolver::new());
+        registry.register(TikTokResolver::new());
+        // 不支持的 URL 走默认 resolver
+        let resolver = registry.select_resolver("https://example.com/video");
+        assert_eq!(resolver.platform(), Platform::Other);
     }
 
     #[test]

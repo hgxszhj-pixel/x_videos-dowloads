@@ -77,15 +77,19 @@ impl PlatformResolver for DouYinResolver {
             if let Some(modal_id) = &modal_id {
                 let modal_id_clone = modal_id.clone();
                 let ms_token = self.tokens.get("msToken").cloned();
-                let api_result = std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new()?;
+
+                // get_video_by_modal_id 是 async fn，DouYinApiClient 实现了 Sync
+                // 将整个 async 调用封装在 spawn_blocking 中，避免 nested Runtime::new().block_on()
+                let api_result = tokio::task::spawn_blocking(move || {
                     let client = if let Some(token) = ms_token {
                         DouYinApiClient::new().with_ms_token(token)
                     } else {
                         DouYinApiClient::new()
                     };
+                    // DouYinApiClient 内部使用 reqwest::Client (Sync)，可以直接调用 async fn
+                    let rt = tokio::runtime::Runtime::new()?;
                     rt.block_on(client.get_video_by_modal_id(&modal_id_clone))
-                }).join();
+                }).await;
 
                 match api_result {
                     Ok(Ok(resp)) => {
@@ -129,6 +133,7 @@ impl PlatformResolver for DouYinResolver {
                                 }],
                                 created_at: None,
                                 download_strategy: crate::types::DownloadStrategy::YtDlp,
+                                audio_url: None,
                             });
                         } else {
                             tracing::warn!("DouYin API returned empty aweme_list");
