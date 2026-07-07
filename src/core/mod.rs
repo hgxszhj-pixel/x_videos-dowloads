@@ -1,22 +1,15 @@
-//! 核心功能模块
+//! 核心下载原语模块
 //!
-//! 提供下载、混流、字幕、弹幕、队列等核心功能
+//! 只包含下载引擎依赖的底层原语，不 re-export 上层模块，
+//! 避免与 `downloader` / `muxer` / `subtitle` / `danmaku` / `queue`
+//! 形成隐式循环依赖。需要这些类型时直接从各自模块导入。
 //!
-//! 架构:
-//! - downloader - 视频下载引擎
-//! - muxer - 音视频混流 (FFmpeg)
-//! - subtitle - 字幕处理
-//! - danmaku - 弹幕处理
-//! - queue - 下载队列管理
+//! - constants - 下载器常量配置
+//! - cache     - HEAD 请求缓存
+//! - progress  - 进度跟踪
+//! - segment   - 分段下载实现
 
-#![allow(unused_imports)]
-
-// Re-export from main downloader
-pub use crate::downloader::{VideoDownloader, DownloaderConfig};
-pub use crate::types::DownloadResult;
-
-// Re-export muxer, subtitle, danmaku, and queue
-pub use crate::muxer::{mux, mux_with_quality, check_ffmpeg, get_media_info, MediaInfo, MuxerConfig};
-pub use crate::subtitle::{Subtitle, SubtitleFormat, SubtitleEntry, vtt_to_srt, download_subtitle, save_subtitle};
-pub use crate::danmaku::{Danmaku, DanmakuEntry, DanmakuFormat, download_danmaku, parse_xml_danmaku, danmaku_to_ass, save_danmaku};
-pub use crate::queue::{DownloadQueue, QueueItem, QueueItemStatus, QueueStats};
+pub mod cache;
+pub mod constants;
+pub mod progress;
+pub mod segment;
