@@ -2,10 +2,9 @@
 //!
 //! 通过 Python subprocess 调用 scrapling StealthyFetcher 来获取被 Cloudflare 保护的页面
 
-use crate::types::VideoInfo;
+use crate::types::{VideoInfo, DownloadStrategy};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use shell_words::quote;
 use std::path::PathBuf;
 use std::io::{BufReader as StdBufReader, BufRead};
 use std::process::{Command as StdCommand, Stdio};
@@ -22,6 +21,12 @@ pub struct ScraplingResponse {
     /// 错误信息（如果有）
     #[serde(default)]
     pub error: Option<String>,
+    /// 捕获的 m3u8 URL 列表
+    #[serde(default)]
+    pub m3u8_urls: Vec<String>,
+    /// 捕获的 xe.course API 响应（含课程列表）
+    #[serde(default)]
+    pub course_list: Option<serde_json::Value>,
 }
 
 /// Scrapling 配置
@@ -84,7 +89,7 @@ impl ScraplingClient {
             let mut child = StdCommand::new(&python_path)
                 .arg("-c")
                 .arg(&script)
-                .arg(quote(&url_owned).into_owned())
+                .arg(&url_owned)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -141,14 +146,26 @@ impl ScraplingClient {
     pub async fn get_video_info(&self, url: &str) -> Result<VideoInfo> {
         let response = self.fetch(url).await?;
 
-        // 从 HTML 中提取视频 URL 和标题
-        let video_url = super::scrapling_extractor::extract_video_url(&response.html)
-            .ok_or_else(|| anyhow!("未能在页面中找到视频 URL"))?;
+        // 优先使用捕获的 m3u8 URL
+        let video_url = if !response.m3u8_urls.is_empty() {
+            tracing::info!("Scrapling 捕获到 {} 个 m3u8 URL", response.m3u8_urls.len());
+            Some(response.m3u8_urls[0].clone())
+        } else {
+            // 回退到 HTML 提取
+            super::scrapling_extractor::extract_video_url(&response.html)
+        };
+
+        let video_url = video_url.ok_or_else(|| anyhow!("未能在页面中找到视频 URL"))?;
 
         let title = super::scrapling_extractor::extract_title(&response.html)
-            .unwrap_or_else(|| "X.com Video".to_string());
+            .unwrap_or_else(|| "Scraping Video".to_string());
 
-        let mut info = VideoInfo::new(title, video_url, None);
+        let mut info = VideoInfo::new(title, video_url.clone(), None);
+
+        // 如果捕获到 m3u8 URL，使用原生 HLS 下载
+        if !response.m3u8_urls.is_empty() {
+            info.download_strategy = DownloadStrategy::Hls;
+        }
 
         // 提取所有可用格式
         let formats = super::scrapling_extractor::extract_all_video_sources(&response.html);
@@ -160,30 +177,66 @@ impl ScraplingClient {
     }
 }
 
-/// 嵌入的 Python 脚本
+/// 嵌入的 Python 脚本（使用 patchright 支持 m3u8 URL 拦截）
 const SCRAPLING_SCRIPT: &str = r#"
 import sys
 import json
-from scrapling.fetchers import StealthyFetcher
+from patchright.sync_api import sync_playwright
 
 url = sys.argv[1]
+m3u8_urls = []
+course_list = None
 
 try:
-    resp = StealthyFetcher.fetch(
-        url,
-        headless=True,
-        solve_cloudflare=True,
-        timeout=60000,
-        network_idle=True,
-    )
-    result = {
-        'html': resp.body.decode('utf-8', errors='replace') if hasattr(resp, 'body') else '',
-        'url': resp.url if hasattr(resp, 'url') else url,
-        'status': resp.status if hasattr(resp, 'status') else 200,
-        'error': None
-    }
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        page = context.new_page()
+
+        # 用 dict 包装以便在闭包中修改
+        _state = {'course_list': None}
+
+        def handle_response(response):
+            url_lower = response.url.lower()
+            if 'm3u8' in url_lower:
+                m3u8_urls.append(response.url)
+                print(f"[DEBUG] Captured m3u8: {response.url}", file=sys.stderr)
+            # 捕获 xe.course.business.middle.page.data.get 响应
+            if 'xe.course.business.middle.page.data.get' in response.url and not _state['course_list']:
+                try:
+                    body = response.text()
+                    if body.startswith('{'):
+                        data = json.loads(body)
+                        if data.get('data', {}).get('list'):
+                            _state['course_list'] = data
+                            print(f"[DEBUG] Captured course list: {len(data['data']['list'])} courses", file=sys.stderr)
+                except:
+                    pass
+
+        page.on("response", handle_response)
+
+        # 导航到目标 URL
+        page.goto(url, wait_until="networkidle", timeout=30000)
+
+        # 等待额外时间让 JS 加载视频
+        page.wait_for_timeout(3000)
+
+        # 获取渲染后的 HTML
+        html = page.content()
+
+        result = {
+            'html': html,
+            'url': page.url,
+            'status': 200,
+            'error': None,
+            'm3u8_urls': m3u8_urls,
+            'course_list': _state['course_list']
+        }
+
+        browser.close()
+
 except Exception as e:
-    result = {'error': str(e), 'html': '', 'url': url, 'status': 0}
+    result = {'error': str(e), 'html': '', 'url': url, 'status': 0, 'm3u8_urls': [], 'course_list': None}
 
 print(json.dumps(result))
 "#;

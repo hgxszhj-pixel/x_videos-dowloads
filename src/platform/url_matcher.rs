@@ -50,6 +50,10 @@ const URL_PATTERNS: &[UrlPattern] = &[
         platform: Platform::ZhiXueYun,
         patterns: &["kc.zhixueyun.com"],
     },
+    UrlPattern {
+        platform: Platform::TulingPython,
+        patterns: &["vip.tulingpyton.cn", "tulingpyton.cn"],
+    },
 ];
 
 /// 从 URL 提取 hostname 并转换为小写（一次性完成，避免重复分配）
@@ -224,6 +228,12 @@ mod tests {
     #[test]
     fn test_detect_zhixueyun() {
         assert_eq!(detect_platform("https://kc.zhixueyun.com/course/study"), Platform::ZhiXueYun);
+    }
+
+    #[test]
+    fn test_detect_tulingpython() {
+        assert_eq!(detect_platform("https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_6981db02e4b0694c34d6c8dc"), Platform::TulingPython);
+        assert_eq!(detect_platform("https://tulingpyton.cn/p/course/member/p_628ef20ee4b0cedf38b6e660"), Platform::TulingPython);
     }
 
     #[test]

@@ -121,6 +121,34 @@ pub fn extract_title(html: &str) -> Option<String> {
     None
 }
 
+/// 从 HTML 中提取 m3u8 URL
+pub fn extract_m3u8_url(html: &str) -> Option<String> {
+    let patterns = [
+        // player.src("https://...m3u8")
+        r#"player\.src\s*\(\s*["']([^"']+\.m3u8[^"']*)["']"#,
+        // src="https://...m3u8"
+        r#"src\s*=\s*["']([^"']+\.m3u8[^"']*)["']"#,
+        // url: "https://...m3u8"
+        r#"url\s*:\s*["']([^"']+\.m3u8[^"']*)["']"#,
+        // 直接的 m3u8 URL
+        r#"https?://[^"'\s]+\.m3u8[^"'\s]*"#,
+    ];
+
+    for pattern in &patterns {
+        if let Ok(re) = Regex::new(pattern) {
+            if let Some(caps) = re.captures(html) {
+                let url = caps.get(1).or_else(|| caps.get(0))
+                    .map(|m| m.as_str().to_string())?;
+                if url.starts_with("http") {
+                    return Some(url);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// 从 HTML 中提取所有视频源（多种质量）
 pub fn extract_all_video_sources(html: &str) -> Vec<VideoFormat> {
     let mut sources = Vec::new();
