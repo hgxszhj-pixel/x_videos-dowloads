@@ -15,8 +15,6 @@ use uuid::Uuid;
 pub enum DownloadStatus {
     Completed,
     Failed,
-    InProgress,
-    Bookmarked,
 }
 
 /// 平台来源
@@ -32,6 +30,7 @@ pub enum Platform {
     Facebook,
     Weibo,
     ZhiXueYun,
+    TulingPython,
     Other,
 }
 
@@ -52,6 +51,7 @@ impl Platform {
             Platform::Facebook => "Facebook",
             Platform::Weibo => "Weibo",
             Platform::ZhiXueYun => "智学云",
+            Platform::TulingPython => "图灵Python",
             Platform::Other => "Other",
         }
     }
