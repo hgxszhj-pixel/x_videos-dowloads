@@ -511,10 +511,11 @@ impl VideoDownloader {
     }
 }
 
+#[cfg(test)]
+#[allow(unused_imports)]
 mod tests {
-    #[allow(unused_imports)]
     use super::*;
-    use crate::core::segment::{parse_speed, parse_size};
+    use crate::core::segment::{parse_size, parse_speed};
 
     #[test]
     fn test_parse_speed() {

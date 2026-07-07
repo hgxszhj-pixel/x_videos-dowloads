@@ -18,6 +18,7 @@ use super::parser::{M3u8Parser, M3u8Segment};
 use super::crypto::{fetch_key, parse_iv};
 
 /// HLS 下载器配置
+#[allow(dead_code)] // proxy field exposed in public API for future use
 #[derive(Debug, Clone)]
 pub struct HlsDownloaderConfig {
     /// 最大并发分段数
@@ -62,18 +63,19 @@ pub struct HlsDownloader {
     config: HlsDownloaderConfig,
 }
 
+#[allow(dead_code)] // builder API (skip_unavailable/config/proxy/create_client)
 impl HlsDownloader {
+    /// 使用配置创建下载器（自动创建带代理的 Client）
+    pub async fn with_config(config: HlsDownloaderConfig) -> Result<Self> {
+        let client = Self::create_client(&config.proxy)?;
+        Ok(Self { client, config })
+    }
+
     pub fn new(client: Client) -> Self {
         Self {
             client,
             config: HlsDownloaderConfig::default(),
         }
-    }
-
-    /// 使用配置创建下载器（自动创建带代理的 Client）
-    pub async fn with_config(config: HlsDownloaderConfig) -> Result<Self> {
-        let client = Self::create_client(&config.proxy)?;
-        Ok(Self { client, config })
     }
 
     pub fn max_concurrent(mut self, n: usize) -> Self {
@@ -256,6 +258,7 @@ impl HlsDownloader {
     }
 
     /// 下载单个分段（带指数退避重试）
+    #[allow(clippy::too_many_arguments)]
     async fn download_segment_with_retry(
         client: &Client,
         segment: &M3u8Segment,
@@ -406,25 +409,25 @@ impl HlsDownloader {
         use aes::Aes128;
         use aes::cipher::{BlockDecryptMut, KeyInit};
         use generic_array::GenericArray;
-        use typenum::U16;
+        
 
-        if data.len() % 16 != 0 {
+        if !data.len().is_multiple_of(16) {
             return Err(anyhow!("ciphertext must be 16-byte aligned"));
         }
 
         let iv_arr = GenericArray::from_slice(iv);
         let key_arr = GenericArray::from_slice(key);
 
-        let mut cipher = Aes128::new(&key_arr);
+        let mut cipher = Aes128::new(key_arr);
 
         let mut result = Vec::with_capacity(data.len());
-        let mut prev_block = iv_arr.clone();
+        let mut prev_block = *iv_arr;
 
         for chunk in data.chunks(16) {
             let block = GenericArray::from_slice(chunk);
 
             // CBC 解密: 解密后 XOR 前一个密文块
-            let mut block_copy = block.clone();
+            let mut block_copy = *block;
             cipher.decrypt_block_mut(&mut block_copy);
 
             let mut decrypted = [0u8; 16];
@@ -432,7 +435,7 @@ impl HlsDownloader {
                 decrypted[j] = block_copy[j] ^ prev_block[j];
             }
 
-            prev_block = block.clone();
+            prev_block = *block;
             result.extend_from_slice(&decrypted);
         }
 

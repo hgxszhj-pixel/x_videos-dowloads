@@ -66,7 +66,7 @@ impl TulingPythonResolver {
 
     /// 返回 CatCatch 扩展引导（helper 方法）
     fn guidance(&self, url: &str, course_name: Option<&str>, course_id: Option<&str>, video_list: &[(String, String)]) -> Result<VideoInfo, ResolverError> {
-        let (name, id, course_url) = match (course_name, course_id) {
+        let (name, _id, course_url) = match (course_name, course_id) {
             (Some(n), Some(i)) => (
                 n.to_string(),
                 i.to_string(),
@@ -164,7 +164,7 @@ impl PlatformResolver for TulingPythonResolver {
         // 提取所有视频列表
         let video_list = response.course_list
             .as_ref()
-            .map(|cl| Self::extract_video_list(cl))
+            .map(Self::extract_video_list)
             .unwrap_or_default();
 
         self.guidance(url, effective_course_name, course_id, &video_list)

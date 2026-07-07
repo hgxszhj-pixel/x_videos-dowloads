@@ -304,7 +304,7 @@ async fn download_with_ytdlp(
         let downloader = VideoDownloader::new()?.with_website_profile(&info.url);
         let request = DownloadRequest::new(&info.url, &final_output_path)
             .with_user_agent(cli.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()))
-            .with_strategy(info.download_strategy.clone()); // DEBUG
+            .with_strategy(info.download_strategy); // DEBUG
         info!("DEBUG: download_strategy = {:?}", info.download_strategy);
 
         let progress_callback: Arc<dyn Fn(types::DownloadProgress) + Send + Sync> = Arc::new(|progress: types::DownloadProgress| {

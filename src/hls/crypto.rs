@@ -6,31 +6,32 @@ use anyhow::{anyhow, Result};
 use aes::Aes128;
 use aes::cipher::{BlockDecryptMut, KeyInit};
 use generic_array::GenericArray;
-use typenum::U16;
 
 /// AES-128-CBC 解密器
+#[allow(dead_code)]
 pub struct AesDecryptor;
 
+#[allow(dead_code)]
 impl AesDecryptor {
     /// 解密 AES-128-CBC 加密的数据 (PKCS7 padding)
     pub fn decrypt(key: &[u8; 16], iv: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8>> {
-        if ciphertext.len() % 16 != 0 {
+        if !ciphertext.len().is_multiple_of(16) {
             return Err(anyhow!("ciphertext must be 16-byte aligned"));
         }
 
         let iv_arr = GenericArray::from_slice(iv);
         let key_arr = GenericArray::from_slice(key);
 
-        let mut cipher = Aes128::new(&key_arr);
+        let mut cipher = Aes128::new(key_arr);
 
         let mut result = Vec::with_capacity(ciphertext.len());
-        let mut prev_block = iv_arr.clone();
+        let mut prev_block = *iv_arr;
 
         for chunk in ciphertext.chunks(16) {
             let block = GenericArray::from_slice(chunk);
 
             // CBC 解密: 解密后 XOR 前一个密文块
-            let mut block_copy = block.clone();
+            let mut block_copy = *block;
             cipher.decrypt_block_mut(&mut block_copy);
 
             let mut decrypted = [0u8; 16];
@@ -38,7 +39,7 @@ impl AesDecryptor {
                 decrypted[j] = block_copy[j] ^ prev_block[j];
             }
 
-            prev_block = block.clone();
+            prev_block = *block;
             result.extend_from_slice(&decrypted);
         }
 
@@ -89,6 +90,7 @@ pub fn parse_iv(hex: &str) -> Result<[u8; 16]> {
 }
 
 /// 便捷函数：解密 AES-128-CBC 加密的数据
+#[allow(dead_code)]
 pub fn decrypt_aes128_cbc(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
     if key.len() != 16 {
         return Err(anyhow!("key must be 16 bytes"));

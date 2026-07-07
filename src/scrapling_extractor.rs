@@ -122,6 +122,7 @@ pub fn extract_title(html: &str) -> Option<String> {
 }
 
 /// 从 HTML 中提取 m3u8 URL
+#[allow(dead_code)] // 公开工具函数，未来可能在 scrapling 客户端调用
 pub fn extract_m3u8_url(html: &str) -> Option<String> {
     let patterns = [
         // player.src("https://...m3u8")

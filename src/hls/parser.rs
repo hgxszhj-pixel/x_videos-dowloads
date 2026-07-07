@@ -2,9 +2,10 @@
 //!
 //! 支持 Master Playlist 和 Media Playlist，解析 EXTINF 分段和 AES-128 加密信息
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 /// 加密方法
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum EncryptionMethod {
     None,
@@ -13,6 +14,7 @@ pub enum EncryptionMethod {
 }
 
 /// m3u8 分段
+#[allow(dead_code)] // title field exposed in public API
 #[derive(Debug, Clone)]
 pub struct M3u8Segment {
     /// 分段序号
@@ -30,6 +32,7 @@ pub struct M3u8Segment {
 }
 
 /// m3u8 播放列表
+#[allow(dead_code)] // version/target_duration/is_live/base_url exposed in public API
 #[derive(Debug, Clone)]
 pub struct M3u8Playlist {
     /// 播放列表版本

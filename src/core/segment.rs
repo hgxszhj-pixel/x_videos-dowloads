@@ -15,7 +15,6 @@ use tracing::{info, warn};
 
 use crate::types::DownloadProgress;
 use super::constants::*;
-use super::cache::HEAD_CACHE;
 
 /// 下载单个分段（用于并行下载）
 #[allow(clippy::too_many_arguments)]
