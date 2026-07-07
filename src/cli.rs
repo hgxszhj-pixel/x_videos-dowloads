@@ -1,0 +1,132 @@
+//! 命令行参数定义
+
+use clap::{Parser, ValueEnum};
+use std::path::PathBuf;
+
+/// 命令行参数
+#[derive(Parser, Debug)]
+#[command(name = "x-video-downloader")]
+#[command(version = "0.1.0")]
+#[command(about = "X.com 视频下载器 - 使用 yt-dlp 下载视频", long_about = None)]
+pub struct Cli {
+    /// 视频 URL
+    #[arg(value_name = "URL")]
+    pub url: Option<String>,
+
+    /// 批量文件（每行一个 URL）
+    #[arg(short, long, value_name = "FILE")]
+    pub batch: Option<PathBuf>,
+
+    /// 输出目录
+    #[arg(short, long, value_name = "DIR", default_value = ".")]
+    pub output: PathBuf,
+
+    /// 视频格式
+    #[arg(short, long, value_name = "FORMAT")]
+    pub format: Option<String>,
+
+    /// 仅下载音频
+    #[arg(short = 'x', long = "audio-only")]
+    pub audio_only: bool,
+
+    /// 下载字幕
+    #[arg(long = "subs")]
+    pub subtitles: bool,
+
+    /// 指定输出文件名
+    #[arg(long, value_name = "NAME")]
+    pub filename: Option<String>,
+
+    /// 显示可用格式
+    #[arg(long = "list-formats")]
+    pub list_formats: bool,
+
+    /// 使用代理
+    #[arg(long, value_name = "PROXY")]
+    pub proxy: Option<String>,
+
+    /// HTTP Referer 头（用于绕过防盗链）
+    #[arg(long, value_name = "URL")]
+    pub referer: Option<String>,
+
+    /// Cookie 文件路径
+    #[arg(long, value_name = "FILE")]
+    pub cookies: Option<PathBuf>,
+
+    /// 自定义 User-Agent
+    #[arg(long, value_name = "AGENT")]
+    pub user_agent: Option<String>,
+
+    /// 详细输出
+    #[arg(short, long)]
+    pub verbose: bool,
+
+    /// 不使用 yt-dlp（直接下载）
+    #[arg(long = "direct")]
+    pub direct: bool,
+
+    /// 启动GUI界面
+    #[arg(long = "gui")]
+    pub gui: bool,
+
+    /// 创建团队（协作模式）
+    #[arg(long = "create-team")]
+    pub create_team: Option<String>,
+
+    /// 加入团队（协作模式）
+    #[arg(long = "join-team")]
+    pub join_team: Option<String>,
+
+    /// 协作服务器地址
+    #[arg(long = "server", default_value = "ws://localhost:9000")]
+    pub server_addr: String,
+
+    /// 设备名称
+    #[arg(long = "device-name", default_value = "MyDevice")]
+    pub device_name: String,
+
+    /// 初始化配置文件
+    #[arg(long = "init-config")]
+    pub init_config: bool,
+
+    /// 查看下载历史
+    #[arg(long = "history")]
+    pub history: bool,
+
+    /// 添加书签
+    #[arg(long = "bookmark")]
+    pub bookmark: Option<String>,
+
+    /// 列出所有书签
+    #[arg(long = "bookmarks")]
+    pub bookmarks: bool,
+
+    /// 清空下载历史
+    #[arg(long = "clear-history")]
+    pub clear_history: bool,
+
+    /// 搜索历史
+    #[arg(long = "search", value_name = "QUERY")]
+    pub search: Option<String>,
+
+    /// 启动协作服务器
+    #[arg(long = "start-server")]
+    pub start_server: bool,
+
+    /// 服务器端口
+    #[arg(long = "port", default_value = "9000")]
+    pub server_port: u16,
+}
+
+/// 下载模式
+#[derive(Debug, ValueEnum, Clone)]
+pub enum DownloadMode {
+    /// 最佳质量视频
+    Best,
+    /// 最佳视频+音频
+    BestVideoAudio,
+    /// 仅音频
+    Audio,
+    /// 指定格式
+    Custom,
+}
