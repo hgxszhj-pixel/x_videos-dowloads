@@ -6,7 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
@@ -108,16 +107,6 @@ impl LanguagePack {
         texts
     }
 
-    /// 加载语言包
-    #[allow(dead_code)]
-    pub fn load_from_file(path: &PathBuf) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
-
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))
-    }
-
     /// 加载内置语言包
     pub fn load_builtin(lang: &str) -> Self {
         match lang {
@@ -164,13 +153,6 @@ pub fn set_language(lang: &str) {
     *current = LanguagePack::load_builtin(lang);
 }
 
-/// 获取当前语言代码
-#[allow(dead_code)]
-pub fn get_current_lang() -> String {
-    let lang = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
-    lang.lang.clone()
-}
-
 /// 初始化 i18n（根据系统语言自动选择）
 pub fn init() {
     // 简单检测：如果是中文环境，使用简体中文
@@ -188,15 +170,6 @@ pub fn init() {
     }
     // 默认英文
     set_language("en");
-}
-
-/// 获取所有可用语言
-#[allow(dead_code)]
-pub fn get_available_languages() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("en", "English"),
-        ("zh-CN", "简体中文"),
-    ]
 }
 
 #[cfg(test)]

@@ -104,12 +104,6 @@ impl LocalQueue {
         self.tasks.iter().find(|t| t.id == task_id)
     }
 
-    /// 获取所有任务
-    #[allow(dead_code)]
-    pub fn get_all_tasks(&self) -> &[Task] {
-        &self.tasks
-    }
-
     /// 更新任务状态为 Queued（模拟服务器分配）
     #[allow(dead_code)]
     pub fn update_status_to_queued(&mut self, task_id: Uuid) -> Result<()> {
@@ -119,28 +113,6 @@ impl LocalQueue {
             .find(|t| t.id == task_id)
             .ok_or_else(|| anyhow::anyhow!("任务不存在"))?;
         task.status = TaskStatus::Queued;
-        self.save()?;
-        Ok(())
-    }
-
-    /// 从服务器同步任务
-    #[allow(dead_code)]
-    pub fn sync_from_server(&mut self, tasks: Vec<Task>) -> Result<()> {
-        // 合并策略：服务器优先，但保留本地新任务
-        let local_new: Vec<_> = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::New)
-            .cloned()
-            .collect();
-
-        self.tasks = tasks;
-        for task in local_new {
-            if !self.tasks.iter().any(|t| t.url == task.url) {
-                self.tasks.push(task);
-            }
-        }
-
         self.save()?;
         Ok(())
     }

@@ -110,17 +110,6 @@ impl ZhiXueYunResolver {
         })
     }
 
-    /// 设置认证 token（支持运行时动态更新）
-    #[allow(dead_code)]
-    pub fn set_token(&self, token: String) {
-        let mut write_lock = self.token.write().unwrap();
-        *write_lock = Some(token);
-        // Invalidate cached headers when token changes
-        if let Ok(mut cached) = self.cached_headers.write() {
-            *cached = None;
-        }
-    }
-
     /// 获取当前 token
     fn get_token(&self) -> Result<String, ResolverError> {
         // 1. 先尝试运行时设置的 token

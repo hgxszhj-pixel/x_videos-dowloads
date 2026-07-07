@@ -176,14 +176,6 @@ impl AwemeItem {
     }
 }
 
-impl VideoDetailResponse {
-    /// 获取第一个视频（如果存在）
-    #[allow(dead_code)]
-    pub fn get_first_video(&self) -> Option<&AwemeItem> {
-        self.aweme_list.as_ref()?.first()
-    }
-}
-
 /// 作者信息
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]

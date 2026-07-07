@@ -5,7 +5,6 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
-use std::path::Path;
 use tracing::debug;
 
 /// 弹幕格式
@@ -185,19 +184,6 @@ fn format_timestamp(seconds: f64) -> String {
     let secs = (seconds % 60.0).floor() as u32;
     let centis = ((seconds % 1.0) * 100.0).floor() as u32;
     format!("{:01}:{:02}:{:02}.{:02}", hours, minutes, secs, centis)
-}
-
-/// 保存弹幕到文件
-#[allow(dead_code)]
-pub async fn save_danmaku(danmaku: &[DanmakuEntry], path: &Path, format: DanmakuFormat, width: u32, height: u32) -> Result<()> {
-    let content = match format {
-        DanmakuFormat::_Ass => danmaku_to_ass(danmaku, width, height),
-        _ => anyhow::bail!("only ASS format supported for saving"),
-    };
-
-    tokio::fs::write(path, content)
-        .await
-        .context("failed to write danmaku file")
 }
 
 #[cfg(test)]
