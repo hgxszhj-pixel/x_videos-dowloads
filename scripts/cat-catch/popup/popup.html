@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; width: 400px; background: #1a1a2e; color: #e0e0e0; }
+    .header { background: #16213e; padding: 12px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #0f3460; }
+    .header img { width: 24px; height: 24px; }
+    .header h1 { font-size: 14px; color: #e94560; }
+    .status-bar { background: #0f3460; padding: 8px 16px; font-size: 12px; color: #a0a0a0; display: flex; justify-content: space-between; }
+    .urls { max-height: 400px; overflow-y: auto; }
+    .url-item { padding: 10px 16px; border-bottom: 1px solid #16213e; cursor: pointer; transition: background 0.15s; }
+    .url-item:hover { background: #16213e; }
+    .url-item.master { border-left: 3px solid #e94560; }
+    .url-item.media { border-left: 3px solid #00d9ff; }
+    .url-item .domain { font-size: 11px; color: #888; margin-bottom: 4px; }
+    .url-item .url { font-size: 12px; color: #a0d8ef; word-break: break-all; max-height: 60px; overflow: hidden; text-overflow: ellipsis; }
+    .url-item .meta { font-size: 10px; color: #666; margin-top: 4px; display: flex; gap: 12px; }
+    .url-item .actions { margin-top: 6px; display: flex; gap: 8px; }
+    .btn { padding: 4px 10px; font-size: 11px; border: none; border-radius: 4px; cursor: pointer; transition: opacity 0.15s; }
+    .btn:hover { opacity: 0.8; }
+    .btn-copy { background: #e94560; color: white; }
+    .btn-open { background: #0f3460; color: #00d9ff; }
+    .empty { padding: 40px; text-align: center; color: #666; font-size: 13px; }
+    .empty .hint { margin-top: 8px; font-size: 11px; color: #444; }
+    .footer { padding: 10px 16px; background: #0f3460; display: flex; justify-content: space-between; align-items: center; }
+    .footer button { background: none; border: 1px solid #e94560; color: #e94560; padding: 4px 12px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+    .footer button:hover { background: #e94560; color: white; }
+    .toast { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); background: #00d9ff; color: #1a1a2e; padding: 6px 16px; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🐱 CatCatch — m3u8 拦截器</h1>
+</div>
+
+<div class="status-bar">
+  <span id="status">等待拦截...</span>
+  <span id="count">0 条记录</span>
+</div>
+
+<div class="urls" id="urls-list">
+  <div class="empty" id="empty">
+    暂无拦截记录
+    <div class="hint">在视频播放页面打开插件，播放视频即可捕获 m3u8 URL</div>
+  </div>
+</div>
+
+<div class="footer">
+  <button id="clear-btn">清空记录</button>
+  <span style="font-size: 11px; color: #666;">v1.0.0 — 小鹅通 / 图灵python</span>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="popup.js"></script>
+</body>
+</html>

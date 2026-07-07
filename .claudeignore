@@ -1,0 +1,30 @@
+# .claudeignore — 限制 Claude Code 读取范围
+# 语法同 .gitignore
+
+# 依赖与构建（最大黑洞）
+node_modules/
+dist/
+build/
+.next/
+/target/
+
+# Python 缓存
+__pycache__/
+
+# 锁文件/日志
+*.lock
+package-lock.json
+*.log
+
+# 版本控制/IDE
+.git/
+.idea/
+.vscode/
+
+# 资源/缓存
+*.png
+*.jpg
+*.svg
+*.ico
+.cache/
+coverage/

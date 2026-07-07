@@ -43,21 +43,42 @@ src/
 
 **核心原则**: 谨慎优于速度，简单优于复杂，直接解决当前问题而非预判未来需求。
 
-## 1. 编码前思考 (Think Before Coding)
 
-**不要假设。不要隐藏困惑。主动提出权衡。**
+## 1. Multi-Agent 开发循环 (Anthropic 模式)
 
-## 2. 简单优先 (Simplicity First)
+**来源**: Anthropic 工程博客 — 三 Agent 架构：Planner / Generator / Evaluator
 
-**最小代码解决问题。不做投机性实现。**
+### 三角色分工
 
-## 3. 精准修改 (Surgical Changes)
+| 角色 | 职责 | 你的项目中的应用 |
+|------|------|-----------------|
+| **Planner** | 产品层面高层次规划，输出规格书（不含技术细节） | 规划下载策略、Resolver 选择逻辑 |
+| **Generator** | 按 sprint 增量开发，自测后交棒 | 执行下载、muxer 拼接、文件输出 |
+| **Evaluator** | **独立分离**，真实验证（不只是读代码） | 校验文件完整性、实际跑下载测例 |
 
-**只触碰必须改的。只清理自己造成的垃圾。**
+### 核心原则
 
-## 4. 目标驱动执行 (Goal-Driven Execution)
+- **Evaluator 必须独立**：同一个 agent 评自己代码一定会给好评，必须分离
+- **sprint contract**：Generator 和 Evaluator 事先协商"完成定义"（如：下载成功率 ≥ 95%，文件完整可播放）
+- **文件系统通信**：Agent 间通过文件传递状态，无花哨消息队列
+- **主动验证**：Evaluator 不做静态审代码，直接跑实际下载流程验证
 
-**定义成功标准。循环验证直到完成。**
+### 你的项目适配
+
+```
+URL → Planner(规划下载策略) → Generator(执行下载) → Evaluator(验证文件完整性)
+                                    ↑                    ↓
+                                    ←←← 循环直到通过 ←←←←
+```
+
+### 不适用场景
+
+视频下载是**确定性任务**（有正确答案的执行），不是探索性产品开发。Planner 不碰技术细节这条**不适用**——视频下载涉及协议解析、平台差异，必须含技术上下文。
+
+### 参考文献
+
+- Anthropic 工程博客 (2026-03-24): Building Effective AI Agents
+- Boris Cherny (Claude Code 负责人): "I don't prompt Claude anymore. I have loops running that prompt Claude. My job is to write loops."
 
 ---
 
