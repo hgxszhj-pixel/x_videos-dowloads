@@ -50,7 +50,7 @@ impl Database {
 
     /// 初始化表结构
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute_batch(include_str!("schema.sql"))?;
         Ok(())
     }
@@ -65,7 +65,7 @@ impl Database {
             invite_code: generate_invite_code(),
             created_at: Utc::now(),
         };
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "INSERT INTO teams (id, name, invite_code, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![
@@ -80,7 +80,7 @@ impl Database {
 
     /// 通过邀请码获取团队
     pub fn get_team_by_code(&self, invite_code: &str) -> Result<Option<Team>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt =
             conn.prepare("SELECT id, name, invite_code, created_at FROM teams WHERE invite_code = ?1")?;
         let mut rows = stmt.query(params![invite_code])?;
@@ -110,7 +110,7 @@ impl Database {
         if let Some(port) = device.public_port {
             validate_port(port)?;
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             r#"INSERT INTO devices (id, team_id, name, public_ip, public_port, last_seen, is_online)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -135,7 +135,7 @@ impl Database {
 
     /// 更新设备心跳
     pub fn update_device_heartbeat(&self, device_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE devices SET last_seen = ?1, is_online = 1 WHERE id = ?2",
             params![Utc::now().to_rfc3339(), device_id.to_string()],
@@ -145,7 +145,7 @@ impl Database {
 
     /// 更新设备的公网地址（通过 STUN 检测）
     pub fn update_device_public_addr(&self, device_id: Uuid, public_ip: &str, public_port: u16) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE devices SET public_ip = ?1, public_port = ?2 WHERE id = ?3",
             params![public_ip, public_port, device_id.to_string()],
@@ -155,7 +155,7 @@ impl Database {
 
     /// 获取团队的所有设备
     pub fn get_team_devices(&self, team_id: Uuid) -> Result<Vec<Device>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, name, public_ip, public_port, last_seen, is_online FROM devices WHERE team_id = ?1",
         )?;
@@ -179,7 +179,7 @@ impl Database {
 
     /// 获取设备所属团队ID
     pub fn get_device_team_id(&self, device_id: Uuid) -> Result<Option<Uuid>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare("SELECT team_id FROM devices WHERE id = ?1")?;
         let mut rows = stmt.query(params![device_id.to_string()])?;
         if let Some(row) = rows.next()? {
@@ -191,7 +191,7 @@ impl Database {
 
     /// 标记设备离线
     pub fn set_device_offline(&self, device_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE devices SET is_online = 0 WHERE id = ?1",
             params![device_id.to_string()],
@@ -202,7 +202,7 @@ impl Database {
     /// 获取设备信息
     #[allow(dead_code)]
     pub fn get_device(&self, device_id: Uuid) -> Result<Option<Device>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, name, public_ip, public_port, last_seen, is_online FROM devices WHERE id = ?1",
         )?;
@@ -230,7 +230,7 @@ impl Database {
 
     /// 创建任务
     pub fn create_task(&self, task: &Task, team_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let result = conn.execute(
             r#"INSERT INTO tasks (id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
@@ -261,7 +261,7 @@ impl Database {
 
     /// 更新任务
     pub fn update_task(&self, task: &Task, _team_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             r#"UPDATE tasks SET
                    status = ?1, claimed_by = ?2, claimed_at = ?3, progress = ?4,
@@ -283,7 +283,7 @@ impl Database {
 
     /// 获取团队的所有任务
     pub fn get_tasks_by_team(&self, team_id: Uuid) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version FROM tasks WHERE team_id = ?1",
         )?;
@@ -327,7 +327,7 @@ impl Database {
 
     /// 获取设备认领的所有任务
     pub fn get_tasks_by_device(&self, device_id: Uuid) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version FROM tasks WHERE claimed_by = ?1",
         )?;
@@ -371,7 +371,7 @@ impl Database {
 
     /// 获取被认领但可能超时的任务
     pub fn get_claimed_tasks(&self, team_id: Uuid) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version FROM tasks WHERE team_id = ?1 AND status = 'Claimed'",
         )?;
@@ -415,7 +415,7 @@ impl Database {
 
     /// 释放任务（将其重置为 Queued 状态）
     pub fn release_task(&self, task_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE tasks SET status = 'Queued', claimed_by = NULL, claimed_at = NULL, progress = 0, version = version + 1 WHERE id = ?1",
             params![task_id.to_string()],
@@ -425,7 +425,7 @@ impl Database {
 
     /// 获取所有团队ID
     pub fn get_all_team_ids(&self) -> Result<Vec<Uuid>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare("SELECT DISTINCT team_id FROM devices")?;
         let rows = stmt.query_map([], |row| {
             Uuid::parse_str(&row.get::<_, String>(0)?)
@@ -439,7 +439,7 @@ impl Database {
 
     /// 保存离线消息
     pub fn save_offline_message(&self, device_id: Uuid, message: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "INSERT INTO offline_messages (device_id, message, created_at) VALUES (?1, ?2, ?3)",
             params![device_id.to_string(), message, Utc::now().to_rfc3339()],
@@ -449,7 +449,7 @@ impl Database {
 
     /// 获取设备的离线消息
     pub fn get_offline_messages(&self, device_id: Uuid) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt =
             conn.prepare("SELECT message FROM offline_messages WHERE device_id = ?1 ORDER BY created_at")?;
         let rows = stmt.query_map(params![device_id.to_string()], |row| row.get(0))?;
@@ -458,7 +458,7 @@ impl Database {
 
     /// 清除设备的离线消息
     pub fn clear_offline_messages(&self, device_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "DELETE FROM offline_messages WHERE device_id = ?1",
             params![device_id.to_string()],

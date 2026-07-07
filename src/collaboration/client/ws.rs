@@ -253,8 +253,12 @@ impl CollaborationClient {
                 error!("达到最大重连次数 ({}), 放弃重连", MAX_RECONNECT_ATTEMPTS);
                 self.state.store(3, Ordering::SeqCst); // Failed
                 // 触发失败回调
-                if let Some(callback) = self.on_failure.lock().unwrap().as_ref() {
-                    callback();
+                if let Ok(guard) = self.on_failure.lock() {
+                    if let Some(callback) = guard.as_ref() {
+                        callback();
+                    }
+                } else {
+                    error!("on_failure lock poisoned, skipping callback");
                 }
                 return Err(anyhow::anyhow!("达到最大重连次数"));
             }
@@ -298,7 +302,10 @@ impl CollaborationClient {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        *self.on_failure.lock().unwrap() = Some(Box::new(f));
+        match self.on_failure.lock() {
+            Ok(mut guard) => *guard = Some(Box::new(f)),
+            Err(e) => error!("on_failure lock poisoned: {}", e),
+        }
     }
 
     /// Send a message to the server

@@ -288,19 +288,6 @@ impl History {
             .collect()
     }
 
-    /// 删除历史条目
-    #[allow(dead_code)]
-    pub fn remove_entry(&mut self, id: Uuid) -> bool {
-        let initial_len = self.entries.len();
-        self.entries.retain(|e| e.id != id);
-        if self.entries.len() != initial_len {
-            let _ = self.save();
-            true
-        } else {
-            false
-        }
-    }
-
     /// 清空历史
     pub fn clear(&mut self) -> Result<()> {
         self.entries.clear();
@@ -350,18 +337,6 @@ impl History {
         self.entries.len()
     }
 
-    /// 按状态筛选历史
-    #[allow(dead_code)]
-    pub fn filter_by_status(&self, status: DownloadStatus) -> Vec<&HistoryEntry> {
-        self.entries.iter().filter(|e| e.status == status).collect()
-    }
-
-    /// 按平台筛选历史
-    #[allow(dead_code)]
-    pub fn filter_by_platform(&self, platform: Platform) -> Vec<&HistoryEntry> {
-        self.entries.iter().filter(|e| e.platform == platform).collect()
-    }
-
     /// 获取所有历史
     #[allow(dead_code)]
     pub fn get_all(&self) -> &[HistoryEntry] {
@@ -371,30 +346,6 @@ impl History {
     /// 获取所有历史条目的克隆（线程安全访问）
     pub fn get_entries(&self) -> Vec<HistoryEntry> {
         self.entries.clone()
-    }
-
-    /// 导出历史为 CSV
-    #[allow(dead_code)]
-    pub fn export_csv(&self, path: &Path) -> Result<()> {
-        let mut wtr = csv::Writer::from_path(path)?;
-        // 写入表头
-        wtr.write_record(["ID", "URL", "Title", "File Path", "File Size (bytes)", "Downloaded At", "Duration (s)", "Status", "Platform", "Error"])?;
-        for entry in &self.entries {
-            wtr.write_record(&[
-                entry.id.to_string(),
-                entry.url.clone(),
-                entry.title.clone().unwrap_or_default(),
-                entry.file_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
-                entry.file_size.map(|s| s.to_string()).unwrap_or_default(),
-                entry.downloaded_at.to_rfc3339(),
-                entry.duration_secs.map(|d| d.to_string()).unwrap_or_default(),
-                format!("{:?}", entry.status),
-                entry.platform.display_name().to_string(),
-                entry.error_message.clone().unwrap_or_default(),
-            ])?;
-        }
-        wtr.flush()?;
-        Ok(())
     }
 
     /// 获取书签条数

@@ -176,29 +176,45 @@ pub fn init() {
 mod tests {
     use super::*;
 
+    /// 临时切换语言并自动恢复，避免并发测试的全局 Mutex 竞态
+    fn with_lang<F: FnOnce()>(lang: &str, f: F) {
+        let prev = CURRENT_LANG.lock().expect("i18n test: lock poisoned").lang.clone();
+        set_language(lang);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        // 无论 f 是否 panic，都恢复原语言
+        set_language(&prev);
+        if let Err(e) = result {
+            std::panic::resume_unwind(e);
+        }
+    }
+
     #[test]
     fn test_tr_english() {
-        set_language("en");
-        assert_eq!(tr("app.title"), "X Video Downloader");
+        with_lang("en", || {
+            assert_eq!(tr("app.title"), "X Video Downloader");
+        });
     }
 
     #[test]
     fn test_tr_chinese() {
-        set_language("zh-CN");
-        assert_eq!(tr("app.title"), "X 视频下载器");
+        with_lang("zh-CN", || {
+            assert_eq!(tr("app.title"), "X 视频下载器");
+        });
     }
 
     #[test]
     fn test_font_family_english() {
-        set_language("en");
-        let fonts = get_font_family();
-        assert_eq!(fonts, "System");
+        with_lang("en", || {
+            let fonts = get_font_family();
+            assert_eq!(fonts, "System");
+        });
     }
 
     #[test]
     fn test_font_family_chinese() {
-        set_language("zh-CN");
-        let fonts = get_font_family();
-        assert!(fonts.contains("PingFang SC"));
+        with_lang("zh-CN", || {
+            let fonts = get_font_family();
+            assert!(fonts.contains("PingFang SC"));
+        });
     }
 }
