@@ -12,6 +12,12 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
 # Claude
 .claude/
 .omc/
