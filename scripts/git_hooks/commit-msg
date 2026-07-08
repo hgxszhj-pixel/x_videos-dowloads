@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """Git commit-msg Hook: 自动注入 Agent DID + 可验证凭证
 
-用法:
-    ln -sf ../../scripts/git_hooks/commit-msg .git/hooks/commit-msg
-    或手动: cp scripts/git_hooks/commit-msg .git/hooks/commit-msg
-
 效果: 每次 git commit 时,自动在 commit message 末尾追加:
-    [DID: did:local:xxx] [VC: 6433dad]
-    如果环境变量 AGENT_VC_JSON 存在,则附加完整 VC 信息
+    [DID: did:local:xxx] [VC: <hash>] rep=<score>
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
-# 允许 scripts/agent_did.py 导入
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from agent_did import issue_did, get_reputation  # noqa: E402
+
+def _find_agent_did() -> Path | None:
+    """定位 scripts/agent_did.py — Hook 安装后位置变化,需用 git root 查找"""
+    try:
+        repo_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], text=True
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+    candidate = Path(repo_root) / "scripts" / "agent_did.py"
+    return candidate if candidate.exists() else None
+
 
 MSG_FILE = sys.argv[1] if len(sys.argv) > 1 else None
 if not MSG_FILE:
@@ -25,17 +31,23 @@ if not MSG_FILE:
 msg_path = Path(MSG_FILE)
 original = msg_path.read_text()
 
-# 已签发过 VC 的 commit 跳过（避免重复添加）
+# 已签发过 VC 的 commit 跳过
 if "[DID:" in original or "[VC:" in original:
     sys.exit(0)
+
+agent_did_path = _find_agent_did()
+if not agent_did_path:
+    # Hook 安装失败或文件被删 — 不阻塞 commit
+    sys.exit(0)
+
+sys.path.insert(0, str(agent_did_path.parent))
+from agent_did import issue_did, get_reputation  # noqa: E402
 
 did = issue_did()
 rep = get_reputation()
 
-# 提取当前 commit 的 short hash (从环境变量或跳过)
 commit_hash = os.environ.get("AGENT_COMMIT_HASH", "pending")
 
-# 评估者投票（从环境变量传入,JSON 格式）
 evaluators = os.environ.get("AGENT_EVALUATORS", "")
 eval_summary = ""
 if evaluators:
@@ -46,7 +58,6 @@ if evaluators:
             parts.append(f"{n}:{v}")
     eval_summary = f" | eval={'/'.join(parts)}" if parts else ""
 
-# 信誉分（用于决定是否追加警告）
 score = rep.get("score", 50.0)
 warn = ""
 if score < 30:

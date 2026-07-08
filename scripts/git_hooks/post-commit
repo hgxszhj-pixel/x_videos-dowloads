@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
-"""Git post-commit Hook: 记录 commit 成功事件到信誉系统
-
-用法:
-    ln -sf ../../scripts/git_hooks/post-commit .git/hooks/post-commit
-"""
+"""Git post-commit Hook: 记录 commit 成功事件到信誉系统"""
 
 import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+def _find_agent_did() -> Path | None:
+    try:
+        repo_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], text=True
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+    candidate = Path(repo_root) / "scripts" / "agent_did.py"
+    return candidate if candidate.exists() else None
+
+
+agent_did_path = _find_agent_did()
+if not agent_did_path:
+    sys.exit(0)
+
+sys.path.insert(0, str(agent_did_path.parent))
 from agent_did import record_event  # noqa: E402
 
 try:
@@ -22,4 +35,4 @@ try:
     record_event("commit_success", f"{commit_hash}: {subject[:80]}")
 except Exception as e:
     print(f"[post-commit hook] warning: {e}", file=sys.stderr)
-    sys.exit(0)  # 不阻塞 commit
+    sys.exit(0)

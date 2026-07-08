@@ -162,9 +162,12 @@ edit code → /ontology:review → git commit
 | `code-reviewer` | 1.0 | 代码风格 / 命名 / 重复 |
 | `security-reviewer` | 1.5 | 安全 / unsafe / 注入 |
 | `tdd-guide` | 1.2 | 测试覆盖 / 边界 |
-| `qa_engineer` | 1.0 | 编译 / Lint / 依赖 |
+| `qa_engineer` | 1.2 | 编译 / Lint / 依赖 |
 
-**安全 Evaluator 权重 1.5** — 与本体链对验证人节点惩罚更重的设计思路一致。
+**权重设计理念:**
+- **security 1.5** — 与本体链对验证人节点惩罚更重的设计思路一致
+- **tdd 1.2 / qa 1.2** — 测试与质量门禁是 release 前的关键闸口,失败代价高
+- **code-review 1.0** — 风格/命名问题可在后续 PR 中迭代修复
 
 ### 5.3 投票失败处理
 
@@ -198,7 +201,7 @@ python3 scripts/agent_did.py record --event clippy_fail --detail "5 warnings"
       {"reviewer": "code-reviewer", "vote": "approve", "weight": 1.0},
       {"reviewer": "security-reviewer", "vote": "approve", "weight": 1.5},
       {"reviewer": "tdd-guide", "vote": "approve", "weight": 1.2},
-      {"reviewer": "qa_engineer", "vote": "approve", "weight": 1.0}
+      {"reviewer": "qa_engineer", "vote": "approve", "weight": 1.2}
     ],
     "consensus_ratio": 1.0,
     "threshold": 0.667,
