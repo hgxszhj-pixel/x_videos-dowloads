@@ -37,12 +37,16 @@ record_clippy() {
 
 run_test() {
     echo "🧪 Running cargo test..."
-    if cargo test --bin x-video-downloader --quiet 2>&1 | tail -5; then
-        local count=$(cargo test --bin x-video-downloader 2>&1 | grep -oE "[0-9]+ passed" | tail -1)
+    local output
+    if output=$(cargo test --bin x-video-downloader 2>&1); then
+        # 精确匹配 "test result: ok. N passed" 这一行,避免 doc-test/集成测试污染
+        local count=$(echo "$output" | grep -oE "test result: ok\. [0-9]+ passed" | tail -1 | sed 's/test result: ok\. //')
         record_test "pass" "$count"
+        echo "$output" | tail -3
         echo "✅ Test passed: $count"
     else
         record_test "fail" "cargo test failed"
+        echo "$output" | tail -10
         echo "❌ Test failed"
         return 1
     fi
