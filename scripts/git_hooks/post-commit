@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Git post-commit Hook: 记录 commit 成功事件到信誉系统
+
+用法:
+    ln -sf ../../scripts/git_hooks/post-commit .git/hooks/post-commit
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from agent_did import record_event  # noqa: E402
+
+try:
+    commit_hash = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"], text=True
+    ).strip()
+    subject = subprocess.check_output(
+        ["git", "log", "-1", "--pretty=%s"], text=True
+    ).strip()
+    record_event("commit_success", f"{commit_hash}: {subject[:80]}")
+except Exception as e:
+    print(f"[post-commit hook] warning: {e}", file=sys.stderr)
+    sys.exit(0)  # 不阻塞 commit
