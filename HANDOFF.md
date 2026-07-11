@@ -1,6 +1,6 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-11 (最新更新)
+**更新时间**: 2026-07-12 (最新更新)
 **分支**: gitbutler/workspace
 **最后提交者**: Claude Code (MiniMax-M3)
 
@@ -248,7 +248,7 @@ host_lower == p || host_lower.ends_with(&format!(".{}", p))
 | cargo test | ✅ 189 passed (1 suite, inline bin tests) |
 | cargo clippy | ✅ 0 warnings |
 
-**最近验证**: 2026-07-11（提交 `01b0599` 后）
+**最近验证**: 2026-07-12（无变更，仅日期刷新：189 tests, clippy clean）
 
 ---
 
