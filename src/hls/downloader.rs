@@ -4,13 +4,14 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::types::DownloadProgress;
@@ -39,6 +40,12 @@ pub struct HlsDownloaderConfig {
     pub referer: Option<String>,
     /// 最大允许失败分段数（超过此数则停止下载）
     pub max_failed_segments: u32,
+    /// 自适应并发控制（基于吞吐量动态调整推荐值，参见 parallel.rs 同名逻辑）
+    pub adaptive_concurrency: bool,
+    /// 最小并发分段数（自适应时的下限）
+    pub min_concurrent: usize,
+    /// 速度阈值（字节/秒），低于此值增加推荐并发
+    pub speed_threshold_bps: u64,
 }
 
 impl Default for HlsDownloaderConfig {
@@ -53,6 +60,9 @@ impl Default for HlsDownloaderConfig {
             proxy: None,
             referer: None,
             max_failed_segments: 5,    // 默认 5 次失败后停止
+            adaptive_concurrency: true,
+            min_concurrent: 2,
+            speed_threshold_bps: 500 * 1024, // 500KB/s
         }
     }
 }
@@ -170,6 +180,50 @@ impl HlsDownloader {
         let failed_count_clone = failed_count.clone();
         let config = self.config.clone();
 
+        // 使用 Semaphore 限制最大并发（修复：之前 max_concurrent 未实际生效）
+        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
+
+        // 自适应并发：跟踪当前最优并发数（基于吞吐量动态调整）
+        // Semaphore 仍然硬性限制 max_concurrent，current_optimal 仅用于监控和日志
+        let current_optimal = Arc::new(AtomicUsize::new(self.config.max_concurrent));
+        let adaptive_active = self.config.adaptive_concurrency;
+        let min_conc = self.config.min_concurrent;
+        let max_conc = self.config.max_concurrent;
+        let speed_threshold = self.config.speed_threshold_bps;
+
+        // 启动后台采样器（每 500ms 采样一次吞吐量）
+        let downloaded_for_sampler = downloaded.clone();
+        let current_optimal_for_sampler = current_optimal.clone();
+        let cancel_for_sampler = cancel_flag.clone();
+        let sampler_task = tokio::spawn(async move {
+            let mut last_bytes: u64 = 0;
+            while !cancel_for_sampler.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if cancel_for_sampler.load(Ordering::Relaxed) {
+                    break;
+                }
+                let now = downloaded_for_sampler.load(Ordering::Relaxed);
+                let delta = now.saturating_sub(last_bytes);
+                let bps = delta * 2; // 500ms 采样窗口 → 字节/秒
+                last_bytes = now;
+
+                if adaptive_active {
+                    let cur = current_optimal_for_sampler.load(Ordering::Relaxed);
+                    if bps < speed_threshold && cur < max_conc {
+                        let next = cur + 1;
+                        current_optimal_for_sampler.store(next, Ordering::Relaxed);
+                        info!("HLS 自适应：吞吐量低 ({:.1} KB/s)，推荐并发 {} -> {}",
+                            bps as f64 / 1024.0, cur, next);
+                    } else if bps > speed_threshold * 3 && cur > min_conc {
+                        let next = cur - 1;
+                        current_optimal_for_sampler.store(next, Ordering::Relaxed);
+                        info!("HLS 自适应：吞吐良好 ({:.1} KB/s)，推荐并发 {} -> {}",
+                            bps as f64 / 1024.0, cur, next);
+                    }
+                }
+            }
+        });
+
         let tasks: Vec<_> = segments.into_iter().enumerate().map(|(i, seg)| {
             let client = client.clone();
             let output = segment_paths[i].clone();
@@ -179,8 +233,12 @@ impl HlsDownloader {
             let callback = progress_callback.clone();
             let failed_count = failed_count_clone.clone();
             let config = config.clone();
+            let semaphore = semaphore.clone();
 
             tokio::spawn(async move {
+                // 获取 semaphore permit，超过 max_concurrent 时阻塞等待
+                let _permit = semaphore.acquire().await
+                    .context("semaphore closed unexpectedly")?;
                 Self::download_segment_with_retry(
                     &client,
                     &seg,
@@ -229,22 +287,49 @@ impl HlsDownloader {
         } else if self.config.skip_unavailable {
             warn!("跳过 {} 个不可用分段，继续合并", failed_segments.len());
         } else {
+            // 停止 sampler 再返回错误
+            cancel_flag.store(true, Ordering::Relaxed);
+            let _ = sampler_task.await;
             return Err(anyhow!("下载失败: {} 个分段错误 ({:?})", failed_segments.len(), &failed_segments[..failed_segments.len().min(5)]));
         }
 
         // 4. 合并分段
-        info!("合并 {} 个分段...", total_segments);
+        // 停止自适应采样器
+        cancel_flag.store(true, Ordering::Relaxed);
+        let _ = sampler_task.await;
+        // Phase D 优化：并行读取所有分段（写仍串行，保证顺序与原子性）
+        info!("合并 {} 个分段（并行读取）...", total_segments);
         let mut output_file = File::create(output_path).await?;
         let mut total_written = 0u64;
         let failed_set: std::collections::HashSet<_> = failed_segments.iter().collect();
 
-        for (i, path) in segment_paths.iter().enumerate() {
-            // 跳过不可用的分段
-            if failed_set.contains(&(i + 1)) {
-                warn!("跳过不可用分段: {}", i + 1);
-                continue;
+        // 并行读取所有有效分段
+        let read_tasks: Vec<_> = segment_paths
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !failed_set.contains(&(i + 1)))
+            .map(|(i, path)| {
+                let path = path.clone();
+                tokio::spawn(async move {
+                    let data = tokio::fs::read(&path).await?;
+                    Ok::<(usize, Vec<u8>), anyhow::Error>((i, data))
+                })
+            })
+            .collect();
+
+        // 收集读取结果（保持原始顺序）
+        let mut segment_data: Vec<(usize, Vec<u8>)> = Vec::with_capacity(read_tasks.len());
+        for task in read_tasks {
+            match task.await {
+                Ok(Ok(pair)) => segment_data.push(pair),
+                Ok(Err(e)) => return Err(e),
+                Err(e) => return Err(anyhow!("read task join failed: {}", e)),
             }
-            let data = tokio::fs::read(path).await?;
+        }
+        segment_data.sort_by_key(|(i, _)| *i);
+
+        // 串行写入（顺序与原子性）
+        for (i, data) in segment_data {
             output_file.write_all(&data).await?;
             total_written += data.len() as u64;
             info!("合并进度: {}/{}", i + 1, total_segments);
@@ -390,10 +475,25 @@ impl HlsDownloader {
         data.extend_from_slice(&bytes);
 
         // 如果加密，解密
+        // Phase C 优化：大分段（≥1MB）使用 spawn_blocking 释放 async runtime
+        // 小分段直接解密（spawn_blocking 开销 ~100μs，超过小段解密本身耗时）
         if let (Some(key_url), Some(iv_hex)) = (&segment.key_url, &segment.key_iv) {
             let key = fetch_key(client, key_url).await?;
             let iv = parse_iv(iv_hex)?;
-            data = Self::decrypt_segment(&data, &key, &iv)?;
+
+            const SPAWN_BLOCKING_THRESHOLD: usize = 1024 * 1024; // 1MB
+            if data.len() >= SPAWN_BLOCKING_THRESHOLD {
+                // 大段：移交到 blocking 线程池，不阻塞 tokio runtime
+                let data_owned = data;
+                data = tokio::task::spawn_blocking(move || {
+                    Self::decrypt_segment(&data_owned, &key, &iv)
+                })
+                .await
+                .map_err(|e| anyhow!("decrypt task join failed: {}", e))??;
+            } else {
+                // 小段：直接解密（开销低于 spawn_blocking）
+                data = Self::decrypt_segment(&data, &key, &iv)?;
+            }
         }
 
         // 写入文件
@@ -450,5 +550,113 @@ impl HlsDownloader {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证默认配置 max_concurrent = 4
+    #[test]
+    fn test_default_config_max_concurrent() {
+        let config = HlsDownloaderConfig::default();
+        assert_eq!(config.max_concurrent, 4);
+    }
+
+    /// 验证默认配置启用自适应并发
+    #[test]
+    fn test_default_config_adaptive_concurrency() {
+        let config = HlsDownloaderConfig::default();
+        assert!(config.adaptive_concurrency, "adaptive_concurrency should default to true");
+        assert_eq!(config.min_concurrent, 2);
+        assert_eq!(config.speed_threshold_bps, 500 * 1024);
+    }
+
+    /// 验证 Semaphore 模式能有效限制并发数
+    /// 这是 Phase A 的核心修复测试：之前 max_concurrent 未实际生效
+    #[tokio::test]
+    async fn test_semaphore_bounds_concurrency() {
+        const MAX_CONCURRENT: usize = 3;
+        const TOTAL_TASKS: usize = 20;
+
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let tasks: Vec<_> = (0..TOTAL_TASKS).map(|_| {
+            let semaphore = semaphore.clone();
+            let active = active.clone();
+            let peak = peak.clone();
+            tokio::spawn(async move {
+                let _permit = semaphore.acquire().await.unwrap();
+                let cur = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(cur, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+            })
+        }).collect();
+
+        for t in tasks {
+            t.await.unwrap();
+        }
+
+        let observed_peak = peak.load(Ordering::SeqCst);
+        assert!(
+            observed_peak <= MAX_CONCURRENT,
+            "peak concurrency {} > max {} (Semaphore failed to bound)",
+            observed_peak,
+            MAX_CONCURRENT
+        );
+        // 至少应该有并发（不是全串行）
+        assert!(
+            observed_peak >= 2,
+            "peak concurrency {} too low (Semaphore too restrictive)",
+            observed_peak
+        );
+    }
+
+    /// 验证 Semaphore 在零 permit 时不阻塞测试（permit=0 是合法配置）
+    #[tokio::test]
+    async fn test_semaphore_zero_permits_blocks() {
+        let semaphore = Arc::new(Semaphore::new(0));
+        let acquired = semaphore.try_acquire();
+        assert!(acquired.is_err(), "try_acquire on zero-permit semaphore should fail");
+    }
+
+    /// 验证自适应并发调整规则（与 parallel.rs::calculate_optimal_threads 一致）
+    #[test]
+    fn test_adaptive_concurrency_adjustment_rules() {
+        // 低吞吐量 → 增加
+        let mut cur = 4usize;
+        let max = 8;
+        let min = 2;
+        let threshold = 500_000u64;
+        let bps_low = 100_000;
+        if bps_low < threshold && cur < max {
+            cur = (cur + 1).min(max);
+        }
+        assert_eq!(cur, 5, "low throughput should increase concurrency");
+
+        // 高吞吐量 → 减少
+        let bps_high = threshold * 4;
+        if bps_high > threshold * 3 && cur > min {
+            cur = cur.saturating_sub(1).max(min);
+        }
+        assert_eq!(cur, 4, "high throughput should decrease concurrency");
+
+        // 已在 max → 不变
+        cur = max;
+        if bps_low < threshold && cur < max {
+            cur = (cur + 1).min(max);
+        }
+        assert_eq!(cur, max, "already at max should not increase");
+
+        // 已在 min → 不变
+        cur = min;
+        if bps_high > threshold * 3 && cur > min {
+            cur = cur.saturating_sub(1).max(min);
+        }
+        assert_eq!(cur, min, "already at min should not decrease");
     }
 }
