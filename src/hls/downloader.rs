@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+#[allow(unused_imports)] // AtomicUsize is used in #[cfg(test)] mod tests via `use super::*;`
 use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -40,12 +41,6 @@ pub struct HlsDownloaderConfig {
     pub referer: Option<String>,
     /// 最大允许失败分段数（超过此数则停止下载）
     pub max_failed_segments: u32,
-    /// 自适应并发控制（基于吞吐量动态调整推荐值，参见 parallel.rs 同名逻辑）
-    pub adaptive_concurrency: bool,
-    /// 最小并发分段数（自适应时的下限）
-    pub min_concurrent: usize,
-    /// 速度阈值（字节/秒），低于此值增加推荐并发
-    pub speed_threshold_bps: u64,
 }
 
 impl Default for HlsDownloaderConfig {
@@ -60,9 +55,6 @@ impl Default for HlsDownloaderConfig {
             proxy: None,
             referer: None,
             max_failed_segments: 5,    // 默认 5 次失败后停止
-            adaptive_concurrency: true,
-            min_concurrent: 2,
-            speed_threshold_bps: 500 * 1024, // 500KB/s
         }
     }
 }
@@ -143,6 +135,9 @@ impl HlsDownloader {
     }
 
     /// 下载 m3u8 播放列表并合并成分段文件
+    // TODO: progress_callback is currently unused (no per-segment progress reporting).
+    // Keep param for API compatibility; future work should wire it up.
+    #[allow(unused_variables)]
     pub async fn download(
         &self,
         url: &str,
@@ -163,8 +158,6 @@ impl HlsDownloader {
         tokio::fs::create_dir_all(&temp_dir).await?;
 
         // 3. 并发下载分段
-        let downloaded = Arc::new(AtomicU64::new(0));
-        let total_size = Arc::new(AtomicU64::new(0));
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let failed_count = Arc::new(AtomicU64::new(0));
 
@@ -175,62 +168,16 @@ impl HlsDownloader {
         // 并发下载
         let client = &self.client;
         let segments = playlist.segments.clone();
-        let downloaded_clone = downloaded.clone();
-        let total_size_clone = total_size.clone();
         let failed_count_clone = failed_count.clone();
         let config = self.config.clone();
 
         // 使用 Semaphore 限制最大并发（修复：之前 max_concurrent 未实际生效）
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
 
-        // 自适应并发：跟踪当前最优并发数（基于吞吐量动态调整）
-        // Semaphore 仍然硬性限制 max_concurrent，current_optimal 仅用于监控和日志
-        let current_optimal = Arc::new(AtomicUsize::new(self.config.max_concurrent));
-        let adaptive_active = self.config.adaptive_concurrency;
-        let min_conc = self.config.min_concurrent;
-        let max_conc = self.config.max_concurrent;
-        let speed_threshold = self.config.speed_threshold_bps;
-
-        // 启动后台采样器（每 500ms 采样一次吞吐量）
-        let downloaded_for_sampler = downloaded.clone();
-        let current_optimal_for_sampler = current_optimal.clone();
-        let cancel_for_sampler = cancel_flag.clone();
-        let sampler_task = tokio::spawn(async move {
-            let mut last_bytes: u64 = 0;
-            while !cancel_for_sampler.load(Ordering::Relaxed) {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                if cancel_for_sampler.load(Ordering::Relaxed) {
-                    break;
-                }
-                let now = downloaded_for_sampler.load(Ordering::Relaxed);
-                let delta = now.saturating_sub(last_bytes);
-                let bps = delta * 2; // 500ms 采样窗口 → 字节/秒
-                last_bytes = now;
-
-                if adaptive_active {
-                    let cur = current_optimal_for_sampler.load(Ordering::Relaxed);
-                    if bps < speed_threshold && cur < max_conc {
-                        let next = cur + 1;
-                        current_optimal_for_sampler.store(next, Ordering::Relaxed);
-                        info!("HLS 自适应：吞吐量低 ({:.1} KB/s)，推荐并发 {} -> {}",
-                            bps as f64 / 1024.0, cur, next);
-                    } else if bps > speed_threshold * 3 && cur > min_conc {
-                        let next = cur - 1;
-                        current_optimal_for_sampler.store(next, Ordering::Relaxed);
-                        info!("HLS 自适应：吞吐良好 ({:.1} KB/s)，推荐并发 {} -> {}",
-                            bps as f64 / 1024.0, cur, next);
-                    }
-                }
-            }
-        });
-
         let tasks: Vec<_> = segments.into_iter().enumerate().map(|(i, seg)| {
             let client = client.clone();
             let output = segment_paths[i].clone();
-            let downloaded = downloaded_clone.clone();
-            let total_size = total_size_clone.clone();
             let cancel = cancel_flag.clone();
-            let callback = progress_callback.clone();
             let failed_count = failed_count_clone.clone();
             let config = config.clone();
             let semaphore = semaphore.clone();
@@ -243,10 +190,7 @@ impl HlsDownloader {
                     &client,
                     &seg,
                     &output,
-                    downloaded,
-                    total_size,
                     cancel,
-                    callback,
                     &failed_count,
                     &config,
                 ).await
@@ -287,16 +231,10 @@ impl HlsDownloader {
         } else if self.config.skip_unavailable {
             warn!("跳过 {} 个不可用分段，继续合并", failed_segments.len());
         } else {
-            // 停止 sampler 再返回错误
-            cancel_flag.store(true, Ordering::Relaxed);
-            let _ = sampler_task.await;
             return Err(anyhow!("下载失败: {} 个分段错误 ({:?})", failed_segments.len(), &failed_segments[..failed_segments.len().min(5)]));
         }
 
         // 4. 合并分段
-        // 停止自适应采样器
-        cancel_flag.store(true, Ordering::Relaxed);
-        let _ = sampler_task.await;
         // Phase D 优化：并行读取所有分段（写仍串行，保证顺序与原子性）
         info!("合并 {} 个分段（并行读取）...", total_segments);
         let mut output_file = File::create(output_path).await?;
@@ -348,10 +286,7 @@ impl HlsDownloader {
         client: &Client,
         segment: &M3u8Segment,
         output: &PathBuf,
-        _downloaded: Arc<AtomicU64>,
-        _total_size: Arc<AtomicU64>,
         cancel_flag: Arc<AtomicBool>,
-        _progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
         failed_count: &Arc<AtomicU64>,
         config: &HlsDownloaderConfig,
     ) -> Result<u64> {
@@ -557,20 +492,15 @@ impl HlsDownloader {
 mod tests {
     use super::*;
 
-    /// 验证默认配置 max_concurrent = 4
+    /// 验证默认配置的关键值
     #[test]
-    fn test_default_config_max_concurrent() {
+    fn test_default_config() {
         let config = HlsDownloaderConfig::default();
         assert_eq!(config.max_concurrent, 4);
-    }
-
-    /// 验证默认配置启用自适应并发
-    #[test]
-    fn test_default_config_adaptive_concurrency() {
-        let config = HlsDownloaderConfig::default();
-        assert!(config.adaptive_concurrency, "adaptive_concurrency should default to true");
-        assert_eq!(config.min_concurrent, 2);
-        assert_eq!(config.speed_threshold_bps, 500 * 1024);
+        assert_eq!(config.retry_count, 10);
+        assert_eq!(config.max_failed_segments, 5);
+        assert_eq!(config.retry_base_delay_ms, 100);
+        assert_eq!(config.retry_max_delay_ms, 20000);
     }
 
     /// 验证 Semaphore 模式能有效限制并发数
@@ -622,42 +552,6 @@ mod tests {
         let semaphore = Arc::new(Semaphore::new(0));
         let acquired = semaphore.try_acquire();
         assert!(acquired.is_err(), "try_acquire on zero-permit semaphore should fail");
-    }
-
-    /// 验证自适应并发调整规则（与 parallel.rs::calculate_optimal_threads 一致）
-    #[test]
-    fn test_adaptive_concurrency_adjustment_rules() {
-        // 低吞吐量 → 增加
-        let mut cur = 4usize;
-        let max = 8;
-        let min = 2;
-        let threshold = 500_000u64;
-        let bps_low = 100_000;
-        if bps_low < threshold && cur < max {
-            cur = (cur + 1).min(max);
-        }
-        assert_eq!(cur, 5, "low throughput should increase concurrency");
-
-        // 高吞吐量 → 减少
-        let bps_high = threshold * 4;
-        if bps_high > threshold * 3 && cur > min {
-            cur = cur.saturating_sub(1).max(min);
-        }
-        assert_eq!(cur, 4, "high throughput should decrease concurrency");
-
-        // 已在 max → 不变
-        cur = max;
-        if bps_low < threshold && cur < max {
-            cur = (cur + 1).min(max);
-        }
-        assert_eq!(cur, max, "already at max should not increase");
-
-        // 已在 min → 不变
-        cur = min;
-        if bps_high > threshold * 3 && cur > min {
-            cur = cur.saturating_sub(1).max(min);
-        }
-        assert_eq!(cur, min, "already at min should not decrease");
     }
 
     /// 端到端集成测试：用 mock HTTP server 验证 max_concurrent 真实限制并发
@@ -760,9 +654,9 @@ mod tests {
             result.err()
         );
         assert!(
-            observed_total >= SEGMENT_COUNT + 1,
-            "expected ≥{} requests, got {}",
-            SEGMENT_COUNT + 1,
+            observed_total > SEGMENT_COUNT,
+            "expected >{} requests, got {}",
+            SEGMENT_COUNT,
             observed_total
         );
         assert!(
