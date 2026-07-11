@@ -1,8 +1,8 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-06-14 (最新更新)
+**更新时间**: 2026-07-11 (最新更新)
 **分支**: gitbutler/workspace
-**最后提交者**: Claude Code (MiniMax-M2.7)
+**最后提交者**: Claude Code (MiniMax-M3)
 
 ---
 
@@ -149,16 +149,24 @@ pub fn text_color(&self) -> &'static str        // 文字颜色
 
 ---
 
-### 8. GUI 格式选择器（未完成/部分支持）
+### 8. GUI 格式选择器（✅ 已完成 2026-07-11）
 
 - **问题**: 无法选择下载视频的画质
 - **修复**: 添加 `selected_format_id` 字段 + 下拉框 UI
-- **文件**: `src/gui_dioxus.rs`
-- **状态**: UI 已完成，但 X/Twitter 平台不支持格式选择
+- **文件**: `src/gui_dioxus.rs`, `src/downloader/mod.rs:457`
+- **状态**: ✅ UI + yt-dlp -f 参数接线已完整
 
-**原因**: X/Twitter API 返回的媒体格式信息不完整，formats 列表为空
+**完整调用链**:
+```
+GUI dropdown (gui_dioxus/app.rs:310)
+  → start_download_impl(format_id)
+  → DownloadRequest::with_format_id()
+  → download_with_ytdlp() / VideoDownloader::download()
+  → YtDlp::build_download_args(format)  [src/downloader/mod.rs:457]
+  → yt-dlp -f <format_id>
+```
 
-**支持格式选择的平台**: Bilibili、抖音等（需要 yt-dlp 完整格式信息）
+**已知限制**: X/Twitter 平台本身 API 不返回完整 formats 列表（与本项目无关）
 
 ---
 
@@ -236,9 +244,11 @@ host_lower == p || host_lower.ends_with(&format!(".{}", p))
 
 | 检查项 | 状态 |
 |--------|------|
-| cargo build | ✅ 0 errors |
-| cargo test | ✅ 345 passed (165 lib + 174 bin + 6 integration) |
+| cargo build | ✅ 0 errors, 0 warnings |
+| cargo test | ✅ 189 passed (1 suite, inline bin tests) |
 | cargo clippy | ✅ 0 warnings |
+
+**最近验证**: 2026-07-11（提交 `01b0599` 后）
 
 ---
 
@@ -308,9 +318,32 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null  # 详细日志（抑制 tokio pan
 2. ~~进度条优化~~ - ✅ 已完成 (阈值过滤 1%)
 3. ~~tokio panic 修复~~ - ✅ 已完成 (OnceCell 懒加载)
 4. ~~GUI 启动优化~~ - ✅ 已完成 (yt-dlp 缓存 50-200ms)
-5. **架构优化**: 项目整体性能架构已良好，暂无必要改进
-6. **格式选择器**: 完善 yt-dlp -f 参数使用（当前传递了 format_id 但 yt-dlp 下载未使用）
+5. ~~格式选择器 - yt-dlp -f 接线~~ - ✅ 已完成 (download/mod.rs:457)
+6. **架构优化**: 项目整体性能架构已良好，暂无必要改进
 7. **协作下载**: 完善 P2P 协作系统的 NAT 穿透
+
+---
+
+## 近期完成 (2026-07-11)
+
+### 1. HLS 下载器性能重构 (4 Phase)
+
+| Phase | 内容 | 提交 |
+|-------|------|------|
+| A | `max_concurrent` 真实生效（Semaphore 限制）| `3b5a7a0` |
+| B→移除 | 自适应并发（误实现，已回滚）| `01b0599` |
+| C | AES 大段解密 `spawn_blocking` 释放 runtime | `3b5a7a0` |
+| D | 合并阶段并行读取 | `3b5a7a0` |
+| E | E2E mock server 验证 Semaphore 真实生效 | `3947209` |
+
+**关键修复**: `max_concurrent` 之前是死配置（无 Semaphore），1000 段列表会同时 spawn 1000 任务 → OOM 风险。
+
+### 2. 自适应并发死代码移除 (-106 行)
+
+- **文件**: `src/hls/downloader.rs`
+- **根因**: 自审发现 `downloaded` 原子计数器**从未被 segment 下载更新**，sampler 永远读到 0 bps，"推荐并发" 日志全是噪声
+- **修复**: 删除 sampler、`current_optimal`、`adaptive_concurrency`/`min_concurrent`/`speed_threshold_bps` config 字段、相关死参数、2 个测试
+- **提交**: `01b0599`
 
 ---
 
