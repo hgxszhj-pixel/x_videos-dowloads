@@ -659,4 +659,122 @@ mod tests {
         }
         assert_eq!(cur, min, "already at min should not decrease");
     }
+
+    /// 端到端集成测试：用 mock HTTP server 验证 max_concurrent 真实限制并发
+    ///
+    /// 这是 Phase A 的关键验证：之前 max_concurrent 配置是死代码（无 semaphore）
+    /// 修复后，N 个分段并发下载时，server 端观察到的并发连接数 ≤ max_concurrent
+    #[tokio::test]
+    async fn test_max_concurrent_e2e_mock_server() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        const SEGMENT_COUNT: usize = 16;
+        const MAX_CONCURRENT: usize = 3;
+        const SEGMENT_LATENCY_MS: u64 = 80;
+        const SEGMENT_PAYLOAD: &[u8] = b"fake-segment-data-1234567890";
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let total_requests = Arc::new(AtomicUsize::new(0));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let active_clone = active.clone();
+        let peak_clone = peak.clone();
+        let total_clone = total_requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+                let active = active_clone.clone();
+                let peak = peak_clone.clone();
+                let total = total_clone.clone();
+
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = match socket.read(&mut buf).await {
+                        Ok(n) if n > 0 => n,
+                        _ => return,
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+
+                    let cur = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(cur, Ordering::SeqCst);
+                    total.fetch_add(1, Ordering::SeqCst);
+
+                    tokio::time::sleep(Duration::from_millis(SEGMENT_LATENCY_MS)).await;
+
+                    let response = if req.starts_with("GET /manifest") {
+                        let mut m3u8 = String::from("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXT-X-MEDIA-SEQUENCE:0\n");
+                        for i in 0..SEGMENT_COUNT {
+                            m3u8.push_str(&format!("#EXTINF:5.0,\nsegment_{:04}.ts\n", i));
+                        }
+                        m3u8.push_str("#EXT-X-ENDLIST\n");
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            m3u8.len(), m3u8
+                        )
+                    } else {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            SEGMENT_PAYLOAD.len()
+                        ) + std::str::from_utf8(SEGMENT_PAYLOAD).unwrap()
+                    };
+
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+
+                    active.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("output.ts");
+
+        let config = HlsDownloaderConfig {
+            max_concurrent: MAX_CONCURRENT,
+            retry_count: 1,
+            timeout_secs: 5,
+            ..Default::default()
+        };
+        let downloader = HlsDownloader::with_config(config).await.unwrap();
+        let manifest_url = format!("http://127.0.0.1:{}/manifest.m3u8", port);
+
+        let result = downloader.download(&manifest_url, &output_path, None).await;
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let observed_peak = peak.load(Ordering::SeqCst);
+        let observed_total = total_requests.load(Ordering::SeqCst);
+
+        assert!(
+            result.is_ok(),
+            "download should succeed: {:?}",
+            result.err()
+        );
+        assert!(
+            observed_total >= SEGMENT_COUNT + 1,
+            "expected ≥{} requests, got {}",
+            SEGMENT_COUNT + 1,
+            observed_total
+        );
+        assert!(
+            observed_peak <= MAX_CONCURRENT,
+            "PEAK {} > max {} — Semaphore FAILED to bound",
+            observed_peak,
+            MAX_CONCURRENT
+        );
+        assert!(
+            observed_peak >= 2,
+            "peak {} too low — semaphore too restrictive",
+            observed_peak
+        );
+    }
 }
