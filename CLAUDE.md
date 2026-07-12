@@ -6,6 +6,18 @@
 
 视频下载器，支持 x.com (Twitter), TikTok, 抖音, Bilibili 等平台。
 
+## Commit 规则（Intent Lock）
+
+每次 commit message 必须包含一行 `Intent: <一句话>`，否则被 `.git/hooks/commit-msg` 拒绝。
+
+```text
+fix(hls): 修复 segment index 越界
+
+Intent: 修复 segment index 越界 bug，不重构现有 download API
+```
+
+详见 [`scripts/README_intent_lock.md`](scripts/README_intent_lock.md)。紧急情况可用 `git commit --no-verify`。
+
 ## 构建
 
 ```bash
