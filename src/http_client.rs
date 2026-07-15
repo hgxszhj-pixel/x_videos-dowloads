@@ -19,6 +19,9 @@ pub static SHARED_CLIENT: Lazy<Arc<Client>> = Lazy::new(|| {
         .pool_max_idle_per_host(64)  // 支持 16+ 并行分段 (翻倍)
         .gzip(true)                  // 启用 Gzip 压缩
         .brotli(true)                // 启用 Brotli 压缩
+        // HTTP/2 keep-alive：避免长下载期间 CDN 关闭闲置 h2 连接
+        .http2_keep_alive_interval(std::time::Duration::from_secs(30))
+        .http2_keep_alive_timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_else(|e| panic!("Failed to build shared HTTP client: {}", e));
     Arc::new(client)

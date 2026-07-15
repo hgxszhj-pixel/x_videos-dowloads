@@ -62,7 +62,7 @@ impl Default for HlsDownloaderConfig {
 /// HLS 下载器
 pub struct HlsDownloader {
     client: Client,
-    config: HlsDownloaderConfig,
+    config: Arc<HlsDownloaderConfig>,
 }
 
 #[allow(dead_code)] // builder API (skip_unavailable/config/proxy/create_client)
@@ -70,43 +70,43 @@ impl HlsDownloader {
     /// 使用配置创建下载器（自动创建带代理的 Client）
     pub async fn with_config(config: HlsDownloaderConfig) -> Result<Self> {
         let client = Self::create_client(&config.proxy)?;
-        Ok(Self { client, config })
+        Ok(Self { client, config: Arc::new(config) })
     }
 
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            config: HlsDownloaderConfig::default(),
+            config: Arc::new(HlsDownloaderConfig::default()),
         }
     }
 
     pub fn max_concurrent(mut self, n: usize) -> Self {
-        self.config.max_concurrent = n;
+        Arc::make_mut(&mut self.config).max_concurrent = n;
         self
     }
 
     pub fn retry_count(mut self, n: u32) -> Self {
-        self.config.retry_count = n;
+        Arc::make_mut(&mut self.config).retry_count = n;
         self
     }
 
     pub fn skip_unavailable(mut self, skip: bool) -> Self {
-        self.config.skip_unavailable = skip;
+        Arc::make_mut(&mut self.config).skip_unavailable = skip;
         self
     }
 
     pub fn config(mut self, config: HlsDownloaderConfig) -> Self {
-        self.config = config;
+        self.config = Arc::new(config);
         self
     }
 
     pub fn proxy(mut self, proxy_url: &str) -> Self {
-        self.config.proxy = Some(proxy_url.to_string());
+        Arc::make_mut(&mut self.config).proxy = Some(proxy_url.to_string());
         self
     }
 
     pub fn referer(mut self, referer_url: &str) -> Self {
-        self.config.referer = Some(referer_url.to_string());
+        Arc::make_mut(&mut self.config).referer = Some(referer_url.to_string());
         self
     }
 
