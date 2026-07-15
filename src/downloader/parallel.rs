@@ -265,7 +265,7 @@ impl VideoDownloader {
 
             if downloaded_size >= expected_min {
                 info!("已下载 {} bytes，尝试断点续传下载剩余部分", downloaded_size);
-                match self.resume_download(&url, &output_path, downloaded_size, progress_callback.clone()).await {
+                match self.resume_download(&url, &output_path, downloaded_size, progress_callback.clone(), None).await {
                     Ok(result) => return Ok(result),
                     Err(e) => warn!("断点续传失败: {:?}，尝试合并已有分段", e),
                 }

@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 /// 默认 User-Agent 常量
@@ -294,6 +296,9 @@ pub struct DownloadRequest {
     pub download_strategy: DownloadStrategy,
     /// 音频流 URL（用于 Merged 策略）
     pub audio_url: Option<String>,
+    /// 取消信号（外部 toggle 可中断下载）
+    #[serde(skip, default)]
+    pub cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 impl DownloadRequest {
@@ -311,6 +316,7 @@ impl DownloadRequest {
             schedule_time: None,
             download_strategy: DownloadStrategy::YtDlp,
             audio_url: None,
+            cancel_flag: None,
         }
     }
 
@@ -373,6 +379,12 @@ impl DownloadRequest {
     #[allow(dead_code)]
     pub fn with_audio_url(mut self, audio_url: String) -> Self {
         self.audio_url = Some(audio_url);
+        self
+    }
+
+    /// 设置取消信号
+    pub fn with_cancel_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel_flag = Some(flag);
         self
     }
 }

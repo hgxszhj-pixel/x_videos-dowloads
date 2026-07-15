@@ -1,6 +1,8 @@
 //! GUI 显示用的数据结构与状态定义
 
 use super::theme::AppTheme;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 /// 下载历史记录项
 #[derive(Default, Clone)]
@@ -74,6 +76,7 @@ pub(super) struct AppState {
     pub(super) download_progress: f32,
     pub(super) download_speed: String,
     pub(super) download_file_size: String,
+    pub(super) cancel_flag: Option<Arc<AtomicBool>>,
     pub(super) is_batch_mode: bool,
     pub(super) batch_state: BatchState,
     pub(super) batch_video_state: BatchVideoState,
@@ -95,6 +98,7 @@ impl Default for AppState {
             download_progress: 0.0,
             download_speed: String::new(),
             download_file_size: String::new(),
+            cancel_flag: None,
             is_batch_mode: false,
             batch_state: BatchState::default(),
             batch_video_state: BatchVideoState::default(),

@@ -1,6 +1,6 @@
 //! 主应用组件（Dioxus RSX 视图）
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use dioxus::prelude::*;
@@ -428,9 +428,13 @@ pub(super) fn AppComponent() -> Element {
                             let progress_arc = Arc::new(AtomicU32::new(0));
                             let speed_arc = Arc::new(AtomicU64::new(0));
                             let total_bytes_arc = Arc::new(AtomicU64::new(0));
+                            let cancel_flag = Arc::new(AtomicBool::new(false));
+                            // 把 cancel_flag 存到 state 让 progress UI 能访问
+                            state.write().cancel_flag = Some(cancel_flag.clone());
                             let progress_arc_clone = progress_arc.clone();
                             let speed_arc_clone = speed_arc.clone();
                             let total_bytes_arc_clone = total_bytes_arc.clone();
+                            let cancel_flag_clone = cancel_flag.clone();
 
                             // 提前获取 format_id，避免 borrow 问题
                             let format_id = state.read().selected_format_id.clone();
@@ -438,9 +442,10 @@ pub(super) fn AppComponent() -> Element {
                             // 使用 spawn 在后台异步执行下载
                             let mut state = state;
                             spawn(async move {
-                                match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), Some(total_bytes_arc_clone), format_id, crate::types::DownloadStrategy::Native).await {
+                                match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), Some(total_bytes_arc_clone), Some(cancel_flag_clone), format_id, crate::types::DownloadStrategy::Native).await {
                                     Ok(_) => {
                                         state.write().is_downloading = false;
+                                        state.write().cancel_flag = None;
                                         // Stream copy 合并很快，短暂显示合并状态
                                         state.write().status_message = "🔄 合并中...".to_string();
                                         // 等待 1.5 秒让 ffmpeg 完成 stream copy 合并
@@ -453,6 +458,7 @@ pub(super) fn AppComponent() -> Element {
                                     }
                                     Err(e) => {
                                         state.write().is_downloading = false;
+                                        state.write().cancel_flag = None;
                                         state.write().error_message = e;
                                         state.write().status_message = "Download failed".to_string();
                                         send_notification("Download Failed", &title.to_string());
@@ -614,6 +620,21 @@ pub(super) fn AppComponent() -> Element {
                         div {
                             style: "font-size: 12px; color: #888; margin-top: 8px;",
                             "📦 大小: {state.read().download_file_size}"
+                        }
+                    }
+                    // 取消按钮（仅在 cancel_flag 存在时显示）
+                    if state.read().cancel_flag.is_some() {
+                        div {
+                            style: "display: flex; justify-content: flex-end; margin-top: 10px;",
+                            button {
+                                onclick: move |_| {
+                                    if let Some(flag) = state.read().cancel_flag.as_ref() {
+                                        flag.store(true, Ordering::Relaxed);
+                                    }
+                                },
+                                style: "padding: 6px 14px; background: #ff4444; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;",
+                                "🛑 取消下载"
+                            }
                         }
                     }
                 }

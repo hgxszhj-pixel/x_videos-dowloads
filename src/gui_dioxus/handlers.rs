@@ -1,7 +1,7 @@
 //! 业务逻辑：视频信息解析、单/批量下载实现
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tracing::info;
@@ -26,6 +26,7 @@ pub(super) async fn start_download_impl(
     progress_arc: Option<Arc<AtomicU32>>,
     speed_arc: Option<Arc<AtomicU64>>,
     total_bytes_arc: Option<Arc<AtomicU64>>,
+    cancel_flag: Option<Arc<AtomicBool>>,
     format_id: Option<String>,
     strategy: crate::types::DownloadStrategy,
 ) -> Result<(), String> {
@@ -57,6 +58,9 @@ pub(super) async fn start_download_impl(
         request = request.with_original_url(orig_url);
     }
     request = request.with_strategy(strategy);
+    if let Some(flag) = cancel_flag {
+        request = request.with_cancel_flag(flag);
+    }
 
     // 创建进度回调
     type ProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync>;
@@ -104,7 +108,7 @@ pub(super) async fn batch_download_impl(
             match fetch_video_info_impl(&url).await {
                 Ok(info) => {
                     // 下载视频
-                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, None, info.download_strategy).await {
+                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, None, None, info.download_strategy).await {
                         Ok(_) => (url, true, "completed".to_string(), 1.0),
                         Err(e) => (url, false, format!("failed: {}", e), 0.0),
                     }

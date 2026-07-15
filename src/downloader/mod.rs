@@ -27,6 +27,7 @@ use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::fs::File;
@@ -261,6 +262,10 @@ impl VideoDownloader {
         let last_callback_time = std::time::Instant::now();
 
         while let Some(chunk_result) = stream.next().await {
+            // 检查取消信号（每 chunk 检查一次）
+            if request.cancel_flag.as_ref().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false) {
+                return Err(DownloadError::cancelled().into());
+            }
             let chunk: bytes::Bytes = chunk_result?;
 
             // 写入文件
@@ -366,6 +371,7 @@ impl VideoDownloader {
         output_path: &PathBuf,
         resume_from: u64,
         progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
+        cancel_flag: Option<Arc<AtomicBool>>,
     ) -> Result<DownloadResult> {
         let start_time = Instant::now();
 
@@ -402,6 +408,10 @@ impl VideoDownloader {
         let mut stream = response.bytes_stream();
 
         while let Some(chunk_result) = stream.next().await {
+            // 检查取消信号（每 chunk 检查一次）
+            if cancel_flag.as_ref().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false) {
+                return Err(DownloadError::cancelled().into());
+            }
             let chunk: bytes::Bytes = chunk_result?;
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
