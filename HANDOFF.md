@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-15  
-**分支**: gitbutler/workspace (`37b350a`)  
+**更新时间**: 2026-07-15 (晚间收尾)
+**分支**: gitbutler/workspace (`334ddd5`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -154,3 +154,35 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null   # 详细日志（抑制 tokio pa
 cd ~/Downloads/oh-my-pi-main && bun install && bun run install:dev
 ```
 API key 配置见 `~/.omp/agent/models.yml`（不在此处粘贴）。
+
+---
+
+## 明日继续
+
+### 待验证（需要用户交互）
+1. **cancel button 实际行为** — 0760b4e 加了 eprintln 调试，用户须从 CLI 启动 GUI（`cargo run -- --gui 2>&1 | grep cancel`）看 stderr 判断 click 是否触发闭包
+2. **3 个 GUI 新功能** 手动测试：进度条 speed/size 实时更新、设置面板保存路径、错误 Retry 按钮、主题持久化、历史点击回填
+
+### 待完成（已规划）
+3. 🟡 batch 取消（需要 BatchItemState 加 cancel_flag 字段）
+4. 🟡 URL 输入框 Enter 键提交
+5. 🟡 拖放 URL 到输入框
+6. 🟢 错误结构化字段未显示 `error_type` icon 映射（network/auth/parse/download/unknown → emoji）
+7. 🟢 push 到 origin
+
+### 性能待实测
+- §6 perf claim 5 项需 `cargo bench --bench hls_concurrency` 用真实 HTTPS CDN 验证（mock HTTP server 测不出）
+
+### 已知非阻塞问题
+- clippy `--all-targets` 报 7 warnings（4 bench stub + 3 lib 待修，不影响功能）
+- 3 处 [待实测] claim（FxtwitterResolver 共享客户端、to_lowercase URL 缓存、CookiePool 读写锁分离）
+
+### 启动快速参考
+```bash
+# 验证状态
+cargo test --quiet && cargo clippy --quiet
+# 启动 GUI 测试（用 stderr 看 cancel debug）
+cargo run -- --gui 2>&1 | grep -E "cancel|DEBUG"
+# push
+git push origin gitbutler/workspace
+```
