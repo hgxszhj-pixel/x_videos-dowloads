@@ -628,8 +628,13 @@ pub(super) fn AppComponent() -> Element {
                             style: "display: flex; justify-content: flex-end; margin-top: 10px;",
                             button {
                                 onclick: move |_| {
-                                    if let Some(flag) = state.read().cancel_flag.as_ref() {
+                                    eprintln!("[cancel] button clicked");
+                                    // clone 拿 owned Arc，避免闭包内临时引用问题
+                                    if let Some(flag) = state.read().cancel_flag.clone() {
                                         flag.store(true, Ordering::Relaxed);
+                                        eprintln!("[cancel] flag.store(true) done, previous={}", flag.load(Ordering::Relaxed));
+                                    } else {
+                                        eprintln!("[cancel] state.cancel_flag is None — button visible but flag missing");
                                     }
                                 },
                                 style: "padding: 6px 14px; background: #ff4444; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;",
