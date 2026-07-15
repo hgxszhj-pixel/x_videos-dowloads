@@ -180,13 +180,15 @@ impl ErrorDisplay {
 pub(super) struct BatchItemState {
     pub(super) url: String,
     pub(super) title: String,
-    pub(super) status: String,        // "pending" | "downloading" | "completed" | "failed"
+    pub(super) status: String,        // "pending" | "downloading" | "completed" | "failed" | "cancelled"
     pub(super) progress: f32,         // 0.0 - 1.0
     pub(super) speed: String,
     pub(super) visible: bool,
     // 原子进度追踪（跨 task 共享）
     pub(super) progress_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>, // 0-10000 表示 0.00%-100.00%
     pub(super) speed_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>, // 字节/秒
+    // 单项取消标志（点击行末 ✕ 触发 store(true)）
+    pub(super) cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// 批量下载进度状态

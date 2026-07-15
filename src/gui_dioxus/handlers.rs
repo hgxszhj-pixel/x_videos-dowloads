@@ -100,6 +100,7 @@ pub(super) async fn batch_download_impl(
     urls: Vec<String>,
     progress_arcs: Vec<Option<Arc<AtomicU32>>>,
     speed_arcs: Vec<Option<Arc<AtomicU64>>>,
+    cancel_flags: Vec<Option<Arc<AtomicBool>>>,
 ) {
     let concurrency = 3; // 最多同时下载3个
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
@@ -109,13 +110,14 @@ pub(super) async fn batch_download_impl(
         let semaphore = semaphore.clone();
         let progress_arc = progress_arcs.get(idx).cloned().flatten();
         let speed_arc = speed_arcs.get(idx).cloned().flatten();
+        let cancel_flag = cancel_flags.get(idx).cloned().flatten();
         tokio::spawn(async move {
             let _permit = semaphore.acquire_owned().await;
             // 获取视频信息
             match fetch_video_info_impl(&url).await {
                 Ok(info) => {
                     // 下载视频
-                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, None, None, info.download_strategy).await {
+                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, cancel_flag, None, info.download_strategy).await {
                         Ok(_) => (url, true, "completed".to_string(), 1.0),
                         Err(e) => (url, false, format!("failed: {}", e.message), 0.0),
                     }

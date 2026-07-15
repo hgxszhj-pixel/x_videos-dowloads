@@ -564,30 +564,33 @@ pub(super) fn AppComponent() -> Element {
                                 if items.is_empty() {
                                     return;
                                 }
+                                // 为每个下载项创建原子进度追踪 + 取消标志
+                                let urls: Vec<String> = items.iter().map(|i| i.url.clone()).collect();
+                                let progress_arcs: Vec<Option<Arc<AtomicU32>>> = items.iter().map(|_| Some(Arc::new(AtomicU32::new(0)))).collect();
+                                let speed_arcs: Vec<Option<Arc<AtomicU64>>> = items.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
+                                let cancel_flags: Vec<Option<Arc<AtomicBool>>> = items.iter().map(|_| Some(Arc::new(AtomicBool::new(false)))).collect();
+                                let initial_items: Vec<BatchItemState> = items.iter().enumerate().map(|(idx, i)| BatchItemState {
+                                    url: i.url.clone(),
+                                    title: i.title.clone(),
+                                    status: "pending".to_string(),
+                                    progress: 0.0,
+                                    speed: String::new(),
+                                    visible: true,
+                                    progress_arc: progress_arcs[idx].clone(),
+                                    speed_arc: speed_arcs[idx].clone(),
+                                    cancel_flag: cancel_flags[idx].clone(),
+                                }).collect();
                                 state.write().batch_state = BatchState {
                                     visible: true,
                                     progress: 0.0,
-                                    status: format!("准备下载 {} 个视频", items.len()),
-                                    items: items.iter().map(|i| BatchItemState {
-                                        url: i.url.clone(),
-                                        title: i.title.clone(),
-                                        status: "pending".to_string(),
-                                        progress: 0.0,
-                                        speed: String::new(),
-                                        visible: true,
-                                        progress_arc: None,
-                                        speed_arc: None,
-                                    }).collect(),
+                                    status: format!("准备下载 {} 个视频", initial_items.len()),
+                                    items: initial_items,
                                     is_downloading: true,
                                 };
                                 state.write().batch_video_state.visible = false;
-                                let urls: Vec<String> = items.iter().map(|i| i.url.clone()).collect();
-                                // 为每个下载项创建原子进度追踪
-                                let progress_arcs: Vec<Option<Arc<AtomicU32>>> = items.iter().map(|_| Some(Arc::new(AtomicU32::new(0)))).collect();
-                                let speed_arcs: Vec<Option<Arc<AtomicU64>>> = items.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
                                 let mut state = state;
                                 spawn(async move {
-                                    batch_download_impl(urls, progress_arcs, speed_arcs).await;
+                                    batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags).await;
                                     state.write().batch_state.visible = false;
                                     state.write().batch_state.is_downloading = false;
                                 });
@@ -714,12 +717,13 @@ pub(super) fn AppComponent() -> Element {
                                 return;
                             }
 
-                            // 创建进度追踪原子变量
+                            // 创建进度追踪原子变量 + 取消标志
                             let progress_arcs: Vec<Option<Arc<AtomicU32>>> = url_list.iter().map(|_| Some(Arc::new(AtomicU32::new(0)))).collect();
                             let speed_arcs: Vec<Option<Arc<AtomicU64>>> = url_list.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
+                            let cancel_flags: Vec<Option<Arc<AtomicBool>>> = url_list.iter().map(|_| Some(Arc::new(AtomicBool::new(false)))).collect();
 
-                            // 初始化批量状态（关联 progress_arc）
-                            let batch_items: Vec<BatchItemState> = url_list.iter().zip(progress_arcs.iter().zip(speed_arcs.iter())).map(|(url, (p_arc, s_arc))| {
+                            // 初始化批量状态（关联 progress_arc + cancel_flag）
+                            let batch_items: Vec<BatchItemState> = url_list.iter().enumerate().map(|(idx, url)| {
                                 BatchItemState {
                                     url: url.clone(),
                                     title: "视频".to_string(),
@@ -727,8 +731,9 @@ pub(super) fn AppComponent() -> Element {
                                     progress: 0.0,
                                     speed: String::new(),
                                     visible: true,
-                                    progress_arc: p_arc.clone(),
-                                    speed_arc: s_arc.clone(),
+                                    progress_arc: progress_arcs[idx].clone(),
+                                    speed_arc: speed_arcs[idx].clone(),
+                                    cancel_flag: cancel_flags[idx].clone(),
                                 }
                             }).collect();
 
@@ -781,7 +786,7 @@ pub(super) fn AppComponent() -> Element {
                             // 使用 spawn 在后台异步执行批量下载
                             let _state = state;
                             spawn(async move {
-                                batch_download_impl(url_list, progress_arcs, speed_arcs).await;
+                                batch_download_impl(url_list, progress_arcs, speed_arcs, cancel_flags).await;
                             });
                         },
                         style: "flex: 1; padding: 12px; background: #4285f4; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 500;",
@@ -872,7 +877,7 @@ pub(super) fn AppComponent() -> Element {
                     // 各视频进度列表
                     div {
                         style: "display: flex; flex-direction: column; gap: 10px; margin-top: 16px;",
-                        for (_idx, item) in state.read().batch_state.items.iter().enumerate() {
+                        for (idx, item) in state.read().batch_state.items.iter().enumerate() {
                             if item.visible {
                                 div {
                                     style: "display: flex; align-items: center; gap: 12px; padding: 12px; background: #f8f9fa; border-radius: 10px; transition: all 0.3s ease;",
@@ -889,6 +894,21 @@ pub(super) fn AppComponent() -> Element {
                                     div {
                                         style: "font-size: 11px; color: #888;",
                                         "{item.status}"
+                                    }
+                                    // 单项取消按钮（仅 pending/downloading 时显示）
+                                    if item.status == "pending" || item.status == "downloading" {
+                                        button {
+                                            onclick: move |_| {
+                                                let items = state.read().batch_state.items.clone();
+                                                if let Some(it) = items.get(idx) {
+                                                    if let Some(flag) = it.cancel_flag.clone() {
+                                                        flag.store(true, Ordering::Relaxed);
+                                                    }
+                                                }
+                                            },
+                                            style: "width: 24px; height: 24px; border-radius: 50%; border: none; background: #ea4335; color: white; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;",
+                                            "✕"
+                                        }
                                     }
                                 }
                             }
