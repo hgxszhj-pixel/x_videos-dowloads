@@ -69,6 +69,80 @@ pub(super) fn AppComponent() -> Element {
         }
     });
 
+    // Enter 键 + button 点击共享的 URL 提交逻辑（抽到外层 closure 让 onkeydown/onclick 复用）
+    let mut submit_urls = move || {
+        let urls_text = state.read().url.clone();
+        let url_list: Vec<String> = urls_text.split([' ', ','])
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if url_list.is_empty() {
+            state.write().error_display = Some(ErrorDisplay::new("parse", "请输入有效的 URL", "请输入视频链接后重试"));
+            return;
+        }
+
+        state.write().is_fetching = true;
+        state.write().status_message = "Fetching...".to_string();
+        state.write().error_display = None;
+        state.write().has_video_info = false;
+
+        let mut state_clone = state.clone();
+        let mut video_info_clone = video_info.clone();
+        spawn(async move {
+            if url_list.len() == 1 {
+                match fetch_video_info_impl(&url_list[0]).await {
+                    Ok(info) => {
+                        state_clone.write().has_video_info = true;
+                        state_clone.write().is_fetching = false;
+                        state_clone.write().status_message = "Video info fetched".to_string();
+                        state_clone.write().error_display = None;
+                        video_info_clone.write().url = info.url.clone();
+                        video_info_clone.write().title = info.title.clone();
+                        video_info_clone.write().uploader = info.uploader.clone();
+                        video_info_clone.write().duration = info.duration.clone();
+                        video_info_clone.write().formats = info.formats.clone();
+                    }
+                    Err(err) => {
+                        state_clone.write().is_fetching = false;
+                        state_clone.write().error_display = Some(ErrorDisplay::new("parse", err, "URL 无效或平台不支持"));
+                        state_clone.write().status_message = "Failed to fetch video info".to_string();
+                    }
+                }
+            } else {
+                let mut video_infos: Vec<VideoInfoDisplay> = Vec::new();
+                let mut has_error = false;
+                let mut error_msg = String::new();
+
+                for url in &url_list {
+                    match fetch_video_info_impl(url).await {
+                        Ok(info) => video_infos.push(info),
+                        Err(e) => {
+                            has_error = true;
+                            error_msg = e;
+                            break;
+                        }
+                    }
+                }
+
+                if has_error {
+                    state_clone.write().is_fetching = false;
+                    state_clone.write().error_display = Some(ErrorDisplay::new("parse", error_msg, "检查 URL 列表"));
+                    state_clone.write().status_message = "Failed to fetch video info".to_string();
+                } else {
+                    state_clone.write().batch_video_state = BatchVideoState {
+                        visible: true,
+                        items: video_infos,
+                        status: format!("获取了 {} 个视频信息", url_list.len()),
+                    };
+                    state_clone.write().is_fetching = false;
+                    state_clone.write().status_message = "Video info fetched".to_string();
+                    info!("批量视频信息获取完成: {} 个视频", url_list.len());
+                }
+            }
+        });
+    };
+
     rsx! {
         div {
             style: "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; background: {state.read().theme.background_color()}; min-height: 100vh; transition: background-color 0.3s ease;",
@@ -175,6 +249,11 @@ pub(super) fn AppComponent() -> Element {
                         oninput: move |e| {
                             state.write().url = e.value().to_string();
                         },
+                        onkeydown: move |e| {
+                            if e.key() == Key::Enter {
+                                submit_urls();
+                            }
+                        },
                         style: "flex: 1; border: none; outline: none; font-size: 15px; background: transparent;"
                     }
                 }
@@ -191,6 +270,11 @@ pub(super) fn AppComponent() -> Element {
                         oninput: move |e| {
                             state.write().url = e.value().to_string();
                         },
+                        onkeydown: move |e| {
+                            if e.key() == Key::Enter {
+                                submit_urls();
+                            }
+                        },
                         style: "flex: 1; border: none; outline: none; font-size: 14px;"
                     }
                 }
@@ -201,81 +285,7 @@ pub(super) fn AppComponent() -> Element {
                 div {
                     style: "display: flex; gap: 16px; height: 44px; margin-top: 12px;",
                     button {
-                        onclick: move |_| {
-                            let urls_text = state.read().url.clone();
-                            // 解析多个 URL（空格/逗号分隔）
-                            let url_list: Vec<String> = urls_text.split([' ', ','])
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect();
-
-                            if url_list.is_empty() {
-                                state.write().error_display = Some(ErrorDisplay::new("parse", "请输入有效的 URL", "请输入视频链接后重试"));
-                                return;
-                            }
-
-                            state.write().is_fetching = true;
-                            state.write().status_message = "Fetching...".to_string();
-                            state.write().error_display = None;
-                            state.write().has_video_info = false;
-
-                            let mut state = state;
-                            let mut video_info_clone = video_info;
-                            spawn(async move {
-                                if url_list.len() == 1 {
-                                    // 单个 URL - 显示视频信息
-                                    match fetch_video_info_impl(&url_list[0]).await {
-                                        Ok(info) => {
-                                            state.write().has_video_info = true;
-                                            state.write().is_fetching = false;
-                                            state.write().status_message = "Video info fetched".to_string();
-                                            state.write().error_display = None;
-                                            video_info_clone.write().url = info.url.clone();
-                                            video_info_clone.write().title = info.title.clone();
-                                            video_info_clone.write().uploader = info.uploader.clone();
-                                            video_info_clone.write().duration = info.duration.clone();
-                                            video_info_clone.write().formats = info.formats.clone();
-                                        }
-                                        Err(err) => {
-                                            state.write().is_fetching = false;
-                                            state.write().error_display = Some(ErrorDisplay::new("parse", err, "URL 无效或平台不支持"));
-                                            state.write().status_message = "Failed to fetch video info".to_string();
-                                        }
-                                    }
-                                } else {
-                                    // 多个 URL - 批量获取视频信息
-                                    let mut video_infos: Vec<VideoInfoDisplay> = Vec::new();
-                                    let mut has_error = false;
-                                    let mut error_msg = String::new();
-
-                                    for url in &url_list {
-                                        match fetch_video_info_impl(url).await {
-                                            Ok(info) => video_infos.push(info),
-                                            Err(e) => {
-                                                has_error = true;
-                                                error_msg = e;
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    if has_error {
-                                        state.write().is_fetching = false;
-                                        state.write().error_display = Some(ErrorDisplay::new("parse", error_msg, "检查 URL 列表"));
-                                        state.write().status_message = "Failed to fetch video info".to_string();
-                                    } else {
-                                        state.write().batch_video_state = BatchVideoState {
-                                            visible: true,
-                                            items: video_infos,
-                                            status: format!("获取了 {} 个视频信息", url_list.len()),
-                                        };
-                                        state.write().is_fetching = false;
-                                        state.write().status_message = "Video info fetched".to_string();
-                                        info!("批量视频信息获取完成: {} 个视频", url_list.len());
-                                    }
-                                }
-                            });
-                        },
+                        onclick: move |_| submit_urls(),
                         style: "width: 140px; background: {state.read().theme.gradient()}; color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: all 0.3s ease;",
                         if state.read().is_fetching { "加载中..." } else { "📥 获取信息" }
                     }
