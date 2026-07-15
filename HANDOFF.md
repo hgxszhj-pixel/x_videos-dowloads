@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
 **更新时间**: 2026-07-15  
-**分支**: gitbutler/workspace (`c330a76`)  
+**分支**: gitbutler/workspace (`ea15108`)  
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,7 +74,7 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-15 — perf + GUI 改进（10 commits，HEAD `c330a76`）
+### 2026-07-15 — perf + GUI 改进（12 commits，HEAD `ea15108`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
@@ -88,10 +88,12 @@ cargo build --release           # 发行版
 | `c8f9e3d` | docs | `HANDOFF.md` | 精简 405→126 行 |
 | `d435dc5` | fix | `src/gui_dioxus/{types,handlers,app}.rs` | 进度条显示 speed + size |
 | `c330a76` | feat | `src/{types,downloader/mod,downloader/parallel,gui_dioxus/{types,handlers,app}}.rs` | 单下载取消按钮 |
+| `0760b4e` | debug | `src/gui_dioxus/app.rs` | cancel onclick 加 eprintln（待定位） |
+| `ea15108` | refactor | `src/gui_dioxus/{types,handlers,app}.rs` | 错误 UI 结构化（ErrorDisplay 替换字符串匹配 + Retry 按钮） |
 
 `37b2ec4` 调用方: `src/resolver_chain.rs`, `src/platform/{bilibili,douyin,mod,tiktok,youtube}.rs`
 
-**剩余**: §6 5 处 perf claim [待实测]（需 `cargo bench`）；batch 取消未实现；未 push
+**剩余**: §6 5 处 perf claim [待实测]（需 `cargo bench`）；batch 取消未实现；cancel button 点击未确认（debug commit 0760b4e 待用户反馈）；未 push
 
 ### 2026-07-11 — HLS 下载器重构
 
