@@ -123,6 +123,7 @@ typenum = "1.17"
 
 [dev-dependencies]
 tempfile = "3.10"
+bumpalo = "3.16"
 
 [profile.release]
 opt-level = 3
@@ -136,4 +137,8 @@ path = "src/main.rs"
 
 [[bench]]
 name = "hls_concurrency"
+harness = false
+
+[[bench]]
+name = "hls_parse"
 harness = false
