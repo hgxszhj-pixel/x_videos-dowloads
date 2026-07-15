@@ -170,8 +170,7 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null   # 详细日志（抑制 tokio pa
 3. 🟡 batch 取消（需要 BatchItemState 加 cancel_flag 字段）
 4. 🟡 URL 输入框 Enter 键提交
 5. 🟡 拖放 URL 到输入框
-6. 🟢 错误结构化字段未显示 `error_type` icon 映射（network/auth/parse/download/unknown → emoji）
-7. 🟢 push 到 origin
+6. 🟢 push 到 origin
 
 ### 性能待实测
 - §6 perf claim 5 项需 `cargo bench --bench hls_concurrency` 用真实 HTTPS CDN 验证（mock HTTP server 测不出）
