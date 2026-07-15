@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
 **更新时间**: 2026-07-15  
-**分支**: gitbutler/workspace (`d1933bb`)  
+**分支**: gitbutler/workspace (`522df05`)  
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,7 +74,7 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-15 — perf + GUI 改进（14 commits，HEAD `d1933bb`）
+### 2026-07-15 — perf + GUI 改进（16 commits，HEAD `522df05`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
@@ -92,6 +92,8 @@ cargo build --release           # 发行版
 | `ea15108` | refactor | `src/gui_dioxus/{types,handlers,app}.rs` | 错误 UI 结构化（ErrorDisplay 替换字符串匹配 + Retry 按钮） |
 | `120fd27` | docs | `HANDOFF.md` | 同步 2 个 GUI commit |
 | `d1933bb` | feat | `src/gui_dioxus/{types,app}.rs` | 设置面板（4 字段 + rfd 文件选择） |
+| `38e8db7` | feat | `src/{config,gui_dioxus/app}.rs` | 主题选择持久化（AppConfig.theme + 启动加载 + 点击 save） |
+| `522df05` | feat | `src/gui_dioxus/{types,store,app}.rs` | 历史记录可点击回填 URL |
 
 `37b2ec4` 调用方: `src/resolver_chain.rs`, `src/platform/{bilibili,douyin,mod,tiktok,youtube}.rs`
 
