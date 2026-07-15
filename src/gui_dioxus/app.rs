@@ -15,7 +15,7 @@ use super::store::{
     send_notification,
 };
 use super::theme::AppTheme;
-use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, VideoInfoDisplay};
+use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
 
 /// 主应用组件
 #[component]
@@ -151,13 +151,13 @@ pub(super) fn AppComponent() -> Element {
                                 .collect();
 
                             if url_list.is_empty() {
-                                state.write().error_message = "请输入有效的 URL".to_string();
+                                state.write().error_display = Some(ErrorDisplay::new("parse", "请输入有效的 URL", "请输入视频链接后重试"));
                                 return;
                             }
 
                             state.write().is_fetching = true;
                             state.write().status_message = "Fetching...".to_string();
-                            state.write().error_message = String::new();
+                            state.write().error_display = None;
                             state.write().has_video_info = false;
 
                             let mut state = state;
@@ -170,7 +170,7 @@ pub(super) fn AppComponent() -> Element {
                                             state.write().has_video_info = true;
                                             state.write().is_fetching = false;
                                             state.write().status_message = "Video info fetched".to_string();
-                                            state.write().error_message = String::new();
+                                            state.write().error_display = None;
                                             video_info_clone.write().url = info.url.clone();
                                             video_info_clone.write().title = info.title.clone();
                                             video_info_clone.write().uploader = info.uploader.clone();
@@ -179,7 +179,7 @@ pub(super) fn AppComponent() -> Element {
                                         }
                                         Err(err) => {
                                             state.write().is_fetching = false;
-                                            state.write().error_message = err;
+                                            state.write().error_display = Some(ErrorDisplay::new("parse", err, "URL 无效或平台不支持"));
                                             state.write().status_message = "Failed to fetch video info".to_string();
                                         }
                                     }
@@ -202,7 +202,7 @@ pub(super) fn AppComponent() -> Element {
 
                                     if has_error {
                                         state.write().is_fetching = false;
-                                        state.write().error_message = error_msg;
+                                        state.write().error_display = Some(ErrorDisplay::new("parse", error_msg, "检查 URL 列表"));
                                         state.write().status_message = "Failed to fetch video info".to_string();
                                     } else {
                                         state.write().batch_video_state = BatchVideoState {
@@ -223,7 +223,7 @@ pub(super) fn AppComponent() -> Element {
                     button {
                         onclick: move |_| {
                             state.write().url = String::new();
-                            state.write().error_message = String::new();
+                            state.write().error_display = None;
                             state.write().status_message = "Enter video URL".to_string();
                             state.write().has_video_info = false;
                         },
@@ -233,42 +233,41 @@ pub(super) fn AppComponent() -> Element {
                 }
             }
 
-            // 错误提示 - 详细样式
-            if !state.read().error_message.is_empty() {
+            // 错误提示 - 结构化（ErrorDisplay 类型驱动）
+            if let Some(err) = state.read().error_display.clone() {
                 div {
                     style: "padding: 16px; background: linear-gradient(135deg, #fce8e8 0%, #ffe8e8 100%); border: 1px solid #f5c6cb; border-radius: 12px; margin-top: 12px; box-shadow: 0 4px 15px rgba(234, 67, 53, 0.15);",
                     div {
                         style: "display: flex; align-items: flex-start; gap: 12px;",
                         div {
                             style: "font-size: 24px; line-height: 1;",
-                            "⚠️"
+                            "{err.icon()}"
                         }
                         div {
                             style: "flex: 1;",
                             div {
                                 style: "font-size: 14px; font-weight: 700; color: #ea4335; margin-bottom: 4px;",
-                                "下载失败"
+                                "下载失败 · {err.error_type}"
                             }
                             div {
                                 style: "font-size: 13px; color: #721c24;",
-                                "{state.read().error_message}"
+                                "{err.message}"
                             }
-                            // 根据错误类型显示建议
-                            if state.read().error_message.contains("network") || state.read().error_message.contains("connection") {
+                            // 错误建议（结构化字段，不再字符串匹配）
+                            if !err.suggestion.is_empty() {
                                 div {
                                     style: "font-size: 12px; color: #856404; background: #fff3cd; padding: 8px; border-radius: 4px; margin-top: 8px;",
-                                    "💡 Suggestion: Check your internet connection and try again"
+                                    "💡 {err.suggestion}"
                                 }
-                            } else if state.read().error_message.contains("auth") || state.read().error_message.contains("login") || state.read().error_message.contains("cookie") {
-                                div {
-                                    style: "font-size: 12px; color: #856404; background: #fff3cd; padding: 8px; border-radius: 4px; margin-top: 8px;",
-                                    "💡 Suggestion: Update cookies in Settings (exit login → clear cookies → re-login → export)"
-                                }
-                            } else if state.read().error_message.contains("解析") || state.read().error_message.contains("parse") || state.read().error_message.contains("解析失败") {
-                                div {
-                                    style: "font-size: 12px; color: #856404; background: #fff3cd; padding: 8px; border-radius: 4px; margin-top: 8px;",
-                                    "💡 Suggestion: Video format may not be supported or URL is incorrect"
-                                }
+                            }
+                            // 重试按钮（清除错误，回到初始状态）
+                            button {
+                                onclick: move |_| {
+                                    state.write().error_display = None;
+                                    state.write().status_message = "Ready".to_string();
+                                },
+                                style: "margin-top: 10px; padding: 6px 14px; background: #ea4335; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer;",
+                                "🔄 重试 / 清除"
                             }
                         }
                     }
@@ -459,7 +458,7 @@ pub(super) fn AppComponent() -> Element {
                                     Err(e) => {
                                         state.write().is_downloading = false;
                                         state.write().cancel_flag = None;
-                                        state.write().error_message = e;
+                                        state.write().error_display = Some(e);
                                         state.write().status_message = "Download failed".to_string();
                                         send_notification("Download Failed", &title.to_string());
                                     }
@@ -515,7 +514,7 @@ pub(super) fn AppComponent() -> Element {
                                 .collect();
 
                             if url_list.is_empty() {
-                                state.write().error_message = "请输入有效的 URL".to_string();
+                                state.write().error_display = Some(ErrorDisplay::new("parse", "请输入有效的 URL", "请输入视频链接后重试"));
                                 return;
                             }
 

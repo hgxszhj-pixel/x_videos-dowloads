@@ -15,7 +15,7 @@ use crate::platform::{
 };
 use crate::types::{DownloadProgress, DownloadRequest};
 
-use super::types::{format_file_size, VideoFormatDisplay, VideoInfoDisplay};
+use super::types::{format_file_size, ErrorDisplay, VideoFormatDisplay, VideoInfoDisplay};
 
 /// 同步下载 - 使用 VideoDownloader
 #[allow(clippy::too_many_arguments)]
@@ -29,8 +29,8 @@ pub(super) async fn start_download_impl(
     cancel_flag: Option<Arc<AtomicBool>>,
     format_id: Option<String>,
     strategy: crate::types::DownloadStrategy,
-) -> Result<(), String> {
-    let config = AppConfig::load().map_err(|e| e.to_string())?;
+) -> Result<(), ErrorDisplay> {
+    let config = AppConfig::load().map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查配置文件权限"))?;
     let output_dir = if config.output_dir.to_string_lossy().is_empty() {
         directories::UserDirs::new()
             .and_then(|dirs| dirs.video_dir().map(|p| p.to_path_buf()))
@@ -82,9 +82,16 @@ pub(super) async fn start_download_impl(
         }) as ProgressCallback
     });
 
-    let downloader = VideoDownloader::new().map_err(|e| e.to_string())?;
+    let downloader = VideoDownloader::new().map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查下载器初始化"))?;
     downloader.download(&request, callback).await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            // 尝试 downcast 到结构化 DownloadError，否则 fallback
+            if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
+                ErrorDisplay::from(de.clone())
+            } else {
+                ErrorDisplay::new("download", e.to_string(), "")
+            }
+        })?;
     Ok(())
 }
 
@@ -110,7 +117,7 @@ pub(super) async fn batch_download_impl(
                     // 下载视频
                     match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, None, None, info.download_strategy).await {
                         Ok(_) => (url, true, "completed".to_string(), 1.0),
-                        Err(e) => (url, false, format!("failed: {}", e), 0.0),
+                        Err(e) => (url, false, format!("failed: {}", e.message), 0.0),
                     }
                 }
                 Err(e) => (url, false, format!("解析失败: {}", e), 0.0),

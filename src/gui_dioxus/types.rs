@@ -77,6 +77,7 @@ pub(super) struct AppState {
     pub(super) download_speed: String,
     pub(super) download_file_size: String,
     pub(super) cancel_flag: Option<Arc<AtomicBool>>,
+    pub(super) error_display: Option<ErrorDisplay>,
     pub(super) is_batch_mode: bool,
     pub(super) batch_state: BatchState,
     pub(super) batch_video_state: BatchVideoState,
@@ -99,6 +100,7 @@ impl Default for AppState {
             download_speed: String::new(),
             download_file_size: String::new(),
             cancel_flag: None,
+            error_display: None,
             is_batch_mode: false,
             batch_state: BatchState::default(),
             batch_video_state: BatchVideoState::default(),
@@ -116,6 +118,50 @@ pub(super) struct ErrorDisplay {
     pub(super) error_type: String,   // "network" | "auth" | "parse" | "download" | "unknown"
     pub(super) message: String,       // 具体错误信息
     pub(super) suggestion: String,    // 解决建议
+}
+
+/// 从结构化 DownloadError 转换为 GUI ErrorDisplay
+impl From<crate::types::DownloadError> for ErrorDisplay {
+    fn from(err: crate::types::DownloadError) -> Self {
+        use crate::types::DownloadErrorType::*;
+        let error_type = match err.error_type {
+            Network | Http(_) | RateLimited => "network",
+            ContentUnavailable => "parse",
+            Authentication => "auth",
+            DiskFull | DiskIo => "download",
+            Cancelled => "download",
+            YtDlp(_) => "download",
+            Unknown(_) => "unknown",
+        }
+        .to_string();
+        Self {
+            error_type,
+            message: err.message,
+            suggestion: err.action.unwrap_or_default(),
+        }
+    }
+}
+
+/// 通用错误转 ErrorDisplay（带类型提示）
+impl ErrorDisplay {
+    pub(super) fn new(error_type: &str, message: impl Into<String>, suggestion: impl Into<String>) -> Self {
+        Self {
+            error_type: error_type.to_string(),
+            message: message.into(),
+            suggestion: suggestion.into(),
+        }
+    }
+
+    /// 根据错误类型返回对应图标
+    pub(super) fn icon(&self) -> &'static str {
+        match self.error_type.as_str() {
+            "network" => "🌐",
+            "auth" => "🔐",
+            "parse" => "🔍",
+            "download" => "📥",
+            _ => "⚠️",
+        }
+    }
 }
 
 /// 单个批量下载项的状态
