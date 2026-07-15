@@ -62,7 +62,7 @@ impl PlatformResolver for BilibiliResolver {
         }
 
         // 使用 yt-dlp 获取视频信息
-        match ytdlp.get_video_info(url) {
+        match ytdlp.get_video_info(url).await {
             Ok(info) => {
                 tracing::info!("Bilibili video info via yt-dlp: {}", info.title);
                 Ok(info)

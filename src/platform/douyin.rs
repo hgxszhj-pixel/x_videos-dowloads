@@ -167,7 +167,7 @@ impl PlatformResolver for DouYinResolver {
                 url.to_string()
             };
 
-            match ytdlp.get_video_info(&download_url) {
+            match ytdlp.get_video_info(&download_url).await {
                 Ok(info) => {
                     tracing::info!("DouYin video info via yt-dlp: {}", info.title);
                     return Ok(info);
@@ -187,7 +187,7 @@ impl PlatformResolver for DouYinResolver {
                 ytdlp = ytdlp.with_cookie_file(cookie_file);
             }
 
-            match ytdlp.get_video_info(url) {
+            match ytdlp.get_video_info(url).await {
                 Ok(info) => {
                     tracing::info!("DouYin video info via yt-dlp: {}", info.title);
                     return Ok(info);
@@ -203,7 +203,7 @@ impl PlatformResolver for DouYinResolver {
         if let Some(cookie_file) = self.get_cookie_file() {
             ytdlp = ytdlp.with_cookie_file(cookie_file);
         }
-        ytdlp.get_video_info(url).map_err(ResolverError::from)
+        ytdlp.get_video_info(url).await.map_err(ResolverError::from)
     }
 
     fn requires_auth(&self) -> bool {

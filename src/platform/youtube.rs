@@ -64,18 +64,8 @@ impl PlatformResolver for YouTubeResolver {
             }
         }
 
-        // Clone url for the blocking thread
-        let url_owned = url.to_string();
-
-        // 使用 spawn_blocking 包装同步的 yt-dlp 调用，避免阻塞 async runtime
-        let result = tokio::task::spawn_blocking(move || {
-            ytdlp.get_video_info(&url_owned)
-        }).await.map_err(|e| {
-            tracing::warn!("YouTube spawn_blocking failed: {}", e);
-            ResolverError::ParseFailed(format!("任务执行失败: {}", e))
-        })?;
-
-        match result {
+        // yt-dlp's get_video_info is now async and internally uses spawn_blocking
+        match ytdlp.get_video_info(url).await {
             Ok(info) => {
                 tracing::info!("YouTube video info via yt-dlp: {}", info.title);
                 Ok(info)
