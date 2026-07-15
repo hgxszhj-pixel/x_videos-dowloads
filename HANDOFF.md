@@ -148,12 +148,15 @@ cargo build --release           # 发行版
 RUST_LOG=debug cargo run -- "URL" 2>/dev/null   # 详细日志（抑制 tokio panic）
 ```
 
-## omp 安装（本地开发模式）
+## 项目记忆（`memory/` 目录）
 
-```bash
-cd ~/Downloads/oh-my-pi-main && bun install && bun run install:dev
-```
-API key 配置见 `~/.omp/agent/models.yml`（不在此处粘贴）。
+| 记忆 | 用途 |
+|------|------|
+| `ai-research-sites.md` | 70+ AI 研究/论文/资讯站点（2026-07-16 验证） |
+| `slint-gui-progress-bar-issues.md` | Slint 进度条根因 |
+| `codegraph-mempalace-mcp-setup.md` | codegraph + mempalace MCP 配置 |
+| `gui_dioxus-runtime-crash.md` | Dioxus `onclick` 崩溃 + spawn 修复 |
+| `handoff-md-streamline-rule.md` | 每次更新 HANDOFF.md 必须精简（移除冗余/分析/API key） |
 
 ---
 
