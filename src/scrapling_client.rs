@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::io::{BufReader as StdBufReader, BufRead};
 use std::process::{Command as StdCommand, Stdio};
+use std::sync::OnceLock;
 
 /// Scrapling 响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,21 +243,25 @@ print(json.dumps(result))
 "#;
 
 /// 查找 Python 解释器
+static PYTHON_INTERPRETER: OnceLock<Option<PathBuf>> = OnceLock::new();
+
 fn find_python_interpreter() -> Result<PathBuf> {
-    let candidates = [
-        "python3",
-        "python",
-        "/Users/hgxszhj/.pyenv/shims/python3",
-        "/Users/hgxszhj/anaconda3/bin/python3",
-    ];
+    PYTHON_INTERPRETER.get_or_init(|| {
+        let candidates = [
+            "python3",
+            "python",
+            "/Users/hgxszhj/.pyenv/shims/python3",
+            "/Users/hgxszhj/anaconda3/bin/python3",
+        ];
 
-    for candidate in &candidates {
-        if let Ok(path) = which::which(candidate) {
-            return Ok(path);
+        for candidate in &candidates {
+            if let Ok(path) = which::which(candidate) {
+                return Some(path);
+            }
         }
-    }
 
-    Err(anyhow!(
+        None
+    }).clone().ok_or_else(|| anyhow!(
         "找不到 Python 解释器。请确保 python3 在 PATH 中或安装 scrapling:\n\
          pip install scrapling curl_cffi patchright browserforge"
     ))
