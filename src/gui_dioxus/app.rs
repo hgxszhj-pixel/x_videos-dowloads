@@ -56,6 +56,19 @@ pub(super) fn AppComponent() -> Element {
         }
     });
 
+    // 启动时从 AppConfig 加载主题
+    use_effect(move || {
+        if let Ok(cfg) = AppConfig::load() {
+            let theme = match cfg.theme.as_str() {
+                "Ocean" => AppTheme::Ocean,
+                "Sunset" => AppTheme::Sunset,
+                "Forest" => AppTheme::Forest,
+                _ => AppTheme::Purple,
+            };
+            state.write().theme = theme;
+        }
+    });
+
     rsx! {
         div {
             style: "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; background: {state.read().theme.background_color()}; min-height: 100vh; transition: background-color 0.3s ease;",
@@ -73,19 +86,44 @@ pub(super) fn AppComponent() -> Element {
                     div {
                         style: "display: flex; gap: 4px;",
                         button {
-                            onclick: move |_| { state.write().theme = AppTheme::Purple; },
+                            onclick: move |_| {
+                                    state.write().theme = AppTheme::Purple;
+                                    // 持久化
+                                    if let Ok(mut cfg) = AppConfig::load() {
+                                        cfg.theme = "Purple".to_string();
+                                        let _ = cfg.save();
+                                    }
+                                },
                             style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #667eea; background: linear-gradient(135deg, #667eea, #764ba2); cursor: pointer;",
                         }
                         button {
-                            onclick: move |_| { state.write().theme = AppTheme::Ocean; },
+                            onclick: move |_| {
+                                    state.write().theme = AppTheme::Ocean;
+                                    if let Ok(mut cfg) = AppConfig::load() {
+                                        cfg.theme = "Ocean".to_string();
+                                        let _ = cfg.save();
+                                    }
+                                },
                             style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #0066ff; background: linear-gradient(135deg, #0066ff, #00d4ff); cursor: pointer;",
                         }
                         button {
-                            onclick: move |_| { state.write().theme = AppTheme::Sunset; },
+                            onclick: move |_| {
+                                    state.write().theme = AppTheme::Sunset;
+                                    if let Ok(mut cfg) = AppConfig::load() {
+                                        cfg.theme = "Sunset".to_string();
+                                        let _ = cfg.save();
+                                    }
+                                },
                             style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #ff6b6b; background: linear-gradient(135deg, #ff6b6b, #ffa502); cursor: pointer;",
                         }
                         button {
-                            onclick: move |_| { state.write().theme = AppTheme::Forest; },
+                            onclick: move |_| {
+                                    state.write().theme = AppTheme::Forest;
+                                    if let Ok(mut cfg) = AppConfig::load() {
+                                        cfg.theme = "Forest".to_string();
+                                        let _ = cfg.save();
+                                    }
+                                },
                             style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #11998e; background: linear-gradient(135deg, #11998e, #38ef7d); cursor: pointer;",
                         }
                     }
@@ -902,9 +940,14 @@ pub(super) fn AppComponent() -> Element {
                     } else {
                         div {
                             style: "display: flex; flex-direction: column; gap: 10px;",
-                            for item in state.read().history.iter().rev() {
+                            for item in state.read().history.iter().rev().cloned() {
                                 div {
-                                    style: "display: flex; align-items: center; gap: 12px; padding: 12px; background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%); border-radius: 12px; border: 1px solid #e8e8e8;",
+                                    onclick: move |_| {
+                                        // 点击历史记录 → 回填 URL
+                                        state.write().url = item.url.clone();
+                                        state.write().error_display = None;
+                                    },
+                                    style: "display: flex; align-items: center; gap: 12px; padding: 12px; background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%); border-radius: 12px; border: 1px solid #e8e8e8; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;",
                                     div {
                                         style: "width: 40px; height: 40px; background: linear-gradient(135deg, #34a853 0%, #2ecc71 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center;",
                                         div { style: "font-size: 18px;", "✅" }

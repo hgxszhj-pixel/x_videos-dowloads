@@ -66,6 +66,10 @@ pub struct AppConfig {
     /// DouYin Cookie 文件路径 (用于完整登录认证)
     #[serde(default)]
     pub douyin_cookie_file: Option<PathBuf>,
+
+    /// GUI 主题（"Purple" | "Ocean" | "Sunset" | "Forest"）
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 fn default_output_dir() -> PathBuf {
@@ -98,6 +102,10 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
+fn default_theme() -> String {
+    "Purple".to_string()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -115,6 +123,7 @@ impl Default for AppConfig {
             log_level: default_log_level(),
             douyin_ms_token: None,
             douyin_cookie_file: None,
+            theme: default_theme(),
         }
     }
 }
