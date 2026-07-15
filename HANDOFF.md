@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
 **更新时间**: 2026-07-15  
-**分支**: gitbutler/workspace (`f87f5b0`)  
+**分支**: gitbutler/workspace (`37b350a`)  
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -95,6 +95,7 @@ cargo build --release           # 发行版
 | `38e8db7` | feat | `src/{config,gui_dioxus/app}.rs` | 主题选择持久化（AppConfig.theme + 启动加载 + 点击 save） |
 | `522df05` | feat | `src/gui_dioxus/{types,store,app}.rs` | 历史记录可点击回填 URL |
 | `f87f5b0` | bench | `Cargo.toml` + `benches/hls_parse.rs`（新） | bumpalo vs current parser micro-benchmark（结论：不集成） |
+| `37b350a` | perf | `src/hls/downloader.rs` + `src/http_client.rs` | `HlsDownloaderConfig → Arc<HlsDownloaderConfig>` + HTTP/2 keep-alive ping |
 
 `37b2ec4` 调用方: `src/resolver_chain.rs`, `src/platform/{bilibili,douyin,mod,tiktok,youtube}.rs`
 
