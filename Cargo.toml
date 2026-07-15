@@ -133,3 +133,7 @@ strip = true
 [[bin]]
 name = "x-video-downloader"
 path = "src/main.rs"
+
+[[bench]]
+name = "hls_concurrency"
+harness = false
