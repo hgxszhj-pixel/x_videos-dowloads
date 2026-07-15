@@ -169,7 +169,7 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null   # 详细日志（抑制 tokio pa
 ### 待完成（已规划）
 3. 🟡 batch 取消（需要 BatchItemState 加 cancel_flag 字段）
 4. 🟡 URL 输入框 Enter 键提交
-5. 🟡 拖放 URL 到输入框
+5. ⛔ 拖放 URL 到输入框 [平台限制: Dioxus 0.6 desktop `SerializedDragData { mouse, files }` 无 text data；升级 Dioxus 0.7+ 或 web 端才可实现]
 6. 🟢 push 到 origin
 
 ### 性能待实测
