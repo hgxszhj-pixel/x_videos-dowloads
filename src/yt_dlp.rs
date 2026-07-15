@@ -108,7 +108,7 @@ impl YtDlp {
     }
 
     /// 获取视频信息
-    pub fn get_video_info(&self, url: &str) -> Result<VideoInfo> {
+    pub async fn get_video_info(&self, url: &str) -> Result<VideoInfo> {
         info!("获取视频信息: {}", url);
 
         // 构建命令参数 - 优化网络稳定性
@@ -164,9 +164,16 @@ impl YtDlp {
             .collect();
         debug!("执行命令: {:?} {:?}", self.executable, safe_args);
 
-        let output = Command::new(&self.executable)
-            .args(&args)
-            .output()?;
+        // Wrap blocking subprocess in spawn_blocking so we don't stall the tokio runtime worker.
+        let executable = self.executable.clone();
+        let output_result = tokio::task::spawn_blocking(move || {
+            Command::new(&executable)
+                .args(&args)
+                .output()
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("yt-dlp spawn_blocking join failed: {}", e))?;
+        let output = output_result?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

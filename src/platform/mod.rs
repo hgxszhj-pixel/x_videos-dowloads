@@ -283,7 +283,7 @@ impl PlatformResolver for YtDlpResolver {
                 ytdlp = ytdlp.with_cookie_file(cookie.clone());
             }
         }
-        ytdlp.get_video_info(url).map_err(ResolverError::from)
+        ytdlp.get_video_info(url).await.map_err(ResolverError::from)
     }
     fn requires_auth(&self) -> bool {
         self.cookie_file.is_some()

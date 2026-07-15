@@ -161,5 +161,5 @@ pub async fn fetch_with_ytdlp(
         yt = yt.with_proxy(proxy.clone());
     }
 
-    yt.get_video_info(url)
+    yt.get_video_info(url).await
 }
