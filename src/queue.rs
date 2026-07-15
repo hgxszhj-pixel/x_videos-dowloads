@@ -266,7 +266,7 @@ impl DownloadQueue {
     /// 完成项
     pub fn complete_item(&self, url: &str, result: DownloadResult) {
         self.update_item(url, |item| {
-            item.complete(result.clone());
+            item.complete(result);
         });
         if let Ok(mut active) = self.active_count.write() {
             *active = active.saturating_sub(1);
