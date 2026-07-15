@@ -23,3 +23,6 @@ __pycache__/
 .omc/
 .planning/
 .gitnexus
+
+# SkillOpt temp clone (from pip install git+https://...)
+SkillOpt/

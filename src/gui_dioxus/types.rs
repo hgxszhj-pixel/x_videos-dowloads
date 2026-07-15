@@ -48,6 +48,22 @@ pub(super) fn format_file_size(bytes: u64) -> String {
     }
 }
 
+/// 格式化下载速度 (bytes/s -> "X.XX MiB/s")
+pub(super) fn format_speed(bytes_per_sec: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if bytes_per_sec >= GB {
+        format!("{:.2} GiB/s", bytes_per_sec as f64 / GB as f64)
+    } else if bytes_per_sec >= MB {
+        format!("{:.2} MiB/s", bytes_per_sec as f64 / MB as f64)
+    } else if bytes_per_sec >= KB {
+        format!("{:.2} KiB/s", bytes_per_sec as f64 / KB as f64)
+    } else {
+        format!("{} B/s", bytes_per_sec)
+    }
+}
+
 pub(super) struct AppState {
     pub(super) url: String,
     pub(super) status_message: String,
@@ -57,6 +73,7 @@ pub(super) struct AppState {
     pub(super) has_video_info: bool,
     pub(super) download_progress: f32,
     pub(super) download_speed: String,
+    pub(super) download_file_size: String,
     pub(super) is_batch_mode: bool,
     pub(super) batch_state: BatchState,
     pub(super) batch_video_state: BatchVideoState,
@@ -77,6 +94,7 @@ impl Default for AppState {
             has_video_info: false,
             download_progress: 0.0,
             download_speed: String::new(),
+            download_file_size: String::new(),
             is_batch_mode: false,
             batch_state: BatchState::default(),
             batch_video_state: BatchVideoState::default(),

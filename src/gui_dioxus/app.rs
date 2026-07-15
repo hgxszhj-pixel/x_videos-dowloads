@@ -15,7 +15,7 @@ use super::store::{
     send_notification,
 };
 use super::theme::AppTheme;
-use super::types::{AppState, BatchItemState, BatchState, BatchVideoState, VideoInfoDisplay};
+use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, VideoInfoDisplay};
 
 /// 主应用组件
 #[component]
@@ -427,8 +427,10 @@ pub(super) fn AppComponent() -> Element {
                             // 创建进度追踪原子变量
                             let progress_arc = Arc::new(AtomicU32::new(0));
                             let speed_arc = Arc::new(AtomicU64::new(0));
+                            let total_bytes_arc = Arc::new(AtomicU64::new(0));
                             let progress_arc_clone = progress_arc.clone();
                             let speed_arc_clone = speed_arc.clone();
+                            let total_bytes_arc_clone = total_bytes_arc.clone();
 
                             // 提前获取 format_id，避免 borrow 问题
                             let format_id = state.read().selected_format_id.clone();
@@ -436,7 +438,7 @@ pub(super) fn AppComponent() -> Element {
                             // 使用 spawn 在后台异步执行下载
                             let mut state = state;
                             spawn(async move {
-                                match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), format_id, crate::types::DownloadStrategy::Native).await {
+                                match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), Some(total_bytes_arc_clone), format_id, crate::types::DownloadStrategy::Native).await {
                                     Ok(_) => {
                                         state.write().is_downloading = false;
                                         // Stream copy 合并很快，短暂显示合并状态
@@ -461,9 +463,12 @@ pub(super) fn AppComponent() -> Element {
                             // 轮询进度更新 UI（独立 task，500ms 间隔减少 UI 负载）
                             // 进度阈值：只有变化超过 1% 才更新 UI，减少不必要的渲染
                             let progress_arc_for_poll = progress_arc.clone();
+                            let speed_arc_for_poll = speed_arc.clone();
+                            let total_bytes_arc_for_poll = total_bytes_arc.clone();
                             let mut state_for_poll = state;
                             const PROGRESS_THRESHOLD: f32 = 0.01; // 1% 阈值
                             let mut last_updated_progress: f32 = 0.0;
+                            let mut last_updated_size: u64 = 0;
                             spawn(async move {
                                 loop {
                                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -475,6 +480,15 @@ pub(super) fn AppComponent() -> Element {
                                     if (percent - last_updated_progress).abs() >= PROGRESS_THRESHOLD || percent >= 1.0 {
                                         state_for_poll.write().download_progress = percent;
                                         last_updated_progress = percent;
+                                    }
+                                    // 轮询下载速度（每 500ms 更新）
+                                    let speed = speed_arc_for_poll.load(Ordering::Relaxed);
+                                    state_for_poll.write().download_speed = format_speed(speed);
+                                    // 轮询文件大小（仅在变化时更新，避免重复格式化）
+                                    let total = total_bytes_arc_for_poll.load(Ordering::Relaxed);
+                                    if total != last_updated_size && total > 0 {
+                                        state_for_poll.write().download_file_size = format_file_size(total);
+                                        last_updated_size = total;
                                     }
                                     if percent >= 1.0 {
                                         break;
@@ -504,7 +518,7 @@ pub(super) fn AppComponent() -> Element {
                             let speed_arcs: Vec<Option<Arc<AtomicU64>>> = url_list.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
 
                             // 初始化批量状态（关联 progress_arc）
-                            let batch_items: Vec<BatchItemState> = url_list.iter().zip(progress_arcs.iter()).map(|(url, arc)| {
+                            let batch_items: Vec<BatchItemState> = url_list.iter().zip(progress_arcs.iter().zip(speed_arcs.iter())).map(|(url, (p_arc, s_arc))| {
                                 BatchItemState {
                                     url: url.clone(),
                                     title: "视频".to_string(),
@@ -512,8 +526,8 @@ pub(super) fn AppComponent() -> Element {
                                     progress: 0.0,
                                     speed: String::new(),
                                     visible: true,
-                                    progress_arc: arc.clone(),
-                                    speed_arc: None,
+                                    progress_arc: p_arc.clone(),
+                                    speed_arc: s_arc.clone(),
                                 }
                             }).collect();
 
@@ -546,9 +560,14 @@ pub(super) fn AppComponent() -> Element {
                                         if percent < 1.0 {
                                             all_done = false;
                                         }
-                                        // 更新单个视频进度
+                                        // 更新单个视频进度 + 速度
                                         if idx < state_for_poll.read().batch_state.items.len() {
+                                            let speed_arc_clone = state_for_poll.read().batch_state.items[idx].speed_arc.clone();
                                             state_for_poll.write().batch_state.items[idx].progress = percent;
+                                            if let Some(speed_arc) = speed_arc_clone {
+                                                let speed = speed_arc.load(Ordering::Relaxed);
+                                                state_for_poll.write().batch_state.items[idx].speed = format_speed(speed);
+                                            }
                                         }
                                     }
                                     state_for_poll.write().batch_state.progress = total_progress / (total_count as f32);
@@ -589,6 +608,12 @@ pub(super) fn AppComponent() -> Element {
                         style: "height: 12px; background: #e8e8e8; border-radius: 6px; overflow: hidden;",
                         div {
                             style: "height: 100%; width: {state.read().download_progress * 100.0}%; background: linear-gradient(90deg, #34a853, #2ecc71); border-radius: 6px; transition: width 0.3s ease;",
+                        }
+                    }
+                    if !state.read().download_file_size.is_empty() {
+                        div {
+                            style: "font-size: 12px; color: #888; margin-top: 8px;",
+                            "📦 大小: {state.read().download_file_size}"
                         }
                     }
                 }

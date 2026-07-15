@@ -18,12 +18,14 @@ use crate::types::{DownloadProgress, DownloadRequest};
 use super::types::{format_file_size, VideoFormatDisplay, VideoInfoDisplay};
 
 /// 同步下载 - 使用 VideoDownloader
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn start_download_impl(
     url: &str,
     original_url: Option<String>,
     title: &str,
     progress_arc: Option<Arc<AtomicU32>>,
     speed_arc: Option<Arc<AtomicU64>>,
+    total_bytes_arc: Option<Arc<AtomicU64>>,
     format_id: Option<String>,
     strategy: crate::types::DownloadStrategy,
 ) -> Result<(), String> {
@@ -61,11 +63,17 @@ pub(super) async fn start_download_impl(
     let callback: Option<ProgressCallback> = progress_arc.as_ref().map(|arc| {
         let progress_arc = arc.clone();
         let speed_arc = speed_arc.clone();
+        let total_bytes_arc = total_bytes_arc.clone();
         Arc::new(move |p: DownloadProgress| {
             let percent = (p.percent * 10000.0) as u32;
             progress_arc.store(percent, Ordering::Relaxed);
             if let Some(speed_arc) = &speed_arc {
                 speed_arc.store(p.speed as u64, Ordering::Relaxed);
+            }
+            if p.total_bytes > 0 {
+                if let Some(tb_arc) = &total_bytes_arc {
+                    tb_arc.store(p.total_bytes, Ordering::Relaxed);
+                }
             }
         }) as ProgressCallback
     });
@@ -96,7 +104,7 @@ pub(super) async fn batch_download_impl(
             match fetch_video_info_impl(&url).await {
                 Ok(info) => {
                     // 下载视频
-                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, info.download_strategy).await {
+                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, None, info.download_strategy).await {
                         Ok(_) => (url, true, "completed".to_string(), 1.0),
                         Err(e) => (url, false, format!("failed: {}", e), 0.0),
                     }
