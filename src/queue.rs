@@ -6,7 +6,7 @@
 
 use crate::types::{DownloadProgress, DownloadResult, VideoInfo};
 use std::collections::VecDeque;
-use std::sync::RwLock;
+use std::sync::Mutex;
 use std::time::Instant;
 
 /// 下载项状态
@@ -139,13 +139,13 @@ impl QueueItem {
 #[derive(Debug)]
 pub struct DownloadQueue {
     /// 队列项列表
-    items: RwLock<VecDeque<QueueItem>>,
+    items: Mutex<VecDeque<QueueItem>>,
     /// 最大队列长度 (0 = 无限制)
     max_size: usize,
     /// 并行下载数
     parallel_downloads: usize,
     /// 当前活跃下载数
-    active_count: RwLock<usize>,
+    active_count: Mutex<usize>,
 }
 
 impl Default for DownloadQueue {
@@ -158,33 +158,33 @@ impl DownloadQueue {
     /// 创建新的下载队列
     pub fn new() -> Self {
         Self {
-            items: RwLock::new(VecDeque::new()),
+            items: Mutex::new(VecDeque::new()),
             max_size: 0, // 无限制
             parallel_downloads: 3,
-            active_count: RwLock::new(0),
+            active_count: Mutex::new(0),
         }
     }
 
     /// 创建带配置的下载队列
     pub fn with_config(max_size: usize, parallel_downloads: usize) -> Self {
         Self {
-            items: RwLock::new(VecDeque::new()),
+            items: Mutex::new(VecDeque::new()),
             max_size,
             parallel_downloads,
-            active_count: RwLock::new(0),
+            active_count: Mutex::new(0),
         }
     }
 
     /// 入队 (添加到队列末尾)
     pub fn enqueue(&self, url: String, video_info: Option<VideoInfo>) -> bool {
         if self.max_size > 0 {
-            let len = self.items.read().ok().map(|i| i.len()).unwrap_or(0);
+            let len = self.items.lock().ok().map(|i| i.len()).unwrap_or(0);
             if len >= self.max_size {
                 return false;
             }
         }
         let item = QueueItem::new(url, video_info);
-        if let Ok(mut items) = self.items.write() {
+        if let Ok(mut items) = self.items.lock() {
             items.push_back(item);
             true
         } else {
@@ -195,13 +195,13 @@ impl DownloadQueue {
     /// 入队 (添加到队列开头)
     pub fn enqueue_front(&self, url: String, video_info: Option<VideoInfo>) -> bool {
         if self.max_size > 0 {
-            let len = self.items.read().ok().map(|i| i.len()).unwrap_or(0);
+            let len = self.items.lock().ok().map(|i| i.len()).unwrap_or(0);
             if len >= self.max_size {
                 return false;
             }
         }
         let item = QueueItem::new(url, video_info);
-        if let Ok(mut items) = self.items.write() {
+        if let Ok(mut items) = self.items.lock() {
             items.push_front(item);
             true
         } else {
@@ -212,18 +212,18 @@ impl DownloadQueue {
     /// 出队 (获取下一个待下载项)
     pub fn dequeue(&self) -> Option<QueueItem> {
         {
-            let active = self.active_count.read().ok()?;
+            let active = self.active_count.lock().ok()?;
             if *active >= self.parallel_downloads {
                 return None;
             }
         }
 
-        let mut items = self.items.write().ok()?;
+        let mut items = self.items.lock().ok()?;
 
         for i in 0..items.len() {
             if items[i].status == QueueItemStatus::Pending {
                 items[i].start();
-                *self.active_count.write().ok()? += 1;
+                *self.active_count.lock().ok()? += 1;
                 return Some(items[i].clone());
             }
         }
@@ -232,11 +232,11 @@ impl DownloadQueue {
 
     /// 根据 URL 获取队列项的可变引用
     pub fn get_mut_by_url(&self, url: &str) -> Option<crate::types::DownloadResult> {
-        let mut items = self.items.write().ok()?;
+        let mut items = self.items.lock().ok()?;
         for item in items.iter_mut() {
             if item.url == url {
                 if item.status == QueueItemStatus::Downloading {
-                    *self.active_count.write().ok()? = self.active_count.read().ok().map(|g| g.saturating_sub(1)).unwrap_or(0);
+                    *self.active_count.lock().ok()? = self.active_count.lock().ok().map(|g| g.saturating_sub(1)).unwrap_or(0);
                 }
                 if item.status == QueueItemStatus::Completed || item.status == QueueItemStatus::Failed("".to_string()) {
                     return item.result.clone();
@@ -252,7 +252,7 @@ impl DownloadQueue {
     where
         F: FnOnce(&mut QueueItem),
     {
-        if let Ok(mut items) = self.items.write() {
+        if let Ok(mut items) = self.items.lock() {
             for item in items.iter_mut() {
                 if item.url == url {
                     f(item);
@@ -268,7 +268,7 @@ impl DownloadQueue {
         self.update_item(url, |item| {
             item.complete(result.clone());
         });
-        if let Ok(mut active) = self.active_count.write() {
+        if let Ok(mut active) = self.active_count.lock() {
             *active = active.saturating_sub(1);
         }
     }
@@ -286,7 +286,7 @@ impl DownloadQueue {
             item.pause();
         });
         if paused {
-            if let Ok(mut active) = self.active_count.write() {
+            if let Ok(mut active) = self.active_count.lock() {
                 *active = active.saturating_sub(1);
             }
         }
@@ -306,7 +306,7 @@ impl DownloadQueue {
             item.cancel();
         });
         if cancelled {
-            if let Ok(mut active) = self.active_count.write() {
+            if let Ok(mut active) = self.active_count.lock() {
                 *active = active.saturating_sub(1);
             }
         }
@@ -380,7 +380,7 @@ impl DownloadQueue {
 
     /// 获取队列统计
     pub fn stats(&self) -> QueueStats {
-        let items_guard = self.items.read().ok();
+        let items_guard = self.items.lock().ok();
         let items_opt = items_guard.as_ref();
 
         QueueStats {
@@ -390,41 +390,41 @@ impl DownloadQueue {
             paused: items_opt.map(|i| i.iter().filter(|x| x.status == QueueItemStatus::Paused).count()).unwrap_or(0),
             completed: items_opt.map(|i| i.iter().filter(|x| x.status == QueueItemStatus::Completed).count()).unwrap_or(0),
             failed: items_opt.map(|i| i.iter().filter(|x| matches!(x.status, QueueItemStatus::Failed(_))).count()).unwrap_or(0),
-            active: self.active_count.read().ok().map(|g| *g).unwrap_or(0),
+            active: self.active_count.lock().ok().map(|g| *g).unwrap_or(0),
         }
     }
 
     /// 清空已完成项
     pub fn clear_completed(&self) {
-        if let Ok(mut items) = self.items.write() {
+        if let Ok(mut items) = self.items.lock() {
             items.retain(|i| !matches!(i.status, QueueItemStatus::Completed));
         }
     }
 
     /// 清空失败项
     pub fn clear_failed(&self) {
-        if let Ok(mut items) = self.items.write() {
+        if let Ok(mut items) = self.items.lock() {
             items.retain(|i| !matches!(i.status, QueueItemStatus::Failed(_)));
         }
     }
 
     /// 清空所有项
     pub fn clear(&self) {
-        if let Ok(mut items) = self.items.write() {
+        if let Ok(mut items) = self.items.lock() {
             items.clear();
         }
-        if let Ok(mut active) = self.active_count.write() {
+        if let Ok(mut active) = self.active_count.lock() {
             *active = 0;
         }
     }
 
     /// 移除指定项
     pub fn remove(&self, url: &str) -> bool {
-        if let Ok(mut items) = self.items.write() {
+        if let Ok(mut items) = self.items.lock() {
             let was_active = items.iter().any(|i| i.url == url && i.status == QueueItemStatus::Downloading);
             let removed = items.iter().position(|i| i.url == url).map(|idx| items.remove(idx));
             if was_active {
-                if let Ok(mut active) = self.active_count.write() {
+                if let Ok(mut active) = self.active_count.lock() {
                     *active = active.saturating_sub(1);
                 }
             }
@@ -435,7 +435,7 @@ impl DownloadQueue {
 
     /// 获取队列长度
     pub fn len(&self) -> usize {
-        self.items.read().ok().map(|i| i.len()).unwrap_or(0)
+        self.items.lock().ok().map(|i| i.len()).unwrap_or(0)
     }
 
     /// 检查队列是否为空
@@ -445,7 +445,7 @@ impl DownloadQueue {
 
     /// 检查是否有活跃下载
     pub fn has_active(&self) -> bool {
-        self.active_count.read().ok().map(|a| *a > 0).unwrap_or(false)
+        self.active_count.lock().ok().map(|a| *a > 0).unwrap_or(false)
     }
 }
 
