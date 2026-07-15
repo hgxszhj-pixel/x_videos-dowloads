@@ -97,6 +97,18 @@ cargo build --release           # 发行版
 | `f87f5b0` | bench | `Cargo.toml` + `benches/hls_parse.rs`（新） | bumpalo vs current parser micro-benchmark（结论：不集成） |
 | `37b350a` | perf | `src/hls/downloader.rs` + `src/http_client.rs` | `HlsDownloaderConfig → Arc<HlsDownloaderConfig>` + HTTP/2 keep-alive ping |
 
+**hls_concurrency bench 实测**（mock HTTP server, 50ms latency）：
+
+| concurrent | baseline | after | diff |
+|------------|----------|-------|------|
+| 1 | 1751ms | 1754ms | +0.2% |
+| 32 | 115ms | 116ms | +0.9% |
+
+**结论**：mock bench 测不出差异（全在 ±1% 噪声内）。预期原因：
+- mock 是 HTTP（非 HTTPS），h2 keep-alive 不生效
+- 50ms 网络延迟绝对主导，alloc 改进 < 1μs 不可见
+- 真实收益在 HTTPS CDN + 长下载场景
+
 `37b2ec4` 调用方: `src/resolver_chain.rs`, `src/platform/{bilibili,douyin,mod,tiktok,youtube}.rs`
 
 **bumpalo bench 结果**（解析 60% 加速，但生产不集成）：
