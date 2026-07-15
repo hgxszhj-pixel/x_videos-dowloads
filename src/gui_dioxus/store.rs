@@ -60,6 +60,7 @@ pub(super) fn get_history_items() -> Vec<HistoryItem> {
                     duration,
                     path,
                     completed_at,
+                    url: e.url.clone(),
                 }
             }).collect();
         }

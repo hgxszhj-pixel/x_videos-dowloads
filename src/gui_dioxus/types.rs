@@ -12,6 +12,7 @@ pub(super) struct HistoryItem {
     pub(super) duration: String,
     pub(super) path: String,
     pub(super) completed_at: String,
+    pub(super) url: String,
 }
 
 /// Video info for display
