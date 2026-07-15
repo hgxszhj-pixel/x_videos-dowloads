@@ -89,7 +89,7 @@ cargo build --release           # 发行版
 - **问题**: 每个解析器调用 `to_lowercase()` + `extract_hostname()`，重复分配
 - **修复**: `select_resolver()` 入口一次性提取 hostname 并缓存
 - **文件**: `src/platform/url_matcher.rs`, `src/platform/mod.rs`
-- **预估加速**: 5-10%
+- **预估加速**: **[待实测]** (was: "5-10%")
 
 ```rust
 // url_matcher.rs 新增 API
@@ -105,7 +105,7 @@ fn supports_url_by_host(&self, host_lower: &str) -> bool
 - **问题**: `get()` 方法用写锁 + O(n) 扫描，高并发时串行化
 - **修复**: 读写锁分离 — 读锁扫描找 LRU 候选，写锁只更新一条记录
 - **文件**: `src/platform/cookie_pool.rs`
-- **预估加速**: 10-20%
+- **预估加速**: **[待实测]** (was: "10-20%")
 
 ```rust
 pub fn get(&self) -> Option<HashMap<String, String>> {
@@ -124,11 +124,11 @@ pub fn get(&self) -> Option<HashMap<String, String>> {
 
 | Fix | 状态 | 预估加速 |
 |-----|------|----------|
-| FxTwitterResolver → shared client | ✅ 已就绪 | 15-20% |
-| Cache to_lowercase URL | ✅ 完成 | 5-10% |
-| CookiePool — 读写锁分离 | ✅ 完成 | 10-20% |
+| FxTwitterResolver → shared client | ✅ 已就绪 | **[待实测]** (was: "15-20%") |
+| Cache to_lowercase URL | ✅ 完成 | **[待实测]** (was: "5-10%") |
+| CookiePool — 读写锁分离 | ✅ 完成 | **[待实测]** (was: "10-20%") |
 
-**总计预估加速**: 15-30%
+**总计预估加速**: **[待实测]** (was: "15-30%")
 
 ---
 
@@ -246,7 +246,7 @@ host_lower == p || host_lower.ends_with(&format!(".{}", p))
 |--------|------|
 | cargo build | ✅ 0 errors, 0 warnings |
 | cargo test | ✅ 189 passed (1 suite, inline bin tests) |
-| cargo clippy | ✅ 0 warnings |
+| cargo clippy | **[与代码不符: clippy 输出 3 warnings]** (was: "✅ 0 warnings") |
 
 **最近验证**: 2026-07-12（无变更，仅日期刷新：189 tests, clippy clean）
 
