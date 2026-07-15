@@ -1,6 +1,7 @@
 //! 主应用组件（Dioxus RSX 视图）
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use dioxus::prelude::*;
@@ -87,6 +88,26 @@ pub(super) fn AppComponent() -> Element {
                             onclick: move |_| { state.write().theme = AppTheme::Forest; },
                             style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #11998e; background: linear-gradient(135deg, #11998e, #38ef7d); cursor: pointer;",
                         }
+                    }
+                    // 设置齿轮按钮
+                    button {
+                        onclick: move |_| {
+                            let mut s = state.write();
+                            s.show_settings = !s.show_settings;
+                            if s.show_settings {
+                                // 打开时从 AppConfig 加载当前值
+                                if let Ok(cfg) = AppConfig::load() {
+                                    s.settings_output_dir = cfg.output_dir.to_string_lossy().to_string();
+                                    s.settings_ms_token = cfg.douyin_ms_token.clone().unwrap_or_default();
+                                    s.settings_cookie_file = cfg.cookie_file.as_ref()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_default();
+                                    s.settings_concurrent = cfg.concurrent_downloads as u32;
+                                }
+                            }
+                        },
+                        style: "padding: 6px 10px; background: transparent; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; cursor: pointer;",
+                        "⚙️"
                     }
                     // 历史记录按钮
                     button {
@@ -269,6 +290,143 @@ pub(super) fn AppComponent() -> Element {
                                 style: "margin-top: 10px; padding: 6px 14px; background: #ea4335; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer;",
                                 "🔄 重试 / 清除"
                             }
+                        }
+                    }
+                }
+            }
+
+            // 设置面板
+            if state.read().show_settings {
+                div {
+                    style: "padding: 20px; background: rgba(255,255,255,0.98); border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); margin-top: 12px;",
+                    div {
+                        style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;",
+                        div {
+                            style: "font-size: 18px; font-weight: 700; color: #333;",
+                            "⚙️ 设置"
+                        }
+                        button {
+                            onclick: move |_| { state.write().show_settings = false; },
+                            style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: #f0f0f0; color: #888; font-size: 14px; cursor: pointer;",
+                            "×"
+                        }
+                    }
+                    // 输出目录
+                    div { style: "margin-bottom: 14px;",
+                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "📁 输出目录" }
+                        div { style: "display: flex; gap: 6px;",
+                            input {
+                                value: "{state.read().settings_output_dir}",
+                                oninput: move |evt| { state.write().settings_output_dir = evt.value(); },
+                                style: "flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                            }
+                            button {
+                                onclick: move |_| {
+                                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                        state.write().settings_output_dir = dir.to_string_lossy().to_string();
+                                    }
+                                },
+                                style: "padding: 6px 12px; background: #4285f4; color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer;",
+                                "浏览"
+                            }
+                        }
+                    }
+                    // ms_token
+                    div { style: "margin-bottom: 14px;",
+                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "🔑 抖音/TikTok msToken" }
+                        input {
+                            value: "{state.read().settings_ms_token}",
+                            oninput: move |evt| { state.write().settings_ms_token = evt.value(); },
+                            style: "width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                        }
+                    }
+                    // Cookie 文件
+                    div { style: "margin-bottom: 14px;",
+                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "🍪 Cookie 文件（可选）" }
+                        div { style: "display: flex; gap: 6px;",
+                            input {
+                                value: "{state.read().settings_cookie_file}",
+                                oninput: move |evt| { state.write().settings_cookie_file = evt.value(); },
+                                style: "flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                            }
+                            button {
+                                onclick: move |_| {
+                                    if let Some(f) = rfd::FileDialog::new().pick_file() {
+                                        state.write().settings_cookie_file = f.to_string_lossy().to_string();
+                                    }
+                                },
+                                style: "padding: 6px 12px; background: #4285f4; color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer;",
+                                "浏览"
+                            }
+                        }
+                    }
+                    // 并发数
+                    div { style: "margin-bottom: 18px;",
+                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "⚡ 并发下载数（1-16）" }
+                        input {
+                            r#type: "number",
+                            value: "{state.read().settings_concurrent}",
+                            min: "1",
+                            max: "16",
+                            oninput: move |evt| {
+                                if let Ok(n) = evt.value().parse::<u32>() {
+                                    state.write().settings_concurrent = n.clamp(1, 16);
+                                }
+                            },
+                            style: "width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                        }
+                    }
+                    // 按钮行
+                    div { style: "display: flex; justify-content: flex-end; gap: 8px;",
+                        button {
+                            onclick: move |_| { state.write().show_settings = false; },
+                            style: "padding: 8px 16px; background: #f0f0f0; color: #555; border: none; border-radius: 8px; font-size: 13px; cursor: pointer;",
+                            "取消"
+                        }
+                        button {
+                            onclick: move |_| {
+                                // 收集当前 settings_* 字段，写入 AppConfig
+                                let out_dir = state.read().settings_output_dir.clone();
+                                let ms_token = {
+                                    let v = state.read().settings_ms_token.clone();
+                                    if v.is_empty() { None } else { Some(v) }
+                                };
+                                let cookie = {
+                                    let v = state.read().settings_cookie_file.clone();
+                                    if v.is_empty() { None } else { Some(PathBuf::from(v)) }
+                                };
+                                let concurrent = state.read().settings_concurrent as usize;
+                                match AppConfig::load() {
+                                    Ok(mut cfg) => {
+                                        cfg.output_dir = PathBuf::from(out_dir);
+                                        cfg.douyin_ms_token = ms_token;
+                                        cfg.cookie_file = cookie;
+                                        cfg.concurrent_downloads = concurrent;
+                                        match cfg.save() {
+                                            Ok(_) => {
+                                                state.write().status_message = "✅ 设置已保存".to_string();
+                                                state.write().show_settings = false;
+                                            }
+                                            Err(e) => {
+                                                state.write().error_display = Some(ErrorDisplay::new(
+                                                    "download",
+                                                    format!("保存设置失败: {}", e),
+                                                    "检查配置文件权限和路径"
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        state.write().error_display = Some(ErrorDisplay::new(
+                                            "download",
+                                            format!("加载配置失败: {}", e),
+                                            "检查配置文件存在性"
+                                        ));
+                                    }
+                                }
+                            },
+                            style: "padding: 8px 16px; background: #34a853; color: white; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;",
+                            "💾 保存"
                         }
                     }
                 }
