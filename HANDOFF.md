@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
 **更新时间**: 2026-07-15  
-**分支**: gitbutler/workspace (`ea15108`)  
+**分支**: gitbutler/workspace (`d1933bb`)  
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,7 +74,7 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-15 — perf + GUI 改进（12 commits，HEAD `ea15108`）
+### 2026-07-15 — perf + GUI 改进（14 commits，HEAD `d1933bb`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
@@ -90,10 +90,12 @@ cargo build --release           # 发行版
 | `c330a76` | feat | `src/{types,downloader/mod,downloader/parallel,gui_dioxus/{types,handlers,app}}.rs` | 单下载取消按钮 |
 | `0760b4e` | debug | `src/gui_dioxus/app.rs` | cancel onclick 加 eprintln（待定位） |
 | `ea15108` | refactor | `src/gui_dioxus/{types,handlers,app}.rs` | 错误 UI 结构化（ErrorDisplay 替换字符串匹配 + Retry 按钮） |
+| `120fd27` | docs | `HANDOFF.md` | 同步 2 个 GUI commit |
+| `d1933bb` | feat | `src/gui_dioxus/{types,app}.rs` | 设置面板（4 字段 + rfd 文件选择） |
 
 `37b2ec4` 调用方: `src/resolver_chain.rs`, `src/platform/{bilibili,douyin,mod,tiktok,youtube}.rs`
 
-**剩余**: §6 5 处 perf claim [待实测]（需 `cargo bench`）；batch 取消未实现；cancel button 点击未确认（debug commit 0760b4e 待用户反馈）；未 push
+**剩余**: §6 5 处 perf claim [待实测]（需 `cargo bench`）；batch 取消未实现；cancel button 点击未确认（debug commit 0760b4e 待用户反馈）；设置面板仅 4/14 字段（proxy/user_agent/format/subtitles/audio_only/max_retries/server_addr/device_name/log_level/douyin_cookie_file 仍需手编配置）；未 push
 
 ### 2026-07-11 — HLS 下载器重构
 
