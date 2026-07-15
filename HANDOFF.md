@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
 **更新时间**: 2026-07-15  
-**分支**: gitbutler/workspace (`ae32b60`)  
+**分支**: gitbutler/workspace (`d435dc5`)  
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,7 +74,7 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-15 — perf 改进（7 commits，HEAD `ae32b60`）
+### 2026-07-15 — perf + GUI 修复（9 commits，HEAD `d435dc5`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
@@ -84,7 +84,9 @@ cargo build --release           # 发行版
 | `37b2ec4` | perf | `src/yt_dlp.rs` + 5 caller | sync→async + `spawn_blocking` |
 | `27a1acf` | perf | `src/scrapling_client.rs` | `OnceLock` 缓存 Python 路径 |
 | `edcd9fe` | test | `Cargo.toml` + `benches/hls_concurrency.rs`（新） | HLS 并发 sweep benchmark |
-| `ae32b60` | fix | `src/queue.rs` | 1855660 漏改的 4 处 `.read()` → `.lock()`（cargo build 失败修复） |
+| `ae32b60` | fix | `src/queue.rs` | 1855660 漏改的 4 处 `.read()` → `.lock()` |
+| `c8f9e3d` | docs | `HANDOFF.md` | 精简 405→126 行 |
+| `d435dc5` | fix | `src/gui_dioxus/{types,handlers,app}.rs` | 进度条显示 speed + size |
 
 `37b2ec4` 调用方: `src/resolver_chain.rs`, `src/platform/{bilibili,douyin,mod,tiktok,youtube}.rs`
 
