@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
 **更新时间**: 2026-07-15  
-**分支**: gitbutler/workspace (`522df05`)  
+**分支**: gitbutler/workspace (`f87f5b0`)  
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -94,8 +94,15 @@ cargo build --release           # 发行版
 | `d1933bb` | feat | `src/gui_dioxus/{types,app}.rs` | 设置面板（4 字段 + rfd 文件选择） |
 | `38e8db7` | feat | `src/{config,gui_dioxus/app}.rs` | 主题选择持久化（AppConfig.theme + 启动加载 + 点击 save） |
 | `522df05` | feat | `src/gui_dioxus/{types,store,app}.rs` | 历史记录可点击回填 URL |
+| `f87f5b0` | bench | `Cargo.toml` + `benches/hls_parse.rs`（新） | bumpalo vs current parser micro-benchmark（结论：不集成） |
 
 `37b2ec4` 调用方: `src/resolver_chain.rs`, `src/platform/{bilibili,douyin,mod,tiktok,youtube}.rs`
+
+**bumpalo bench 结果**（解析 60% 加速，但生产不集成）：
+- 50 段: 32.9μs → 12.9μs (-60%)
+- 200 段: 126.7μs → 46.5μs (-63%)
+- 500 段: 256.2μs → 84.6μs (-66%)
+- 不集成原因：parse 只在 fetch_and_parse 调一次，HTTP 占 99.8% 时间，bumpalo 省 150μs = 总耗时 0.15%
 
 **剩余**: §6 5 处 perf claim [待实测]（需 `cargo bench`）；batch 取消未实现；cancel button 点击未确认（debug commit 0760b4e 待用户反馈）；设置面板仅 4/14 字段（proxy/user_agent/format/subtitles/audio_only/max_retries/server_addr/device_name/log_level/douyin_cookie_file 仍需手编配置）；未 push
 
