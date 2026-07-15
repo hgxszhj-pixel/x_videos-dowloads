@@ -330,7 +330,7 @@ impl DownloadQueue {
     #[allow(dead_code)]
     pub fn get_all(&self) -> Vec<QueueItem> {
         self.items
-            .read()
+            .lock()
             .ok()
             .map(|items| items.iter().cloned().collect())
             .unwrap_or_default()
@@ -339,7 +339,7 @@ impl DownloadQueue {
     /// 获取待下载项 (Pending + Paused)
     pub fn get_pending(&self) -> Vec<QueueItem> {
         self.items
-            .read()
+            .lock()
             .ok()
             .map(|items| {
                 items.iter()
@@ -353,7 +353,7 @@ impl DownloadQueue {
     /// 获取已完成项
     pub fn get_completed(&self) -> Vec<QueueItem> {
         self.items
-            .read()
+            .lock()
             .ok()
             .map(|items| {
                 items.iter()
@@ -367,7 +367,7 @@ impl DownloadQueue {
     /// 获取失败项
     pub fn get_failed(&self) -> Vec<QueueItem> {
         self.items
-            .read()
+            .lock()
             .ok()
             .map(|items| {
                 items.iter()
