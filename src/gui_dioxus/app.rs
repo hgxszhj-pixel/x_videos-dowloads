@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use notify::{RecursiveMode, Watcher};
+use std::sync::mpsc::RecvTimeoutError;
+use std::time::Duration;
 
 use crate::config::AppConfig;
 
@@ -60,6 +62,10 @@ pub(super) fn AppComponent() -> Element {
         if let Some(path) = config_path {
             if let Some(parent) = path.parent() {
                 let parent = parent.to_path_buf();
+                // shutdown flag：use_drop 在 AppComponent 卸载时设 true，thread 检测后干净退出
+                let shutdown = Arc::new(AtomicBool::new(false));
+                let shutdown_thread = shutdown.clone();
+
                 std::thread::spawn(move || {
                     let (tx, rx) = std::sync::mpsc::channel();
                     let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, _>| {
@@ -72,9 +78,19 @@ pub(super) fn AppComponent() -> Element {
                         let _ = w.watch(&parent, RecursiveMode::NonRecursive);
                     }
 
-                    for _ in rx {
-                        reload_config();
+                    // 500ms 超时循环 + shutdown 检查，避免 for _ in rx 永久阻塞
+                    while !shutdown_thread.load(Ordering::Relaxed) {
+                        match rx.recv_timeout(Duration::from_millis(500)) {
+                            Ok(()) => reload_config(),
+                            Err(RecvTimeoutError::Timeout) => continue,
+                            Err(RecvTimeoutError::Disconnected) => break,
+                        }
                     }
+                });
+
+                // AppComponent 卸载时设 shutdown flag 让 thread 退出
+                use_drop(move || {
+                    shutdown.store(true, Ordering::Relaxed);
                 });
             }
         }
