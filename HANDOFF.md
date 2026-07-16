@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-16 (i18n + hashring flake)
-**分支**: gitbutler/workspace (`a18a339`)
+**更新时间**: 2026-07-16 (灰阶 token)
+**分支**: gitbutler/workspace (`5059edc`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,13 +74,15 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-16 — flake 修复 + hex cleanup（HEAD `a18a339`）
+### 2026-07-16 — flake 修复 + hex cleanup（HEAD `5059edc`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
 | `ab63573` | fix | `src/i18n.rs` | `CURRENT_LANG: Mutex→thread_local!{RefCell}`，默认并发测试稳定 |
-| `1f89a98` | refactor | `src/gui_dioxus/{theme,app}.rs` | 9 处硬编码 hex → theme helper，加 `color_accent()` / `progress_gradient_success()` |
+| `1f89a98` | refactor | `src/gui_dioxus/{theme,app}.rs` | 9 处硬编码主题 hex → theme helper，加 `color_accent()` / `progress_gradient_success()` |
 | `a18a339` | fix | `src/collaboration/crypto/hashring.rs` | sample 100→10000 消 `DefaultHasher` 极端分布 flake |
+| `5059edc` | refactor | `src/gui_dioxus/{theme,app}.rs` | 5 个高频中性 hex（37 处）→ theme const |
+| `5059edc` | refactor | `src/gui_dioxus/{theme,app}.rs` | 5 个高频中性 hex（37 处）→ theme const（TEXT_MUTED/PRIMARY/SECONDARY + BG_SUBTLE + BORDER_DEFAULT） |
 
 ### 2026-07-15 — perf + GUI 改进（16 commits，HEAD `522df05`）
 
