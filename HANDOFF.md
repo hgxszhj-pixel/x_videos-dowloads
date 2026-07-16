@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-16（29 commits, HEAD `0007183`）
+**更新**: 2026-07-16（30 commits, HEAD `322f322`）
 **分支**: `gitbutler/workspace`
 
 ---
@@ -91,6 +91,7 @@ mock HTTP 限制：50ms 网络延迟主导，alloc 改进 < 1% 噪声不可见�
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
+| `322f322` | fix | **notify watcher thread 加 shutdown flag**（Arc<AtomicBool> + use_drop，AppComponent 卸载干净退出） |
 | `0007183` | fix | **bridge.rs `while let Ok` → match + warn**（Eval.recv 错误显式日志 + break，不再静默吞错） |
 | `99c8c23` | refactor | **submit_urls 改 `use_action`**（替代 70 行手写 spawn + latest-wins 自动 cancel） |
 | `a692537` | refactor | **AppState + 7 嵌套类型改 Store**（Dioxus 0.7 lens 细粒度 reactivity） |
