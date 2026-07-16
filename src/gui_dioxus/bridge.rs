@@ -5,6 +5,7 @@
 //! 实现 HANDOFF §明日继续 #5 的解锁（⌛ 平台限制）。
 
 use dioxus::prelude::*;
+use tracing::warn;
 
 use super::types::AppState;
 
@@ -36,12 +37,21 @@ const BRIDGE_JS: &str = r#"
 
 /// 在 AppComponent mount 时调用一次；后台 task 长寿命监听 JS 推 URL，
 /// 直接写入 Signal（dioxus::spawn 在 dioxus runtime 跑，无需 Send 约束）。
+/// 错误（Eval 任务关闭 / 序列化失败）打 warn 日志并退出循环，避免静默吞错。
 pub(super) fn install_drag_drop_bridge(mut state: Store<AppState>) {
     spawn(async move {
         let mut eval = document::eval(BRIDGE_JS);
-        while let Ok(url) = eval.recv::<String>().await {
-            state.write().url = url;
-            state.write().status_message = "拖放 URL 已捕获".to_string();
+        loop {
+            match eval.recv::<String>().await {
+                Ok(url) => {
+                    state.write().url = url;
+                    state.write().status_message = "拖放 URL 已捕获".to_string();
+                }
+                Err(e) => {
+                    warn!("[bridge] drag-drop URL receive failed (Eval task likely closed): {}", e);
+                    break;
+                }
+            }
         }
     });
 }
