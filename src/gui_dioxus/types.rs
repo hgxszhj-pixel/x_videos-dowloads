@@ -210,3 +210,12 @@ pub(crate) struct BatchVideoState {
     pub(super) items: Vec<VideoInfoDisplay>,
     pub(super) status: String,
 }
+
+/// fetch action 的返回值（单 URL vs 批量 URL）
+#[derive(Clone)]
+pub(super) enum FetchResult {
+    /// 单个视频信息
+    Single(VideoInfoDisplay),
+    /// 批量视频信息列表
+    Batch(Vec<VideoInfoDisplay>),
+}

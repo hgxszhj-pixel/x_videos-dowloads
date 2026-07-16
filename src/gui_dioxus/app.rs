@@ -6,19 +6,19 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use notify::{RecursiveMode, Watcher};
-use tracing::info;
 
 use crate::config::AppConfig;
 
-use super::handlers::{batch_download_impl, fetch_video_info_impl, start_download_impl};
+use super::handlers::{batch_download_impl, start_download_impl};
 use super::store::{
     add_completed_download, clear_global_history, get_history_items, reload_config,
     send_notification,
 };
 use super::theme::AppTheme;
-use super::types::{AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
+use super::types::{AppState, BatchItemState, BatchState, ErrorDisplay, VideoInfoDisplay};
 use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, SettingsNumberInput, SettingsTextInput, ThemeSwatch, UrlInput, WhiteCard};
 use super::poller::{use_progress_poller, PollMsg};
+use super::actions::{sync_fetch_action_to_state, use_fetch_action};
 use super::theme::{STYLE_BTN_ICON, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// 主应用组件
@@ -38,6 +38,10 @@ pub(super) fn AppComponent() -> Element {
 
     // 进度轮询 coroutine — 替代手写 spawn(async move { loop { ... } }) 轮询循环
     let poller = use_progress_poller(state);
+
+    // fetch action — 替代手写 submit_urls 闭包（latest-wins 自动 cancel）
+    let mut fetch_action = use_fetch_action();
+    sync_fetch_action_to_state(state, video_info, fetch_action);
 
     // 拖放 URL bridge — 解锁 HANDOFF §明日继续 #5（macOS WKWebView 监听外部 drop）
     use_effect(move || {
@@ -89,78 +93,15 @@ pub(super) fn AppComponent() -> Element {
         }
     });
 
-    // Enter 键 + button 点击共享的 URL 提交逻辑（抽到外层 closure 让 onkeydown/onclick 复用）
-    let mut submit_urls = move || {
-        let urls_text = state.read().url.clone();
-        let url_list: Vec<String> = urls_text.split([' ', ','])
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        if url_list.is_empty() {
-            state.write().error_display = Some(ErrorDisplay::new("parse", "请输入有效的 URL", "请输入视频链接后重试"));
-            return;
-        }
-
+    // 触发 fetch action 的薄包装：清除旧 UI 状态 + 启动 action
+    // use_action 自动 cancel 上一 in-flight（latest-wins）
+    let mut trigger_fetch = move || {
+        // 启动时清掉旧 UI 状态
         state.write().is_fetching = true;
         state.write().status_message = "Fetching...".to_string();
         state.write().error_display = None;
         state.write().has_video_info = false;
-
-        let mut state_clone = state;
-        let mut video_info_clone = video_info;
-        spawn(async move {
-            if url_list.len() == 1 {
-                match fetch_video_info_impl(&url_list[0]).await {
-                    Ok(info) => {
-                        state_clone.write().has_video_info = true;
-                        state_clone.write().is_fetching = false;
-                        state_clone.write().status_message = "Video info fetched".to_string();
-                        state_clone.write().error_display = None;
-                        video_info_clone.write().url = info.url.clone();
-                        video_info_clone.write().title = info.title.clone();
-                        video_info_clone.write().uploader = info.uploader.clone();
-                        video_info_clone.write().duration = info.duration.clone();
-                        video_info_clone.write().formats = info.formats.clone();
-                    }
-                    Err(err) => {
-                        state_clone.write().is_fetching = false;
-                        state_clone.write().error_display = Some(ErrorDisplay::new("parse", err, "URL 无效或平台不支持"));
-                        state_clone.write().status_message = "Failed to fetch video info".to_string();
-                    }
-                }
-            } else {
-                let mut video_infos: Vec<VideoInfoDisplay> = Vec::new();
-                let mut has_error = false;
-                let mut error_msg = String::new();
-
-                for url in &url_list {
-                    match fetch_video_info_impl(url).await {
-                        Ok(info) => video_infos.push(info),
-                        Err(e) => {
-                            has_error = true;
-                            error_msg = e;
-                            break;
-                        }
-                    }
-                }
-
-                if has_error {
-                    state_clone.write().is_fetching = false;
-                    state_clone.write().error_display = Some(ErrorDisplay::new("parse", error_msg, "检查 URL 列表"));
-                    state_clone.write().status_message = "Failed to fetch video info".to_string();
-                } else {
-                    state_clone.write().batch_video_state = BatchVideoState {
-                        visible: true,
-                        items: video_infos,
-                        status: format!("获取了 {} 个视频信息", url_list.len()),
-                    };
-                    state_clone.write().is_fetching = false;
-                    state_clone.write().status_message = "Video info fetched".to_string();
-                    info!("批量视频信息获取完成: {} 个视频", url_list.len());
-                }
-            }
-        });
+        fetch_action.call(state.read().url.clone());
     };
 
     rsx! {
@@ -266,7 +207,7 @@ pub(super) fn AppComponent() -> Element {
                         placeholder: "Paste video URL here... (支持批量，多个用空格或逗号分隔)".to_string(),
                         value: state.read().url.clone(),
                         on_input: move |e: dioxus::events::FormEvent| { state.write().url = e.value().to_string(); },
-                        on_submit: move |_: dioxus::events::KeyboardEvent| { submit_urls(); },
+                        on_submit: move |_: dioxus::events::KeyboardEvent| { trigger_fetch(); },
                         font_size: "15px".to_string(),
                     }
                 }
@@ -280,7 +221,7 @@ pub(super) fn AppComponent() -> Element {
                         placeholder: "Enter X.com/Twitter video URL".to_string(),
                         value: state.read().url.clone(),
                         on_input: move |e: dioxus::events::FormEvent| { state.write().url = e.value().to_string(); },
-                        on_submit: move |_: dioxus::events::KeyboardEvent| { submit_urls(); },
+                        on_submit: move |_: dioxus::events::KeyboardEvent| { trigger_fetch(); },
                         font_size: "14px".to_string(),
                     }
                 }
@@ -291,7 +232,7 @@ pub(super) fn AppComponent() -> Element {
                 div {
                     style: "display: flex; gap: 16px; height: 44px; margin-top: 12px;",
                     button {
-                        onclick: move |_| submit_urls(),
+                        onclick: move |_| trigger_fetch(),
                         style: "width: 140px; background: {state.read().theme.gradient()}; color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: all 0.3s ease;",
                         if state.read().is_fetching { "加载中..." } else { "📥 获取信息" }
                     }

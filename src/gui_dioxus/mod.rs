@@ -11,6 +11,7 @@
 
 #![allow(dead_code)]
 
+mod actions;
 mod app;
 mod bridge;
 mod components;
