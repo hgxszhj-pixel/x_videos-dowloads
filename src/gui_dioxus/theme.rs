@@ -36,6 +36,8 @@ pub(super) const TEXT_SECONDARY: &str = "#555";
 pub(super) const BG_SUBTLE: &str = "#f0f0f0";
 /// 默认边框（输入框/分隔）— 替代 `#ddd`
 pub(super) const BORDER_DEFAULT: &str = "#ddd";
+/// 强对比危险红（独立于 `color_danger`，用于"取消下载 / 清空历史"等强 destructive 胶囊按钮）— 替代 `#ff4444`
+pub(super) const ALERT_RED: &str = "#ff4444";
 
 impl AppTheme {
     pub(super) fn gradient(&self) -> &'static str {
@@ -83,6 +85,15 @@ impl AppTheme {
     pub(super) fn color_text_danger(&self) -> &'static str { "#721c24" }
     /// 主题强调色（用于 batch progress 文字等跟随主题变化的 highlight）
     pub(super) fn color_accent(&self) -> &'static str {
+        match self {
+            AppTheme::Purple => "#667eea",
+            AppTheme::Ocean => "#0066ff",
+            AppTheme::Sunset => "#ff6b6b",
+            AppTheme::Forest => "#11998e",
+        }
+    }
+    /// 主题色环边框色（对应 `gradient()` 起始 hex，用于 ThemeSwatch 边框）
+    pub(super) fn border_color(&self) -> &'static str {
         match self {
             AppTheme::Purple => "#667eea",
             AppTheme::Ocean => "#0066ff",
