@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-15 (晚间收尾)
-**分支**: gitbutler/workspace (`334ddd5`)
+**更新时间**: 2026-07-16 (i18n flake 修复)
+**分支**: gitbutler/workspace (`ab63573`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -55,10 +55,10 @@ cargo build --release           # 发行版
 | 检查项 | 状态 |
 |--------|------|
 | cargo build | ✅ 0 errors |
-| cargo test | ✅ 189 passed |
+| cargo test | ✅ 189 passed（默认并发稳定，`ab63573` 修 i18n flake） |
 | cargo clippy | ✅ 0 warnings（`--all-targets`: 7 warnings, 4 在 bench stub, 3 在 lib 待修） |
 
-**最近验证**: 2026-07-15 — 7 perf commits merged (含 1 修复), 189 tests pass, clippy clean
+**最近验证**: 2026-07-16 — i18n flake 修复（`ab63573`），默认并发 189 tests pass 连续 3 轮，clippy clean
 
 ## 已知问题
 
@@ -73,6 +73,12 @@ cargo build --release           # 发行版
 ---
 
 ## 近期完成
+
+### 2026-07-16 — i18n flake 修复（HEAD `ab63573`）
+
+| Commit | 类型 | 文件 | 内容 |
+|--------|------|------|------|
+| `ab63573` | fix | `src/i18n.rs` | `CURRENT_LANG: Mutex→thread_local!{RefCell}`，默认并发测试稳定 189 passed |
 
 ### 2026-07-15 — perf + GUI 改进（16 commits，HEAD `522df05`）
 
