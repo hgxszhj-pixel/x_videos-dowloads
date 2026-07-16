@@ -17,6 +17,7 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
+use super::theme::STYLE_BTN_ICON;
 
 /// 主应用组件
 #[component]
@@ -87,8 +88,8 @@ pub(super) fn AppComponent() -> Element {
         state.write().error_display = None;
         state.write().has_video_info = false;
 
-        let mut state_clone = state.clone();
-        let mut video_info_clone = video_info.clone();
+        let mut state_clone = state;
+        let mut video_info_clone = video_info;
         spawn(async move {
             if url_list.len() == 1 {
                 match fetch_video_info_impl(&url_list[0]).await {
@@ -335,7 +336,7 @@ pub(super) fn AppComponent() -> Element {
                                     state.write().error_display = None;
                                     state.write().status_message = "Ready".to_string();
                                 },
-                                style: "margin-top: 10px; padding: 6px 14px; background: #ea4335; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer;",
+                                style: "{state.read().theme.btn_solid(state.read().theme.color_danger(), \"6px 14px\", \"16px\", \"12px\")} margin-top: 10px;",
                                 "🔄 重试 / 清除"
                             }
                         }
@@ -374,7 +375,7 @@ pub(super) fn AppComponent() -> Element {
                                         state.write().settings_output_dir = dir.to_string_lossy().to_string();
                                     }
                                 },
-                                style: "padding: 6px 12px; background: #4285f4; color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer;",
+                                style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"6px 12px\", \"6px\", \"12px\")}",
                                 "浏览"
                             }
                         }
@@ -403,7 +404,7 @@ pub(super) fn AppComponent() -> Element {
                                         state.write().settings_cookie_file = f.to_string_lossy().to_string();
                                     }
                                 },
-                                style: "padding: 6px 12px; background: #4285f4; color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer;",
+                                style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"6px 12px\", \"6px\", \"12px\")}",
                                 "浏览"
                             }
                         }
@@ -473,7 +474,7 @@ pub(super) fn AppComponent() -> Element {
                                     }
                                 }
                             },
-                            style: "padding: 8px 16px; background: #34a853; color: white; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;",
+                            style: "{state.read().theme.btn_solid(state.read().theme.color_success(), \"8px 16px\", \"8px\", \"13px\")}",
                             "💾 保存"
                         }
                     }
@@ -605,14 +606,14 @@ pub(super) fn AppComponent() -> Element {
                                     state.write().batch_state.is_downloading = false;
                                 });
                             },
-                            style: "flex: 1; padding: 14px; background: linear-gradient(135deg, #34a853 0%, #2e9651 100%); color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(52, 168, 83, 0.4); transition: all 0.3s ease;",
+                            style: "{state.read().theme.btn_success(\"14px\", \"12px\", \"15px\")} flex: 1;",
                             "⬇️ 全部下载"
                         }
                         button {
                             onclick: move |_| {
                                 state.write().batch_video_state.visible = false;
                             },
-                            style: "flex: 1; padding: 14px; background: linear-gradient(135deg, #ea4335 0%, #c62828 100%); color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(234, 67, 53, 0.4); transition: all 0.3s ease;",
+                            style: "{state.read().theme.btn_danger(\"14px\", \"12px\", \"15px\")} flex: 1;",
                             "⏹️ 取消"
                         }
                     }
@@ -710,7 +711,7 @@ pub(super) fn AppComponent() -> Element {
                                 }
                             });
                         },
-                        style: "flex: 1; padding: 14px; background: linear-gradient(135deg, #34a853 0%, #2e9651 100%); color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; box-shadow: 0 4px 15px rgba(52, 168, 83, 0.4); transition: all 0.3s ease;",
+                        style: "{state.read().theme.btn_success(\"14px\", \"10px\", \"15px\")} flex: 1;",
                         "⬇️ 开始下载"
                     }
                     button {
@@ -799,7 +800,7 @@ pub(super) fn AppComponent() -> Element {
                                 batch_download_impl(url_list, progress_arcs, speed_arcs, cancel_flags).await;
                             });
                         },
-                        style: "flex: 1; padding: 12px; background: #4285f4; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 500;",
+                        style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"12px\", \"6px\", \"14px\")} flex: 1; font-weight: 500;",
                         "Batch Download"
                     }
                 }
@@ -870,7 +871,7 @@ pub(super) fn AppComponent() -> Element {
                                 state.write().batch_state.visible = false;
                                 state.write().batch_state.is_downloading = false;
                             },
-                            style: "padding: 6px 14px; background: linear-gradient(135deg, #ea4335 0%, #c62828 100%); color: white; border: none; border-radius: 8px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(234, 67, 53, 0.3);",
+                            style: "{state.read().theme.btn_danger(\"6px 14px\", \"8px\", \"12px\")}",
                             "⏹️ 取消"
                         }
                     }
@@ -916,7 +917,7 @@ pub(super) fn AppComponent() -> Element {
                                                     }
                                                 }
                                             },
-                                            style: "width: 24px; height: 24px; border-radius: 50%; border: none; background: #ea4335; color: white; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;",
+                                            style: "{STYLE_BTN_ICON} width: 24px; height: 24px; background: {state.read().theme.color_danger()}; font-size: 12px; display: flex; align-items: center; justify-content: center; padding: 0;",
                                             "✕"
                                         }
                                     }
