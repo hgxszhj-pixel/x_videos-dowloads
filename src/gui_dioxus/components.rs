@@ -1,11 +1,16 @@
 //! 可复用 Dioxus UI 组件
 //!
-//! 抽离自 `app.rs` 中重复出现的 RSX 模式（Card 容器 / 主题切换 swatch / 关闭 × / 浏览按钮 / 危险红胶囊）。
+//! 抽离自 `app.rs` 中重复出现的 RSX 模式（Card 容器 / 主题切换 swatch / 关闭 ×
+//! / 浏览按钮 / 危险红胶囊 / URL 输入 / 设置文本 / 设置数字输入）。
 //! 强类型 props 接管样式细节，避免外层 inline style 字符串蔓延。
 
+use dioxus::events::{FormEvent, KeyboardEvent};
 use dioxus::prelude::*;
 
-use super::theme::{AppTheme, ALERT_RED, BG_SUBTLE, STYLE_BTN_BASE, TEXT_MUTED};
+use super::theme::{
+    AppTheme, ALERT_RED, BORDER_DEFAULT, BG_SUBTLE, STYLE_BTN_BASE, STYLE_INPUT_BARE,
+    TEXT_MUTED,
+};
 
 // ============================================================================
 // WhiteCard — 半透明白色内容卡片
@@ -121,6 +126,84 @@ pub(super) fn DestructivePillButton(
             onclick: move |e| onclick.call(e),
             style: "{STYLE_BTN_BASE} padding: 6px 14px; background: {ALERT_RED}; border-radius: 16px; font-size: 12px; font-weight: 600;",
             {children}
+        }
+    }
+}
+
+// ============================================================================
+// UrlInput — 顶层 URL 输入框（裸 input，无 border，Enter 提交）
+// ============================================================================
+
+/// 顶层 URL 输入框（嵌在外层带边框的 div 中，input 本身裸，Enter 触发 submit）
+#[component]
+pub(super) fn UrlInput(
+    placeholder: String,
+    value: String,
+    on_input: EventHandler<FormEvent>,
+    on_submit: EventHandler<KeyboardEvent>,
+    #[props(default = "15px".to_string())] font_size: String,
+) -> Element {
+    rsx! {
+        input {
+            r#type: "text",
+            placeholder: "{placeholder}",
+            value: "{value}",
+            oninput: move |e| on_input.call(e),
+            onkeydown: move |e| {
+                if e.key() == Key::Enter {
+                    on_submit.call(e);
+                }
+            },
+            style: "{STYLE_INPUT_BARE} font-size: {font_size}; background: transparent;"
+        }
+    }
+}
+
+// ============================================================================
+// SettingsTextInput — 设置面板文本输入框（完整 border + radius）
+// ============================================================================
+
+/// 设置面板文本输入框（output dir / msToken / cookie file 等）
+#[component]
+pub(super) fn SettingsTextInput(
+    value: String,
+    on_input: EventHandler<FormEvent>,
+    #[props(default = "flex: 1".to_string())] width: String,
+) -> Element {
+    rsx! {
+        input {
+            r#type: "text",
+            value: "{value}",
+            oninput: move |e| on_input.call(e),
+            style: "{width}; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;"
+        }
+    }
+}
+
+// ============================================================================
+// SettingsNumberInput — 设置面板数字输入框（u32 自动 parse + clamp）
+// ============================================================================
+
+/// 设置面板数字输入框（并发下载数等）
+#[component]
+pub(super) fn SettingsNumberInput(
+    value: u32,
+    min: u32,
+    max: u32,
+    on_change: EventHandler<u32>,
+) -> Element {
+    rsx! {
+        input {
+            r#type: "number",
+            value: "{value}",
+            min: "{min}",
+            max: "{max}",
+            oninput: move |evt| {
+                if let Ok(n) = evt.value().parse::<u32>() {
+                    on_change.call(n.clamp(min, max));
+                }
+            },
+            style: "width: 100%; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;"
         }
     }
 }

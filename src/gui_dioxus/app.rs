@@ -17,8 +17,8 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
-use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, ThemeSwatch, WhiteCard};
-use super::theme::{STYLE_BTN_ICON, STYLE_INPUT_BARE, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
+use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, SettingsNumberInput, SettingsTextInput, ThemeSwatch, UrlInput, WhiteCard};
+use super::theme::{STYLE_BTN_ICON, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// 主应用组件
 #[component]
@@ -249,19 +249,12 @@ pub(super) fn AppComponent() -> Element {
                 style: "padding: 24px; background: {state.read().theme.card_background()}; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); margin-bottom: 16px; transition: background-color 0.3s ease;",
                 div {
                     style: "display: flex; align-items: center; height: 52px; border: 2px solid #e8e8e8; border-radius: 12px; padding-left: 16px; transition: all 0.3s ease;",
-                    input {
-                        r#type: "text",
-                        placeholder: "Paste video URL here... (支持批量，多个用空格或逗号分隔)",
-                        value: "{state.read().url}",
-                        oninput: move |e| {
-                            state.write().url = e.value().to_string();
-                        },
-                        onkeydown: move |e| {
-                            if e.key() == Key::Enter {
-                                submit_urls();
-                            }
-                        },
-                        style: "{STYLE_INPUT_BARE} font-size: 15px; background: transparent;"
+                    UrlInput {
+                        placeholder: "Paste video URL here... (支持批量，多个用空格或逗号分隔)".to_string(),
+                        value: state.read().url.clone(),
+                        on_input: move |e: dioxus::events::FormEvent| { state.write().url = e.value().to_string(); },
+                        on_submit: move |_: dioxus::events::KeyboardEvent| { submit_urls(); },
+                        font_size: "15px".to_string(),
                     }
                 }
                 div {
@@ -270,19 +263,12 @@ pub(super) fn AppComponent() -> Element {
                 }
                 div {
                     style: "display: flex; align-items: center; height: 40px; border: 1px solid #ccc; border-radius: 6px; padding-left: 12px;",
-                    input {
-                        r#type: "text",
-                        placeholder: "Enter X.com/Twitter video URL",
-                        value: "{state.read().url}",
-                        oninput: move |e| {
-                            state.write().url = e.value().to_string();
-                        },
-                        onkeydown: move |e| {
-                            if e.key() == Key::Enter {
-                                submit_urls();
-                            }
-                        },
-                        style: "{STYLE_INPUT_BARE} font-size: 14px;"
+                    UrlInput {
+                        placeholder: "Enter X.com/Twitter video URL".to_string(),
+                        value: state.read().url.clone(),
+                        on_input: move |e: dioxus::events::FormEvent| { state.write().url = e.value().to_string(); },
+                        on_submit: move |_: dioxus::events::KeyboardEvent| { submit_urls(); },
+                        font_size: "14px".to_string(),
                     }
                 }
                 div {
@@ -368,10 +354,9 @@ pub(super) fn AppComponent() -> Element {
                     div { style: "margin-bottom: 14px;",
                         div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "📁 输出目录" }
                         div { style: "display: flex; gap: 6px;",
-                            input {
-                                value: "{state.read().settings_output_dir}",
-                                oninput: move |evt| { state.write().settings_output_dir = evt.value(); },
-                                style: "flex: 1; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
+                            SettingsTextInput {
+                                value: state.read().settings_output_dir.clone(),
+                                on_input: move |evt: dioxus::events::FormEvent| { state.write().settings_output_dir = evt.value(); },
                             }
                             BrowseButton {
                                 label: "浏览".to_string(),
@@ -387,20 +372,19 @@ pub(super) fn AppComponent() -> Element {
                     // ms_token
                     div { style: "margin-bottom: 14px;",
                         div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "🔑 抖音/TikTok msToken" }
-                        input {
-                            value: "{state.read().settings_ms_token}",
-                            oninput: move |evt| { state.write().settings_ms_token = evt.value(); },
-                            style: "width: 100%; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
+                        SettingsTextInput {
+                            value: state.read().settings_ms_token.clone(),
+                            on_input: move |evt: dioxus::events::FormEvent| { state.write().settings_ms_token = evt.value(); },
+                            width: "width: 100%".to_string(),
                         }
                     }
                     // Cookie 文件
                     div { style: "margin-bottom: 14px;",
                         div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "🍪 Cookie 文件（可选）" }
                         div { style: "display: flex; gap: 6px;",
-                            input {
-                                value: "{state.read().settings_cookie_file}",
-                                oninput: move |evt| { state.write().settings_cookie_file = evt.value(); },
-                                style: "flex: 1; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
+                            SettingsTextInput {
+                                value: state.read().settings_cookie_file.clone(),
+                                on_input: move |evt: dioxus::events::FormEvent| { state.write().settings_cookie_file = evt.value(); },
                             }
                             BrowseButton {
                                 label: "浏览".to_string(),
@@ -416,17 +400,11 @@ pub(super) fn AppComponent() -> Element {
                     // 并发数
                     div { style: "margin-bottom: 18px;",
                         div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "⚡ 并发下载数（1-16）" }
-                        input {
-                            r#type: "number",
-                            value: "{state.read().settings_concurrent}",
-                            min: "1",
-                            max: "16",
-                            oninput: move |evt| {
-                                if let Ok(n) = evt.value().parse::<u32>() {
-                                    state.write().settings_concurrent = n.clamp(1, 16);
-                                }
-                            },
-                            style: "width: 100%; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
+                        SettingsNumberInput {
+                            value: state.read().settings_concurrent,
+                            min: 1,
+                            max: 16,
+                            on_change: move |n: u32| { state.write().settings_concurrent = n; },
                         }
                     }
                     // 按钮行
