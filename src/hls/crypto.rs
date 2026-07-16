@@ -108,6 +108,7 @@ pub fn decrypt_aes128_cbc(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Ve
 }
 
 #[cfg(test)]
+#[allow(unused_imports)] // bench 编译上下文看不到 super::* 调用方，test 实际使用
 mod tests {
     use super::*;
 

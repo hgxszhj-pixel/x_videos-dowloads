@@ -263,11 +263,9 @@ mod tests {
     #[tokio::test]
     async fn test_check_ffmpeg() {
         // 假设系统有 ffmpeg
-        let result = check_ffmpeg("ffmpeg").await;
-        if result.is_ok() {
-            info!("FFmpeg version: {}", result.unwrap());
-        } else {
-            info!("FFmpeg not available: {}", result.unwrap_err());
+        match check_ffmpeg("ffmpeg").await {
+            Ok(version) => info!("FFmpeg version: {}", version),
+            Err(e) => info!("FFmpeg not available: {}", e),
         }
     }
 }

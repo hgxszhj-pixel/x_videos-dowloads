@@ -126,6 +126,7 @@ impl M3u8Parser {
     }
 
     /// 从 URL 加载并解析 m3u8（自动处理 Master Playlist）
+    #[allow(dead_code)] // bench 编译上下文看不到 nnyy.rs 调用方，lib 实际使用
     pub async fn fetch_and_parse(client: &reqwest::Client, url: &str) -> Result<M3u8Playlist> {
         let mut current_url = url.to_string();
 
@@ -148,6 +149,7 @@ impl M3u8Parser {
     }
 
     /// 从 Master Playlist 提取子播放列表 URL
+    #[allow(dead_code)] // bench 编译上下文看不到调用方，lib 实际使用
     fn extract_master_child_url(content: &str, base_url: &str) -> Option<String> {
         // 验证 content 确实是 m3u8（应该包含 #EXTM3U 或 #EXT-X- 标签）
         if !content.contains("#EXTM3U") && !content.contains("#EXT-X-") {
@@ -188,6 +190,7 @@ impl M3u8Parser {
     }
 
     /// 解析 base_url（去除文件名，保留到域名）
+    #[allow(dead_code)] // bench 编译上下文看不到调用方，lib 实际使用
     fn extract_base_url(url: &str) -> String {
         if let Some(idx) = url.find("://") {
             let scheme_end = idx + 3;
@@ -229,6 +232,7 @@ impl M3u8Parser {
 }
 
 #[cfg(test)]
+#[allow(unused_imports)] // bench 编译上下文看不到 super::* 调用方，test 实际使用
 mod tests {
     use super::*;
 

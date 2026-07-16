@@ -238,7 +238,7 @@ mod tests {
     fn test_default_output_dir() {
         let dir = default_output_dir();
         // 应该是有效的路径
-        assert!(dir.to_string_lossy().len() > 0);
+        assert!(!dir.to_string_lossy().is_empty());
     }
 
     #[test]

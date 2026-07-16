@@ -5,7 +5,6 @@
 //!
 //! 用法：`cargo bench --bench hls_parse`
 
-use std::path::PathBuf;
 use std::time::Instant;
 
 // 与 src/main.rs 共享：include HLS parser 模块（bench 是独立 crate）
@@ -37,7 +36,7 @@ fn make_playlist(segment_count: usize) -> String {
 
 /// Bumpalo 版本：把所有 temp String 走 arena（仅用于对比测量）
 /// 注：模仿 parser 主逻辑，差异在 temp String 走 bump.alloc_str 而非 String
-fn parse_with_bump<'b>(content: &str, _base_url: &str, bump: &'b Bump) -> Vec<(usize, String, f64)> {
+fn parse_with_bump(content: &str, _base_url: &str, bump: &Bump) -> Vec<(usize, String, f64)> {
     let mut segments = Vec::new();
     let mut current_duration = 0.0_f64;
     let mut seq = 0_usize;

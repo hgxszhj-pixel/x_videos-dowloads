@@ -6,5 +6,6 @@ mod parser;
 mod downloader;
 mod crypto;
 
+#[allow(unused_imports)] // bench 编译上下文看不到 nnyy.rs 消费方，lib 实际使用
 pub use parser::M3u8Parser;
 pub use downloader::HlsDownloader;
