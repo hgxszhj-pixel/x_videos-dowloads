@@ -14,7 +14,7 @@
 42a9cd9 feat(hls): add HLS downloader + nnyy/tulingpython resolvers
 96fe901 refactor(gui): split gui_dioxus into 6-module structure
 abbaafd refactor(downloader): split into parallel/config/merge submodules
-492b92c refactor(cli): extract cli + commands modules from main.rs
+`492b92c` refactor(cli): extract cli + commands modules from main.rs
 6c366ba refactor(core): split core module into submodules
 2c4ddb7 chore(deps): add HLS dependencies
 ```
