@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-16（22 commits, HEAD `6e37ced`）
+**更新**: 2026-07-16（26 commits, HEAD `8de3239`）
 **分支**: `gitbutler/workspace`
 
 ---
@@ -91,6 +91,10 @@ mock HTTP 限制：50ms 网络延迟主导，alloc 改进 < 1% 噪声不可见�
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
+| `8de3239` | fix | `use_context_provider` 拆 hook-in-hook（Signal 顶层创建 + provider return handle） |
+| `3882daf` | refactor | **`use_coroutine` 合并进度轮询**（`poller.rs` 新建 + 删 67 行手写 spawn 循环） |
+| `4b776c2` | refactor | **`use_context_provider` 共享 AppTheme**（BrowseButton 删 theme prop） |
+| `4079493` | chore | 清 cancel button 调试 `eprintln!` 残留（`#1` 关闭） |
 | `6e37ced` | docs | 同步 d6803ef 抽 3 TextField 组件 |
 | `d6803ef` | refactor | 抽 `UrlInput×2` + `SettingsTextInput×3` + `SettingsNumberInput×1`，删 `STYLE_INPUT_BARE` |
 | `4a46ac8` | docs | #5 拖放 URL ⛔→🟡 |
@@ -153,13 +157,13 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null
 ## 明日继续
 
 ### 待验证（用户交互）
-1. **cancel button** — `0760b4e` 加 eprintln debug，`cargo run -- --gui 2>&1 \| grep cancel` 触发闭包判断
+1. ✅ cancel button debug 已清（`4079493`）
 2. **JS bridge 拖放 URL** — `cargo run -- --gui` 后拖浏览器地址栏 URL 到窗口，期望 `state.url` 自动填入 + status 显示"拖放 URL 已捕获"
-3. **GUI 新功能手测** — speed/size 进度条、settings 保存、错误 Retry、主题持久化、历史回填
+3. **GUI 新功能手测** — speed/size 进度条（`use_coroutine` poller 调度）、settings 保存、错误 Retry、主题持久化（`use_context_provider` reactive）、历史回填
 
 ### 待完成
 4. 🟡 batch 取消 — `BatchItemState` 加 `cancel_flag`
-5. 🟡 URL 输入框 Enter 键提交
+5. 🟡 URL 输入框 Enter 键提交（其实 `UrlInput` 已用 `Key::Enter`，待 GUI 验证）
 6. 🟢 push 到 origin（`e10303d` 修 push protection 误报；浏览器 unblock URL 或 amend line 17 都行）
 
 ### 性能
