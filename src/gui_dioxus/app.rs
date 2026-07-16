@@ -27,8 +27,10 @@ pub(super) fn AppComponent() -> Element {
     let mut state = use_signal(AppState::default);
     let video_info = use_signal(VideoInfoDisplay::default);
 
-    // 提供 AppTheme context（reactive signal），下游组件直接 use_context 读取
-    let mut theme_signal = use_context_provider(|| use_signal(|| state.read().theme.clone()));
+    // AppTheme reactive signal（顶层 use_signal，避免 use_context_provider 内 hook-in-hook 违反 Rules of Hooks）
+    let mut theme_signal = use_signal(|| state.read().theme.clone());
+    // 把 Signal 句柄提供到 context（Signal<T> 是 Copy，闭包直接 return handle）
+    use_context_provider(|| theme_signal);
     // sync state.theme 变化 → theme_signal（响应主题切换）
     use_effect(move || {
         theme_signal.set(state.read().theme.clone());
