@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-16（33 commits, HEAD `70cac7b`）
+**更新**: 2026-07-16（35 commits, HEAD `3ffeef6`）
 **分支**: `gitbutler/workspace`
 
 ---
@@ -91,6 +91,7 @@ mock HTTP 限制：50ms 网络延迟主导，alloc 改进 < 1% 噪声不可见�
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
+| `3ffeef6` | fix | **batch 取消乐观 UI 更新**（点击 ✕ 立即显示 `cancelled`，不等后台任务结束） |
 | `70cac7b` | refactor | **抽 `ErrorPanel` 组件**（app.rs −38 行 inline RSX → 复用组件；Store + Context 模式） |
 | `9ab018c` | feat | **ThemeSwatch 选中 ring 指示器**（use_context 读 Signal<AppTheme>，lens API 示范） |
 | `5c27679` | chore | **cargo clippy --all-targets 完全清零**（11 → 0 warnings） |
@@ -169,7 +170,7 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null
 3. **GUI 新功能手测** — speed/size 进度条（`use_coroutine` poller 调度）、settings 保存、错误 Retry、主题持久化（`use_context_provider` reactive）、历史回填
 
 ### 待完成
-4. 🟡 batch 取消 — `BatchItemState` 加 `cancel_flag`
+4. ✅ batch 取消 — `cancel_flag` 已 wire（handlers.rs:113→120），UI 加乐观更新 `3ffeef6`
 5. 🟡 URL 输入框 Enter 键提交（其实 `UrlInput` 已用 `Key::Enter`，待 GUI 验证）
 6. 🟢 push 到 origin（`e10303d` 修 push protection 误报；浏览器 unblock URL 或 amend line 17 都行）
 
