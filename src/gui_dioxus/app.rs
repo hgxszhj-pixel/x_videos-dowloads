@@ -24,7 +24,7 @@ use super::theme::{STYLE_BTN_ICON, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAU
 /// 主应用组件
 #[component]
 pub(super) fn AppComponent() -> Element {
-    let mut state = use_signal(AppState::default);
+    let mut state = use_store(AppState::default);
     let video_info = use_signal(VideoInfoDisplay::default);
 
     // AppTheme reactive signal（顶层 use_signal，避免 use_context_provider 内 hook-in-hook 违反 Rules of Hooks）

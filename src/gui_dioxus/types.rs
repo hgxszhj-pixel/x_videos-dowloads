@@ -1,11 +1,12 @@
 //! GUI 显示用的数据结构与状态定义
 
 use super::theme::AppTheme;
+use dioxus_stores::Store;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// 下载历史记录项
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Store)]
 pub(super) struct HistoryItem {
     pub(super) title: String,
     pub(super) uploader: String,
@@ -16,7 +17,7 @@ pub(super) struct HistoryItem {
 }
 
 /// Video info for display
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Store)]
 pub(super) struct VideoInfoDisplay {
     pub(super) url: String,
     pub(super) original_url: Option<String>,  // 原始 URL（用于 yt-dlp 格式选择）
@@ -27,7 +28,7 @@ pub(super) struct VideoInfoDisplay {
     pub(super) download_strategy: crate::types::DownloadStrategy,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Store)]
 pub(super) struct VideoFormatDisplay {
     pub(super) format_id: String,
     pub(super) resolution: String,
@@ -67,6 +68,7 @@ pub(super) fn format_speed(bytes_per_sec: u64) -> String {
     }
 }
 
+#[derive(Store)]
 pub(super) struct AppState {
     pub(super) url: String,
     pub(super) status_message: String,
@@ -90,7 +92,7 @@ pub(super) struct AppState {
     pub(super) theme: AppTheme,
     pub(super) history: Vec<HistoryItem>,
     pub(super) show_history: bool,
-    pub(super) selected_format_id: Option<String>,  // 用户选择的视频格式ID
+    pub(super) selected_format_id: Option<String>,
 }
 
 impl Default for AppState {
@@ -124,7 +126,7 @@ impl Default for AppState {
 }
 
 /// 错误信息结构
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Store)]
 pub(super) struct ErrorDisplay {
     pub(super) error_type: String,   // "network" | "auth" | "parse" | "download" | "unknown"
     pub(super) message: String,       // 具体错误信息
@@ -176,7 +178,7 @@ impl ErrorDisplay {
 }
 
 /// 单个批量下载项的状态
-#[derive(Clone)]
+#[derive(Clone, Store)]
 pub(super) struct BatchItemState {
     pub(super) url: String,
     pub(super) title: String,
@@ -192,7 +194,7 @@ pub(super) struct BatchItemState {
 }
 
 /// 批量下载进度状态
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Store)]
 pub(crate) struct BatchState {
     pub(super) visible: bool,
     pub(super) progress: f32,         // 总体进度
@@ -202,7 +204,7 @@ pub(crate) struct BatchState {
 }
 
 /// 批量视频信息状态
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Store)]
 pub(crate) struct BatchVideoState {
     pub(super) visible: bool,
     pub(super) items: Vec<VideoInfoDisplay>,

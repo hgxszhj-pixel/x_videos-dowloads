@@ -36,7 +36,7 @@ const BRIDGE_JS: &str = r#"
 
 /// 在 AppComponent mount 时调用一次；后台 task 长寿命监听 JS 推 URL，
 /// 直接写入 Signal（dioxus::spawn 在 dioxus runtime 跑，无需 Send 约束）。
-pub(super) fn install_drag_drop_bridge(mut state: Signal<AppState>) {
+pub(super) fn install_drag_drop_bridge(mut state: Store<AppState>) {
     spawn(async move {
         let mut eval = document::eval(BRIDGE_JS);
         while let Ok(url) = eval.recv::<String>().await {

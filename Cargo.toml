@@ -108,6 +108,7 @@ dirs = "6.0.0"
 
 # Dioxus GUI (迁移自 Slint)
 dioxus = { version = "0.7.9", features = ["desktop", "web"] }
+dioxus-stores = { version = "0.7.9", default-features = false }
 
 # 文件监控 (配置热重载)
 notify = "6"

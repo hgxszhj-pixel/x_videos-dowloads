@@ -31,7 +31,7 @@ pub(super) enum PollMsg {
 }
 
 /// 安装轮询 coroutine（在 AppComponent 顶层调用）
-pub(super) fn use_progress_poller(mut state: Signal<AppState>) -> Coroutine<PollMsg> {
+pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollMsg> {
     use_coroutine(move |mut rx: UnboundedReceiver<PollMsg>| async move {
         while let Some(msg) = rx.next().await {
             match msg {
