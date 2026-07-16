@@ -765,6 +765,8 @@ pub(super) fn AppComponent() -> Element {
                                                         flag.store(true, Ordering::Relaxed);
                                                     }
                                                 }
+                                                // 乐观 UI 更新：立即显示 cancelled，不等后台任务结束
+                                                state.write().batch_state.items[idx].status = "cancelled".to_string();
                                             },
                                             style: "{STYLE_BTN_ICON} width: 24px; height: 24px; background: {state.read().theme.color_danger()}; font-size: 12px; display: flex; align-items: center; justify-content: center; padding: 0;",
                                             "✕"
