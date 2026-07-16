@@ -821,12 +821,8 @@ pub(super) fn AppComponent() -> Element {
                             style: "display: flex; justify-content: flex-end; margin-top: 10px;",
                             DestructivePillButton {
                                 onclick: move |_| {
-                                    eprintln!("[cancel] button clicked");
                                     if let Some(flag) = state.read().cancel_flag.clone() {
                                         flag.store(true, Ordering::Relaxed);
-                                        eprintln!("[cancel] flag.store(true) done, previous={}", flag.load(Ordering::Relaxed));
-                                    } else {
-                                        eprintln!("[cancel] state.cancel_flag is None — button visible but flag missing");
                                     }
                                 },
                                 "🛑 取消下载"
