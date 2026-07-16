@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-16 (JS bridge 拖放 URL)
-**分支**: gitbutler/workspace (`67cd451`)
+**更新时间**: 2026-07-16 (3 TextField 组件 + JS bridge)
+**分支**: gitbutler/workspace (`d6803ef`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,10 +74,11 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-16 — Dioxus 0.7.9 + JS drag-drop bridge（HEAD `67cd451`）
+### 2026-07-16 — Dioxus 0.7.9 + JS drag-drop bridge + 3 TextField（HEAD `d6803ef`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
+| `d6803ef` | refactor | `src/gui_dioxus/{components,app}.rs` | 抽 3 个 TextField 组件：UrlInput×2（顶层 URL + 历史回填）、SettingsTextInput×3（output dir/msToken/cookie file）、SettingsNumberInput×1（并发下载数）；闭包 EventHandler 参数需类型标注 |
 | `67cd451` | feat | `src/gui_dioxus/{bridge,mod,app}.rs`（新模块） | `document::eval()` JS bridge 绑定 `window.dragover`/`drop`，从 `dataTransfer` 读 `text/uri-list`/`text/plain`/`text/html` 三档 mime，回推 URL 到 `state.url`；解锁 **HANDOFF §明日继续 #5** ⛔→🟡（待 GUI 验证） |
 
 ### 2026-07-16 — Dioxus 0.7.9 + 5 组件抽取
@@ -198,7 +199,7 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null   # 详细日志（抑制 tokio pa
 ### 待完成（已规划）
 3. 🟡 batch 取消（需要 BatchItemState 加 cancel_flag 字段）
 4. 🟡 URL 输入框 Enter 键提交
-5. 🟡 拖放 URL 到输入框 — `67cd451` 加 `document::eval()` JS bridge（绑 window.drop + 读 text/uri-list / text/plain）；Rust 后台 `eval.recv()` 写 state.url。**用户须 `cargo run -- --gui` 手动验证**
+5. 🟡 拖放 URL 到输入框 — `d6803ef` 抽 3 TextField 组件（UrlInput×2 + SettingsTextInput×3 + SettingsNumberInput×1）；`67cd451` 加 `document::eval()` JS bridge（绑 window.drop + 读 text/uri-list / text/plain）；Rust 后台 `eval.recv()` 写 state.url。**用户须 `cargo run -- --gui` 手动验证**
 6. 🟢 push 到 origin [GitHub push protection 误报 docs/HANDOFF.md:17 commit hash `492b92c` 触发 token 模式；`gh api secret-scanning/alerts` 返回 `[]` 确认无 secret；解决：浏览器 unblock URL https://github.com/hgxszhj-pixel/x_videos-dowloads/security/secret-scanning/unblock-secret/3GYsk38xMofAcIGp08mvMo39eck 或 amend line 17 改 hash]
 
 ### 性能待实测
