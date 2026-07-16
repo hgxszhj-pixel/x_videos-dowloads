@@ -17,7 +17,7 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
-use super::theme::STYLE_BTN_ICON;
+use super::theme::{STYLE_BTN_ICON, STYLE_INPUT_BARE, STYLE_PROGRESS_TRACK};
 
 /// 主应用组件
 #[component]
@@ -255,7 +255,7 @@ pub(super) fn AppComponent() -> Element {
                                 submit_urls();
                             }
                         },
-                        style: "flex: 1; border: none; outline: none; font-size: 15px; background: transparent;"
+                        style: "{STYLE_INPUT_BARE} font-size: 15px; background: transparent;"
                     }
                 }
                 div {
@@ -276,7 +276,7 @@ pub(super) fn AppComponent() -> Element {
                                 submit_urls();
                             }
                         },
-                        style: "flex: 1; border: none; outline: none; font-size: 14px;"
+                        style: "{STYLE_INPUT_BARE} font-size: 14px;"
                     }
                 }
                 div {
@@ -306,7 +306,7 @@ pub(super) fn AppComponent() -> Element {
             // 错误提示 - 结构化（ErrorDisplay 类型驱动）
             if let Some(err) = state.read().error_display.clone() {
                 div {
-                    style: "padding: 16px; background: linear-gradient(135deg, #fce8e8 0%, #ffe8e8 100%); border: 1px solid #f5c6cb; border-radius: 12px; margin-top: 12px; box-shadow: 0 4px 15px rgba(234, 67, 53, 0.15);",
+                    style: "{state.read().theme.bg_error()} margin-top: 12px;",
                     div {
                         style: "display: flex; align-items: flex-start; gap: 12px;",
                         div {
@@ -496,17 +496,17 @@ pub(super) fn AppComponent() -> Element {
                     div {
                         style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;",
                         div {
-                            style: "text-align: center; padding: 14px 8px; background: linear-gradient(135deg, #f8f9fa 0%, #f0f0f0 100%); border-radius: 12px;",
+                            style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
                             div { style: "font-size: 11px; color: #888; margin-bottom: 6px;", "👤 上传者" }
                             div { style: "font-size: 12px; font-weight: 600; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{video_info.read().uploader}" }
                         }
                         div {
-                            style: "text-align: center; padding: 14px 8px; background: linear-gradient(135deg, #f8f9fa 0%, #f0f0f0 100%); border-radius: 12px;",
+                            style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
                             div { style: "font-size: 11px; color: #888; margin-bottom: 6px;", "⏱️ 时长" }
                             div { style: "font-size: 12px; font-weight: 600; color: #333;", "{video_info.read().duration}" }
                         }
                         div {
-                            style: "text-align: center; padding: 14px 8px; background: linear-gradient(135deg, #f8f9fa 0%, #f0f0f0 100%); border-radius: 12px;",
+                            style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
                             div { style: "font-size: 11px; color: #888; margin-bottom: 6px;", "📁 画质" }
                             div {
                                 style: "font-size: 12px; font-weight: 600; color: #333;",
@@ -544,7 +544,7 @@ pub(super) fn AppComponent() -> Element {
                             style: "display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto; padding-right: 4px;",
                             for (idx, item) in state.read().batch_video_state.items.iter().enumerate() {
                                 div {
-                                    style: "padding: 14px; background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%); border-radius: 12px; border: 1px solid #e8e8e8; transition: all 0.3s ease;",
+                                    style: "{state.read().theme.bg_card_white()} padding: 14px; transition: all 0.3s ease;",
                                     div {
                                         style: "display: flex; align-items: center; gap: 10px; margin-bottom: 8px;",
                                         div {
@@ -876,7 +876,7 @@ pub(super) fn AppComponent() -> Element {
                         }
                     }
                     div {
-                        style: "height: 10px; background: #e8e8e8; border-radius: 5px; overflow: hidden; margin-top: 8px;",
+                        style: "height: 10px; {STYLE_PROGRESS_TRACK} margin-top: 8px;",
                         div {
                             style: "height: 100%; width: {state.read().batch_state.progress * 100.0}%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 5px; transition: width 0.3s ease;",
                         }
@@ -893,7 +893,7 @@ pub(super) fn AppComponent() -> Element {
                                 div {
                                     style: "display: flex; align-items: center; gap: 12px; padding: 12px; background: #f8f9fa; border-radius: 10px; transition: all 0.3s ease;",
                                     div {
-                                        style: "flex: 1; height: 10px; background: #e8e8e8; border-radius: 5px; overflow: hidden;",
+                                        style: "height: 10px; {STYLE_PROGRESS_TRACK} flex: 1;",
                                         div {
                                             style: "height: 100%; width: {item.progress * 100.0}%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 5px; transition: width 0.3s ease;",
                                         }
@@ -978,9 +978,9 @@ pub(super) fn AppComponent() -> Element {
                                         state.write().url = item.url.clone();
                                         state.write().error_display = None;
                                     },
-                                    style: "display: flex; align-items: center; gap: 12px; padding: 12px; background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%); border-radius: 12px; border: 1px solid #e8e8e8; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;",
+                                    style: "{state.read().theme.bg_card_white()} display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;",
                                     div {
-                                        style: "width: 40px; height: 40px; background: linear-gradient(135deg, #34a853 0%, #2ecc71 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center;",
+                                        style: "{state.read().theme.bg_icon_success()} width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;",
                                         div { style: "font-size: 18px;", "✅" }
                                     }
                                     div {
