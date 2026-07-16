@@ -17,7 +17,7 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
-use super::components::{CardShadow, WhiteCard};
+use super::components::{CardShadow, CloseButton, ThemeSwatch, WhiteCard};
 use super::theme::{STYLE_BTN_ICON, STYLE_INPUT_BARE, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// 主应用组件
@@ -161,46 +161,46 @@ pub(super) fn AppComponent() -> Element {
                     style: "display: flex; gap: 8px; align-items: center;",
                     div {
                         style: "display: flex; gap: 4px;",
-                        button {
+                        ThemeSwatch {
+                            theme: AppTheme::Purple,
                             onclick: move |_| {
-                                    state.write().theme = AppTheme::Purple;
-                                    // 持久化
-                                    if let Ok(mut cfg) = AppConfig::load() {
-                                        cfg.theme = "Purple".to_string();
-                                        let _ = cfg.save();
-                                    }
-                                },
-                            style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #667eea; background: linear-gradient(135deg, #667eea, #764ba2); cursor: pointer;",
+                                state.write().theme = AppTheme::Purple;
+                                // 持久化
+                                if let Ok(mut cfg) = AppConfig::load() {
+                                    cfg.theme = "Purple".to_string();
+                                    let _ = cfg.save();
+                                }
+                            },
                         }
-                        button {
+                        ThemeSwatch {
+                            theme: AppTheme::Ocean,
                             onclick: move |_| {
-                                    state.write().theme = AppTheme::Ocean;
-                                    if let Ok(mut cfg) = AppConfig::load() {
-                                        cfg.theme = "Ocean".to_string();
-                                        let _ = cfg.save();
-                                    }
-                                },
-                            style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #0066ff; background: linear-gradient(135deg, #0066ff, #00d4ff); cursor: pointer;",
+                                state.write().theme = AppTheme::Ocean;
+                                if let Ok(mut cfg) = AppConfig::load() {
+                                    cfg.theme = "Ocean".to_string();
+                                    let _ = cfg.save();
+                                }
+                            },
                         }
-                        button {
+                        ThemeSwatch {
+                            theme: AppTheme::Sunset,
                             onclick: move |_| {
-                                    state.write().theme = AppTheme::Sunset;
-                                    if let Ok(mut cfg) = AppConfig::load() {
-                                        cfg.theme = "Sunset".to_string();
-                                        let _ = cfg.save();
-                                    }
-                                },
-                            style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #ff6b6b; background: linear-gradient(135deg, #ff6b6b, #ffa502); cursor: pointer;",
+                                state.write().theme = AppTheme::Sunset;
+                                if let Ok(mut cfg) = AppConfig::load() {
+                                    cfg.theme = "Sunset".to_string();
+                                    let _ = cfg.save();
+                                }
+                            },
                         }
-                        button {
+                        ThemeSwatch {
+                            theme: AppTheme::Forest,
                             onclick: move |_| {
-                                    state.write().theme = AppTheme::Forest;
-                                    if let Ok(mut cfg) = AppConfig::load() {
-                                        cfg.theme = "Forest".to_string();
-                                        let _ = cfg.save();
-                                    }
-                                },
-                            style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid #11998e; background: linear-gradient(135deg, #11998e, #38ef7d); cursor: pointer;",
+                                state.write().theme = AppTheme::Forest;
+                                if let Ok(mut cfg) = AppConfig::load() {
+                                    cfg.theme = "Forest".to_string();
+                                    let _ = cfg.save();
+                                }
+                            },
                         }
                     }
                     // 设置齿轮按钮
@@ -355,10 +355,8 @@ pub(super) fn AppComponent() -> Element {
                             style: "font-size: 18px; font-weight: 700; color: {TEXT_PRIMARY};",
                             "⚙️ 设置"
                         }
-                        button {
+                        CloseButton {
                             onclick: move |_| { state.write().show_settings = false; },
-                            style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: {BG_SUBTLE}; color: {TEXT_MUTED}; font-size: 14px; cursor: pointer;",
-                            "×"
                         }
                     }
                     // 输出目录
@@ -957,10 +955,8 @@ pub(super) fn AppComponent() -> Element {
                                 style: "padding: 6px 12px; background: #ff4444; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;",
                                 "🗑️ 清空历史"
                             }
-                            button {
+                            CloseButton {
                                 onclick: move |_| { state.write().show_history = false; },
-                                style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: {BG_SUBTLE}; color: {TEXT_MUTED}; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
-                                "×"
                             }
                         }
                     }
