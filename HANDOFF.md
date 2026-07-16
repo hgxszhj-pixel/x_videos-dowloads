@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-16 (Dioxus 0.6→0.7.9 升级)
-**分支**: gitbutler/workspace (`<待 commit>`)
+**更新时间**: 2026-07-16 (Dioxus 0.7.9 + 5 组件抽取)
+**分支**: gitbutler/workspace (`9b2b208`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,15 +74,19 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-16 — Dioxus 0.7.9 升级
+### 2026-07-16 — Dioxus 0.7.9 + 5 组件抽取（HEAD `9b2b208`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
-| `<dioxus-bump>` | build | `Cargo.toml` | `dioxus = "0.6" → "0.7.9"`；删除合并入 core 的 `dioxus-desktop` / `dioxus-hooks`；**0 源码改动**（API 用法兼容） |
+| `03df9a6` | build | `src/gui_dioxus/{mod,components,theme}.rs` | scaffold `components.rs` + 加 `ALERT_RED` + `border_color()` |
+| `ff91f97` | refactor | `src/gui_dioxus/app.rs` | `WhiteCard`×6 替换（Settings/Video/Batch list/Single/Batch progress/History） |
+| `824f6c4` | build | `Cargo.toml` + `HANDOFF.md` | dioxus `0.6 → 0.7.9`，删除 `dioxus-desktop`/`dioxus-hooks` 合并入 core，**0 源码改动** |
+| `6d1c902` | refactor | `src/gui_dioxus/app.rs` | `ThemeSwatch`×4 + `CloseButton`×2（顶部主题切换 + settings/history ×） |
+| `9b2b208` | refactor | `src/gui_dioxus/{app,components}.rs` | `BrowseButton`×2（setting dir/cookie 浏览）+ `DestructivePillButton`×2（取消下载/清空历史）；`font-weight: 600` 补全 |
 
-**升级结果**: 98 crates 编译通过、189 tests pass（默认并发）、clippy clean、build --release OK。
+**升级结果**: 0 源码改动；189 tests pass；clippy clean；Wry 0.52/Axum 0.8 transitive 跟随升级。
 
-⚠️ **HANDOFF #5 (拖放 URL) 仍 ⛔**：0.7.x changelog (PR #4997 / #5211) 只修 file drop，不解锁 text/URL drop。0.8 alpha 有相关 fix (#5487)，未升级。
+⚠️ **HANDOFF #5 (拖放 URL) 仍 ⛔**：0.7.x changelog 不解锁 text/URL drop（PR #4997/#5211 只修 file drop）。0.8 alpha 有相关 fix (#5487)，未升级。
 
 ### 2026-07-16 — flake 修复 + hex cleanup（HEAD `5059edc`）
 
@@ -91,7 +95,6 @@ cargo build --release           # 发行版
 | `ab63573` | fix | `src/i18n.rs` | `CURRENT_LANG: Mutex→thread_local!{RefCell}`，默认并发测试稳定 |
 | `1f89a98` | refactor | `src/gui_dioxus/{theme,app}.rs` | 9 处硬编码主题 hex → theme helper，加 `color_accent()` / `progress_gradient_success()` |
 | `a18a339` | fix | `src/collaboration/crypto/hashring.rs` | sample 100→10000 消 `DefaultHasher` 极端分布 flake |
-| `5059edc` | refactor | `src/gui_dioxus/{theme,app}.rs` | 5 个高频中性 hex（37 处）→ theme const |
 | `5059edc` | refactor | `src/gui_dioxus/{theme,app}.rs` | 5 个高频中性 hex（37 处）→ theme const（TEXT_MUTED/PRIMARY/SECONDARY + BG_SUBTLE + BORDER_DEFAULT） |
 
 ### 2026-07-15 — perf + GUI 改进（16 commits，HEAD `522df05`）
