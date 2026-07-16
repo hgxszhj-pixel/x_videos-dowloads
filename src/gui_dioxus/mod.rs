@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 mod app;
+mod bridge;
 mod components;
 mod handlers;
 mod store;

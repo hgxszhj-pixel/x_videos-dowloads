@@ -26,6 +26,11 @@ pub(super) fn AppComponent() -> Element {
     let mut state = use_signal(AppState::default);
     let video_info = use_signal(VideoInfoDisplay::default);
 
+    // 拖放 URL bridge — 解锁 HANDOFF §明日继续 #5（macOS WKWebView 监听外部 drop）
+    use_effect(move || {
+        crate::gui_dioxus::bridge::install_drag_drop_bridge(state);
+    });
+
     // 启动配置文件监控
     // 加载历史记录到 UI state
     use_effect(move || {
