@@ -67,6 +67,15 @@ impl AppTheme {
     pub(super) fn color_success(&self) -> &'static str { "#34a853" }
     pub(super) fn color_primary(&self) -> &'static str { "#4285f4" }
     pub(super) fn color_text_danger(&self) -> &'static str { "#721c24" }
+    /// 主题强调色（用于 batch progress 文字等跟随主题变化的 highlight）
+    pub(super) fn color_accent(&self) -> &'static str {
+        match self {
+            AppTheme::Purple => "#667eea",
+            AppTheme::Ocean => "#0066ff",
+            AppTheme::Sunset => "#ff6b6b",
+            AppTheme::Forest => "#11998e",
+        }
+    }
 
     // ------------------------------------------------------------------------
     // Button style helpers — 返回 String 因为依赖 theme.gradient()
@@ -106,5 +115,9 @@ impl AppTheme {
     /// 历史/成功图标背景（绿渐变）
     pub(super) fn bg_icon_success(&self) -> &'static str {
         "background: linear-gradient(135deg, #34a853 0%, #2ecc71 100%);"
+    }
+    /// 下载/批量 progress 填充渐变（仅渐变函数，不含 `background:` 前缀，便于嵌入到 `background: ...;` 组合）
+    pub(super) fn progress_gradient_success(&self) -> &'static str {
+        "linear-gradient(135deg, #34a853 0%, #2ecc71 100%)"
     }
 }

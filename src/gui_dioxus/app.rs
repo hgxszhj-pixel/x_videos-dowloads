@@ -316,11 +316,11 @@ pub(super) fn AppComponent() -> Element {
                         div {
                             style: "flex: 1;",
                             div {
-                                style: "font-size: 14px; font-weight: 700; color: #ea4335; margin-bottom: 4px;",
+                                style: "font-size: 14px; font-weight: 700; color: {state.read().theme.color_danger()}; margin-bottom: 4px;",
                                 "下载失败 · {err.error_type}"
                             }
                             div {
-                                style: "font-size: 13px; color: #721c24;",
+                                style: "font-size: 13px; color: {state.read().theme.color_text_danger()};",
                                 "{err.message}"
                             }
                             // 错误建议（结构化字段，不再字符串匹配）
@@ -536,7 +536,7 @@ pub(super) fn AppComponent() -> Element {
                             style: "display: flex; align-items: center; gap: 10px; margin-bottom: 14px;",
                             div { style: "font-size: 24px;", "📋" }
                             div {
-                                style: "font-size: 16px; font-weight: 700; background: linear-gradient(90deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent;",
+                                style: "font-size: 16px; font-weight: 700; background: {state.read().theme.gradient()}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;",
                                 "批量视频列表 ({state.read().batch_video_state.items.len()})"
                             }
                         }
@@ -813,7 +813,7 @@ pub(super) fn AppComponent() -> Element {
                     div {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;",
                         div {
-                            style: "font-size: 15px; font-weight: 600; color: #34a853;",
+                            style: "font-size: 15px; font-weight: 600; color: {state.read().theme.color_success()};",
                             "📥 下载中... {(state.read().download_progress * 100.0).round() as i32}%"
                         }
                         div {
@@ -824,7 +824,7 @@ pub(super) fn AppComponent() -> Element {
                     div {
                         style: "height: 12px; background: #e8e8e8; border-radius: 6px; overflow: hidden;",
                         div {
-                            style: "height: 100%; width: {state.read().download_progress * 100.0}%; background: linear-gradient(90deg, #34a853, #2ecc71); border-radius: 6px; transition: width 0.3s ease;",
+                            style: "height: 100%; width: {state.read().download_progress * 100.0}%; background: {state.read().theme.progress_gradient_success()}; border-radius: 6px; transition: width 0.3s ease;",
                         }
                     }
                     if !state.read().download_file_size.is_empty() {
@@ -863,7 +863,7 @@ pub(super) fn AppComponent() -> Element {
                     div {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;",
                         div {
-                            style: "font-size: 16px; font-weight: 700; background: linear-gradient(90deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent;",
+                            style: "font-size: 16px; font-weight: 700; background: {state.read().theme.gradient()}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;",
                             "📚 批量下载 - {(state.read().batch_state.progress * 100.0).round() as i32}%"
                         }
                         button {
@@ -878,7 +878,7 @@ pub(super) fn AppComponent() -> Element {
                     div {
                         style: "height: 10px; {STYLE_PROGRESS_TRACK} margin-top: 8px;",
                         div {
-                            style: "height: 100%; width: {state.read().batch_state.progress * 100.0}%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 5px; transition: width 0.3s ease;",
+                            style: "height: 100%; width: {state.read().batch_state.progress * 100.0}%; background: {state.read().theme.gradient()}; border-radius: 5px; transition: width 0.3s ease;",
                         }
                     }
                     div {
@@ -895,11 +895,11 @@ pub(super) fn AppComponent() -> Element {
                                     div {
                                         style: "height: 10px; {STYLE_PROGRESS_TRACK} flex: 1;",
                                         div {
-                                            style: "height: 100%; width: {item.progress * 100.0}%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 5px; transition: width 0.3s ease;",
+                                            style: "height: 100%; width: {item.progress * 100.0}%; background: {state.read().theme.gradient()}; border-radius: 5px; transition: width 0.3s ease;",
                                         }
                                     }
                                     div {
-                                        style: "width: 45px; font-size: 12px; font-weight: 600; color: #667eea; text-align: right;",
+                                        style: "width: 45px; font-size: 12px; font-weight: 600; color: {state.read().theme.color_accent()}; text-align: right;",
                                         "{(item.progress * 100.0).round() as i32}%"
                                     }
                                     div {
