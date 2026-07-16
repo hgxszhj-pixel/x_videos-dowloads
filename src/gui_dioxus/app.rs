@@ -17,6 +17,7 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
+use super::components::{CardShadow, WhiteCard};
 use super::theme::{STYLE_BTN_ICON, STYLE_INPUT_BARE, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// 主应用组件
@@ -346,8 +347,8 @@ pub(super) fn AppComponent() -> Element {
 
             // 设置面板
             if state.read().show_settings {
-                div {
-                    style: "padding: 20px; background: rgba(255,255,255,0.98); border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); margin-top: 12px;",
+                WhiteCard {
+                    shadow: CardShadow::Elevated,
                     div {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;",
                         div {
@@ -483,8 +484,8 @@ pub(super) fn AppComponent() -> Element {
 
             // 视频信息
             if state.read().has_video_info {
-                div {
-                    style: "padding: 20px; background: rgba(255,255,255,0.98); border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-top: 12px;",
+                WhiteCard {
+                    shadow: CardShadow::Soft,
                     div {
                         style: "display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid #eee;",
                         div { style: "font-size: 24px;", "🎬" }
@@ -530,8 +531,8 @@ pub(super) fn AppComponent() -> Element {
 
                 // 批量视频信息显示
                 if state.read().batch_video_state.visible {
-                    div {
-                        style: "padding: 20px; background: rgba(255,255,255,0.98); border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-top: 12px;",
+                    WhiteCard {
+                        shadow: CardShadow::Soft,
                         div {
                             style: "display: flex; align-items: center; gap: 10px; margin-bottom: 14px;",
                             div { style: "font-size: 24px;", "📋" }
@@ -808,8 +809,8 @@ pub(super) fn AppComponent() -> Element {
 
             // 进度显示
             if state.read().is_downloading && !state.read().batch_state.visible {
-                div {
-                    style: "padding: 20px; background: rgba(255,255,255,0.98); border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); margin-top: 12px;",
+                WhiteCard {
+                    shadow: CardShadow::Elevated,
                     div {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;",
                         div {
@@ -858,8 +859,8 @@ pub(super) fn AppComponent() -> Element {
 
             // 批量下载进度显示
             if state.read().batch_state.visible {
-                div {
-                    style: "padding: 20px; background: rgba(255,255,255,0.98); border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); margin-top: 12px;",
+                WhiteCard {
+                    shadow: CardShadow::Elevated,
                     div {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;",
                         div {
@@ -930,8 +931,9 @@ pub(super) fn AppComponent() -> Element {
 
             // 历史记录面板
             if state.read().show_history {
-                div {
-                    style: "padding: 20px; background: rgba(255,255,255,0.98); border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-top: 12px; max-height: 400px; overflow-y: auto;",
+                WhiteCard {
+                    shadow: CardShadow::Soft,
+                    scrollable: true,
                     div {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;",
                         div {
