@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-16（30 commits, HEAD `322f322`）
+**更新**: 2026-07-16（31 commits, HEAD `5c27679`）
 **分支**: `gitbutler/workspace`
 
 ---
@@ -58,7 +58,7 @@ cargo test --quiet && cargo clippy --quiet  # 验证
 | 检查 | 结果 |
 |------|------|
 | cargo test | ✅ 189 passed（默认并发稳定，`ab63573` 修 i18n + `a18a339` 修 hashring） |
-| cargo clippy | ✅ clean（`--all-targets` 7 warnings，4 bench stub + 3 lib，false-positive 不影响功能） |
+| cargo clippy | ✅ clean（`--all-targets` **0 warnings**，`5c27679` 全清） |
 | cargo bench hls_concurrency | ✅ 横向扩展正常（见下表） |
 
 ### hls_concurrency 实测（mock HTTP, 50ms latency）
@@ -91,6 +91,7 @@ mock HTTP 限制：50ms 网络延迟主导，alloc 改进 < 1% 噪声不可见�
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
+| `5c27679` | chore | **cargo clippy --all-targets 完全清零**（11 → 0 warnings） |
 | `322f322` | fix | **notify watcher thread 加 shutdown flag**（Arc<AtomicBool> + use_drop，AppComponent 卸载干净退出） |
 | `0007183` | fix | **bridge.rs `while let Ok` → match + warn**（Eval.recv 错误显式日志 + break，不再静默吞错） |
 | `99c8c23` | refactor | **submit_urls 改 `use_action`**（替代 70 行手写 spawn + latest-wins 自动 cancel） |
@@ -174,5 +175,5 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null
 - §6 perf claim 5 项需真实 HTTPS CDN `cargo bench --bench hls_concurrency` 验证（mock 测不出）
 
 ### 已知非阻塞
-- clippy `--all-targets` 7 warnings（4 bench stub + 3 lib，不影响功能）
+- ~~clippy `--all-targets` 7 warnings~~ → ✅ `5c27679` 完全清零
 - 3 处 [待实测] claim（FxtwitterResolver 共享客户端 / `to_lowercase` URL 缓存 / CookiePool 读写锁分离）
