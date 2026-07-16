@@ -23,6 +23,20 @@ pub(super) const STYLE_INPUT_BARE: &str = "flex: 1; border: none; outline: none;
 /// 进度条底槽（不含 height/radius，由调用方指定；多数场景 height=10px radius=5px）
 pub(super) const STYLE_PROGRESS_TRACK: &str = "background: #e8e8e8; border-radius: 5px; overflow: hidden;";
 
+// ---------------------------------------------------------------------------
+// 中性色 token — 跨主题不变的灰阶/UI 色（不是风格 token；避免散落 hex）
+// ---------------------------------------------------------------------------
+/// 中等灰文字（次要 label/status）— 替代 `#888`
+pub(super) const TEXT_MUTED: &str = "#888";
+/// 主要文字（标题/数据）— 替代 `#333`
+pub(super) const TEXT_PRIMARY: &str = "#333";
+/// 次要文字（label）— 替代 `#555`
+pub(super) const TEXT_SECONDARY: &str = "#555";
+/// 浅灰背景（次级按钮/输入框底）— 替代 `#f0f0f0`
+pub(super) const BG_SUBTLE: &str = "#f0f0f0";
+/// 默认边框（输入框/分隔）— 替代 `#ddd`
+pub(super) const BORDER_DEFAULT: &str = "#ddd";
+
 impl AppTheme {
     pub(super) fn gradient(&self) -> &'static str {
         match self {

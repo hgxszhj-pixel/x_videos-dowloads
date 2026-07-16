@@ -17,7 +17,7 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
-use super::theme::{STYLE_BTN_ICON, STYLE_INPUT_BARE, STYLE_PROGRESS_TRACK};
+use super::theme::{STYLE_BTN_ICON, STYLE_INPUT_BARE, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// 主应用组件
 #[component]
@@ -232,7 +232,7 @@ pub(super) fn AppComponent() -> Element {
                         "📜 历史"
                     }
                     div {
-                        style: "font-size: 12px; color: #888; padding: 6px 12px; background: #f0f0f0; border-radius: 20px;",
+                        style: "font-size: 12px; color: {TEXT_MUTED}; padding: 6px 12px; background: {BG_SUBTLE}; border-radius: 20px;",
                         "Status: {state.read().status_message}"
                     }
                 }
@@ -280,7 +280,7 @@ pub(super) fn AppComponent() -> Element {
                     }
                 }
                 div {
-                    style: "font-size: 11px; color: #888; margin-top: 4px;",
+                    style: "font-size: 11px; color: {TEXT_MUTED}; margin-top: 4px;",
                     "Enter URL(s), separate multiple URLs with spaces or commas"
                 }
                 div {
@@ -351,23 +351,23 @@ pub(super) fn AppComponent() -> Element {
                     div {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;",
                         div {
-                            style: "font-size: 18px; font-weight: 700; color: #333;",
+                            style: "font-size: 18px; font-weight: 700; color: {TEXT_PRIMARY};",
                             "⚙️ 设置"
                         }
                         button {
                             onclick: move |_| { state.write().show_settings = false; },
-                            style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: #f0f0f0; color: #888; font-size: 14px; cursor: pointer;",
+                            style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: {BG_SUBTLE}; color: {TEXT_MUTED}; font-size: 14px; cursor: pointer;",
                             "×"
                         }
                     }
                     // 输出目录
                     div { style: "margin-bottom: 14px;",
-                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "📁 输出目录" }
+                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "📁 输出目录" }
                         div { style: "display: flex; gap: 6px;",
                             input {
                                 value: "{state.read().settings_output_dir}",
                                 oninput: move |evt| { state.write().settings_output_dir = evt.value(); },
-                                style: "flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                                style: "flex: 1; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
                             }
                             button {
                                 onclick: move |_| {
@@ -382,21 +382,21 @@ pub(super) fn AppComponent() -> Element {
                     }
                     // ms_token
                     div { style: "margin-bottom: 14px;",
-                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "🔑 抖音/TikTok msToken" }
+                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "🔑 抖音/TikTok msToken" }
                         input {
                             value: "{state.read().settings_ms_token}",
                             oninput: move |evt| { state.write().settings_ms_token = evt.value(); },
-                            style: "width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                            style: "width: 100%; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
                         }
                     }
                     // Cookie 文件
                     div { style: "margin-bottom: 14px;",
-                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "🍪 Cookie 文件（可选）" }
+                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "🍪 Cookie 文件（可选）" }
                         div { style: "display: flex; gap: 6px;",
                             input {
                                 value: "{state.read().settings_cookie_file}",
                                 oninput: move |evt| { state.write().settings_cookie_file = evt.value(); },
-                                style: "flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                                style: "flex: 1; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
                             }
                             button {
                                 onclick: move |_| {
@@ -411,7 +411,7 @@ pub(super) fn AppComponent() -> Element {
                     }
                     // 并发数
                     div { style: "margin-bottom: 18px;",
-                        div { style: "font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 600;", "⚡ 并发下载数（1-16）" }
+                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "⚡ 并发下载数（1-16）" }
                         input {
                             r#type: "number",
                             value: "{state.read().settings_concurrent}",
@@ -422,14 +422,14 @@ pub(super) fn AppComponent() -> Element {
                                     state.write().settings_concurrent = n.clamp(1, 16);
                                 }
                             },
-                            style: "width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;",
+                            style: "width: 100%; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
                         }
                     }
                     // 按钮行
                     div { style: "display: flex; justify-content: flex-end; gap: 8px;",
                         button {
                             onclick: move |_| { state.write().show_settings = false; },
-                            style: "padding: 8px 16px; background: #f0f0f0; color: #555; border: none; border-radius: 8px; font-size: 13px; cursor: pointer;",
+                            style: "padding: 8px 16px; background: {BG_SUBTLE}; color: {TEXT_SECONDARY}; border: none; border-radius: 8px; font-size: 13px; cursor: pointer;",
                             "取消"
                         }
                         button {
@@ -489,7 +489,7 @@ pub(super) fn AppComponent() -> Element {
                         style: "display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid #eee;",
                         div { style: "font-size: 24px;", "🎬" }
                         div {
-                            style: "font-size: 16px; font-weight: 700; color: #333; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                            style: "font-size: 16px; font-weight: 700; color: {TEXT_PRIMARY}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
                             "{video_info.read().title}"
                         }
                     }
@@ -497,21 +497,21 @@ pub(super) fn AppComponent() -> Element {
                         style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;",
                         div {
                             style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
-                            div { style: "font-size: 11px; color: #888; margin-bottom: 6px;", "👤 上传者" }
-                            div { style: "font-size: 12px; font-weight: 600; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{video_info.read().uploader}" }
+                            div { style: "font-size: 11px; color: {TEXT_MUTED}; margin-bottom: 6px;", "👤 上传者" }
+                            div { style: "font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{video_info.read().uploader}" }
                         }
                         div {
                             style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
-                            div { style: "font-size: 11px; color: #888; margin-bottom: 6px;", "⏱️ 时长" }
-                            div { style: "font-size: 12px; font-weight: 600; color: #333;", "{video_info.read().duration}" }
+                            div { style: "font-size: 11px; color: {TEXT_MUTED}; margin-bottom: 6px;", "⏱️ 时长" }
+                            div { style: "font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY};", "{video_info.read().duration}" }
                         }
                         div {
                             style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
-                            div { style: "font-size: 11px; color: #888; margin-bottom: 6px;", "📁 画质" }
+                            div { style: "font-size: 11px; color: {TEXT_MUTED}; margin-bottom: 6px;", "📁 画质" }
                             div {
-                                style: "font-size: 12px; font-weight: 600; color: #333;",
+                                style: "font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY};",
                                 select {
-                                    style: "width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid #ddd; background: white; font-size: 12px; cursor: pointer;",
+                                    style: "width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid {BORDER_DEFAULT}; background: white; font-size: 12px; cursor: pointer;",
                                     onchange: move |evt| {
                                         let format_id = evt.value();
                                         if !format_id.is_empty() {
@@ -552,12 +552,12 @@ pub(super) fn AppComponent() -> Element {
                                             "{idx + 1}"
                                         }
                                         div {
-                                            style: "font-size: 14px; font-weight: 600; color: #333; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                                            style: "font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
                                             "{item.title}"
                                         }
                                     }
                                     div {
-                                        style: "font-size: 11px; color: #888; padding-left: 36px;",
+                                        style: "font-size: 11px; color: {TEXT_MUTED}; padding-left: 36px;",
                                         "👤 {item.uploader}  |  ⏱️ {item.duration}  |  📁 {item.formats.len()} 种画质"
                                     }
                                 }
@@ -817,7 +817,7 @@ pub(super) fn AppComponent() -> Element {
                             "📥 下载中... {(state.read().download_progress * 100.0).round() as i32}%"
                         }
                         div {
-                            style: "font-size: 12px; color: #888;",
+                            style: "font-size: 12px; color: {TEXT_MUTED};",
                             "{state.read().download_speed}"
                         }
                     }
@@ -829,7 +829,7 @@ pub(super) fn AppComponent() -> Element {
                     }
                     if !state.read().download_file_size.is_empty() {
                         div {
-                            style: "font-size: 12px; color: #888; margin-top: 8px;",
+                            style: "font-size: 12px; color: {TEXT_MUTED}; margin-top: 8px;",
                             "📦 大小: {state.read().download_file_size}"
                         }
                     }
@@ -882,7 +882,7 @@ pub(super) fn AppComponent() -> Element {
                         }
                     }
                     div {
-                        style: "font-size: 12px; color: #888; margin-top: 6px;",
+                        style: "font-size: 12px; color: {TEXT_MUTED}; margin-top: 6px;",
                         "{state.read().batch_state.status}"
                     }
                     // 各视频进度列表
@@ -903,7 +903,7 @@ pub(super) fn AppComponent() -> Element {
                                         "{(item.progress * 100.0).round() as i32}%"
                                     }
                                     div {
-                                        style: "font-size: 11px; color: #888;",
+                                        style: "font-size: 11px; color: {TEXT_MUTED};",
                                         "{item.status}"
                                     }
                                     // 单项取消按钮（仅 pending/downloading 时显示）
@@ -957,14 +957,14 @@ pub(super) fn AppComponent() -> Element {
                             }
                             button {
                                 onclick: move |_| { state.write().show_history = false; },
-                                style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: #f0f0f0; color: #888; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
+                                style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: {BG_SUBTLE}; color: {TEXT_MUTED}; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
                                 "×"
                             }
                         }
                     }
                     if state.read().history.is_empty() {
                         div {
-                            style: "text-align: center; padding: 40px; color: #888;",
+                            style: "text-align: center; padding: 40px; color: {TEXT_MUTED};",
                             div { style: "font-size: 48px; margin-bottom: 12px;", "📭" }
                             div { style: "font-size: 14px;", "暂无下载记录" }
                         }
@@ -986,11 +986,11 @@ pub(super) fn AppComponent() -> Element {
                                     div {
                                         style: "flex: 1; min-width: 0;",
                                         div {
-                                            style: "font-size: 13px; font-weight: 600; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                                            style: "font-size: 13px; font-weight: 600; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
                                             "{item.title}"
                                         }
                                         div {
-                                            style: "font-size: 11px; color: #888; margin-top: 2px;",
+                                            style: "font-size: 11px; color: {TEXT_MUTED}; margin-top: 2px;",
                                             "👤 {item.uploader}  |  ⏱️ {item.duration}  |  🕐 {item.completed_at}"
                                         }
                                     }
