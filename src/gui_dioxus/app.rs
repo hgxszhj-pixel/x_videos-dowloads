@@ -26,6 +26,13 @@ pub(super) fn AppComponent() -> Element {
     let mut state = use_signal(AppState::default);
     let video_info = use_signal(VideoInfoDisplay::default);
 
+    // 提供 AppTheme context（reactive signal），下游组件直接 use_context 读取
+    let mut theme_signal = use_context_provider(|| use_signal(|| state.read().theme.clone()));
+    // sync state.theme 变化 → theme_signal（响应主题切换）
+    use_effect(move || {
+        theme_signal.set(state.read().theme.clone());
+    });
+
     // 拖放 URL bridge — 解锁 HANDOFF §明日继续 #5（macOS WKWebView 监听外部 drop）
     use_effect(move || {
         crate::gui_dioxus::bridge::install_drag_drop_bridge(state);
@@ -360,7 +367,6 @@ pub(super) fn AppComponent() -> Element {
                             }
                             BrowseButton {
                                 label: "浏览".to_string(),
-                                theme: state.read().theme.clone(),
                                 onclick: move |_| {
                                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                                         state.write().settings_output_dir = dir.to_string_lossy().to_string();
@@ -388,7 +394,6 @@ pub(super) fn AppComponent() -> Element {
                             }
                             BrowseButton {
                                 label: "浏览".to_string(),
-                                theme: state.read().theme.clone(),
                                 onclick: move |_| {
                                     if let Some(f) = rfd::FileDialog::new().pick_file() {
                                         state.write().settings_cookie_file = f.to_string_lossy().to_string();

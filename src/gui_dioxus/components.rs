@@ -95,13 +95,15 @@ pub(super) fn CloseButton(onclick: EventHandler<MouseEvent>) -> Element {
 // ============================================================================
 
 /// 设置面板里"浏览..."按钮（输出目录 / Cookie 文件 2 处共享 `btn_solid(color_primary, ...)` 样式）
+/// 主题通过 `use_context::<Signal<AppTheme>>()` 读取（AppComponent 提供）
 #[component]
 pub(super) fn BrowseButton(
     label: String,
-    theme: AppTheme,
     onclick: EventHandler<MouseEvent>,
 ) -> Element {
-    let style = theme.btn_solid(theme.color_primary(), "6px 12px", "6px", "12px");
+    let theme = use_context::<Signal<AppTheme>>();
+    let t = theme.read();
+    let style = t.btn_solid(t.color_primary(), "6px 12px", "6px", "12px");
     rsx! {
         button {
             onclick: move |e| onclick.call(e),
