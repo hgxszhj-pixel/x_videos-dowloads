@@ -18,7 +18,7 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{AppState, BatchItemState, BatchState, ErrorDisplay, VideoInfoDisplay};
-use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, SettingsNumberInput, SettingsTextInput, ThemeSwatch, UrlInput, WhiteCard};
+use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, ErrorPanel, SettingsNumberInput, SettingsTextInput, ThemeSwatch, UrlInput, WhiteCard};
 use super::poller::{use_progress_poller, PollMsg};
 use super::actions::{sync_fetch_action_to_state, use_fetch_action};
 use super::theme::{STYLE_BTN_ICON, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
@@ -265,46 +265,8 @@ pub(super) fn AppComponent() -> Element {
                 }
             }
 
-            // 错误提示 - 结构化（ErrorDisplay 类型驱动）
-            if let Some(err) = state.read().error_display.clone() {
-                div {
-                    style: "{state.read().theme.bg_error()} margin-top: 12px;",
-                    div {
-                        style: "display: flex; align-items: flex-start; gap: 12px;",
-                        div {
-                            style: "font-size: 24px; line-height: 1;",
-                            "{err.icon()}"
-                        }
-                        div {
-                            style: "flex: 1;",
-                            div {
-                                style: "font-size: 14px; font-weight: 700; color: {state.read().theme.color_danger()}; margin-bottom: 4px;",
-                                "下载失败 · {err.error_type}"
-                            }
-                            div {
-                                style: "font-size: 13px; color: {state.read().theme.color_text_danger()};",
-                                "{err.message}"
-                            }
-                            // 错误建议（结构化字段，不再字符串匹配）
-                            if !err.suggestion.is_empty() {
-                                div {
-                                    style: "font-size: 12px; color: #856404; background: #fff3cd; padding: 8px; border-radius: 4px; margin-top: 8px;",
-                                    "💡 {err.suggestion}"
-                                }
-                            }
-                            // 重试按钮（清除错误，回到初始状态）
-                            button {
-                                onclick: move |_| {
-                                    state.write().error_display = None;
-                                    state.write().status_message = "Ready".to_string();
-                                },
-                                style: "{state.read().theme.btn_solid(state.read().theme.color_danger(), \"6px 14px\", \"16px\", \"12px\")} margin-top: 10px;",
-                                "🔄 重试 / 清除"
-                            }
-                        }
-                    }
-                }
-            }
+            // 错误提示 - 结构化（ErrorDisplay 类型驱动，抽到 ErrorPanel 组件）
+            ErrorPanel { state }
 
             // 设置面板
             if state.read().show_settings {

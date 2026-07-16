@@ -11,6 +11,7 @@ use super::theme::{
     AppTheme, ALERT_RED, BORDER_DEFAULT, BG_SUBTLE, STYLE_BTN_BASE, STYLE_INPUT_BARE,
     TEXT_MUTED,
 };
+use super::types::AppState;
 
 // ============================================================================
 // WhiteCard — 半透明白色内容卡片
@@ -96,6 +97,70 @@ pub(super) fn CloseButton(onclick: EventHandler<MouseEvent>) -> Element {
             style: "width: 28px; height: 28px; border-radius: 50%; border: none; background: {BG_SUBTLE}; color: {TEXT_MUTED}; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;",
             "×"
         }
+    }
+}
+
+// ============================================================================
+// ErrorPanel — 结构化错误提示（icon + 类型 + message + suggestion + 重试）
+// ============================================================================
+
+/// 结构化错误面板（替换 app.rs 中 38 行 inline RSX）
+/// 主题通过 `use_context::<Signal<AppTheme>>()` 读取；点击"重试"清空 `error_display` + 重置 `status_message`
+#[component]
+pub(super) fn ErrorPanel(state: Store<AppState>) -> Element {
+    let theme = use_context::<Signal<AppTheme>>();
+    let t = theme.read();
+    let err_opt = state.read().error_display.clone();
+
+    match err_opt {
+        Some(err) => {
+            // 把 state rebind 为 mut，以便 move 进 onclick 闭包
+            let mut state = state;
+            // 提早求值样式字符串（避免与 `t` 的 immutable borrow 冲突）
+            let bg_style = t.bg_error();
+            let danger = t.color_danger();
+            let text_danger = t.color_text_danger();
+            let btn_style = t.btn_solid(t.color_danger(), "6px 14px", "16px", "12px");
+            let icon = err.icon();
+            rsx! {
+                div {
+                    style: "{bg_style} margin-top: 12px;",
+                    div {
+                        style: "display: flex; align-items: flex-start; gap: 12px;",
+                        div {
+                            style: "font-size: 24px; line-height: 1;",
+                            "{icon}"
+                        }
+                        div {
+                            style: "flex: 1;",
+                            div {
+                                style: "font-size: 14px; font-weight: 700; color: {danger}; margin-bottom: 4px;",
+                                "下载失败 · {err.error_type}"
+                            }
+                            div {
+                                style: "font-size: 13px; color: {text_danger};",
+                                "{err.message}"
+                            }
+                            if !err.suggestion.is_empty() {
+                                div {
+                                    style: "font-size: 12px; color: #856404; background: #fff3cd; padding: 8px; border-radius: 4px; margin-top: 8px;",
+                                    "💡 {err.suggestion}"
+                                }
+                            }
+                            button {
+                                onclick: move |_| {
+                                    state.write().error_display = None;
+                                    state.write().status_message = "Ready".to_string();
+                                },
+                                style: "{btn_style} margin-top: 10px;",
+                                "🔄 重试 / 清除"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None => rsx! {},
     }
 }
 
