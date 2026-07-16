@@ -5,14 +5,13 @@
 //! 提供多语言支持和字体配置
 
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
 
-/// 当前语言配置
-static CURRENT_LANG: Lazy<Mutex<LanguagePack>> = Lazy::new(|| {
-    Mutex::new(LanguagePack::default())
-});
+// 当前语言配置（thread-local 避免测试并发竞态；GUI 单线程等价全局）
+thread_local! {
+    static CURRENT_LANG: RefCell<LanguagePack> = RefCell::new(LanguagePack::default());
+}
 
 /// 语言包结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,29 +127,31 @@ impl LanguagePack {
 /// 获取翻译文本
 #[allow(dead_code)]
 pub fn tr(key: &str) -> String {
-    let lang = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
-    lang.texts.get(key).cloned().unwrap_or_else(|| key.to_string())
+    CURRENT_LANG.with(|c| {
+        c.borrow().texts.get(key).cloned().unwrap_or_else(|| key.to_string())
+    })
 }
 
 /// 获取当前字体列表（用于 Slint）
 pub fn get_font_family() -> String {
-    let lang = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
-    let fonts = &lang.fonts;
-
-    if fonts.enable_fallback {
-        let all_fonts: Vec<&str> = std::iter::once(fonts.primary.as_str())
-            .chain(fonts.fallback.iter().map(|s| s.as_str()))
-            .collect();
-        all_fonts.join(", ")
-    } else {
-        fonts.primary.clone()
-    }
+    CURRENT_LANG.with(|c| {
+        let fonts = &c.borrow().fonts;
+        if fonts.enable_fallback {
+            let all_fonts: Vec<&str> = std::iter::once(fonts.primary.as_str())
+                .chain(fonts.fallback.iter().map(|s| s.as_str()))
+                .collect();
+            all_fonts.join(", ")
+        } else {
+            fonts.primary.clone()
+        }
+    })
 }
 
 /// 切换语言
 pub fn set_language(lang: &str) {
-    let mut current = CURRENT_LANG.lock().expect("i18n: CURRENT_LANG poisoned");
-    *current = LanguagePack::load_builtin(lang);
+    CURRENT_LANG.with(|c| {
+        *c.borrow_mut() = LanguagePack::load_builtin(lang);
+    });
 }
 
 /// 初始化 i18n（根据系统语言自动选择）
@@ -176,45 +177,29 @@ pub fn init() {
 mod tests {
     use super::*;
 
-    /// 临时切换语言并自动恢复，避免并发测试的全局 Mutex 竞态
-    fn with_lang<F: FnOnce()>(lang: &str, f: F) {
-        let prev = CURRENT_LANG.lock().expect("i18n test: lock poisoned").lang.clone();
-        set_language(lang);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-        // 无论 f 是否 panic，都恢复原语言
-        set_language(&prev);
-        if let Err(e) = result {
-            std::panic::resume_unwind(e);
-        }
-    }
-
     #[test]
     fn test_tr_english() {
-        with_lang("en", || {
-            assert_eq!(tr("app.title"), "X Video Downloader");
-        });
+        set_language("en");
+        assert_eq!(tr("app.title"), "X Video Downloader");
     }
 
     #[test]
     fn test_tr_chinese() {
-        with_lang("zh-CN", || {
-            assert_eq!(tr("app.title"), "X 视频下载器");
-        });
+        set_language("zh-CN");
+        assert_eq!(tr("app.title"), "X 视频下载器");
     }
 
     #[test]
     fn test_font_family_english() {
-        with_lang("en", || {
-            let fonts = get_font_family();
-            assert_eq!(fonts, "System");
-        });
+        set_language("en");
+        let fonts = get_font_family();
+        assert_eq!(fonts, "System");
     }
 
     #[test]
     fn test_font_family_chinese() {
-        with_lang("zh-CN", || {
-            let fonts = get_font_family();
-            assert!(fonts.contains("PingFang SC"));
-        });
+        set_language("zh-CN");
+        let fonts = get_font_family();
+        assert!(fonts.contains("PingFang SC"));
     }
 }
