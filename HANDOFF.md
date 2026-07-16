@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-16 (Dioxus 0.7.9 + 5 组件抽取)
-**分支**: gitbutler/workspace (`9b2b208`)
+**更新时间**: 2026-07-16 (JS bridge 拖放 URL)
+**分支**: gitbutler/workspace (`67cd451`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -74,7 +74,13 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-16 — Dioxus 0.7.9 + 5 组件抽取（HEAD `9b2b208`）
+### 2026-07-16 — Dioxus 0.7.9 + JS drag-drop bridge（HEAD `67cd451`）
+
+| Commit | 类型 | 文件 | 内容 |
+|--------|------|------|------|
+| `67cd451` | feat | `src/gui_dioxus/{bridge,mod,app}.rs`（新模块） | `document::eval()` JS bridge 绑定 `window.dragover`/`drop`，从 `dataTransfer` 读 `text/uri-list`/`text/plain`/`text/html` 三档 mime，回推 URL 到 `state.url`；解锁 **HANDOFF §明日继续 #5** ⛔→🟡（待 GUI 验证） |
+
+### 2026-07-16 — Dioxus 0.7.9 + 5 组件抽取
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
