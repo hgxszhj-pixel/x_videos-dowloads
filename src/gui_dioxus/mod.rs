@@ -15,6 +15,7 @@ mod app;
 mod bridge;
 mod components;
 mod handlers;
+mod poller;
 mod store;
 mod theme;
 mod types;

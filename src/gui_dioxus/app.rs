@@ -16,8 +16,9 @@ use super::store::{
     send_notification,
 };
 use super::theme::AppTheme;
-use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
+use super::types::{AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
 use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, SettingsNumberInput, SettingsTextInput, ThemeSwatch, UrlInput, WhiteCard};
+use super::poller::{use_progress_poller, PollMsg};
 use super::theme::{STYLE_BTN_ICON, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// 主应用组件
@@ -32,6 +33,9 @@ pub(super) fn AppComponent() -> Element {
     use_effect(move || {
         theme_signal.set(state.read().theme.clone());
     });
+
+    // 进度轮询 coroutine — 替代手写 spawn(async move { loop { ... } }) 轮询循环
+    let poller = use_progress_poller(state);
 
     // 拖放 URL bridge — 解锁 HANDOFF §明日继续 #5（macOS WKWebView 监听外部 drop）
     use_effect(move || {
@@ -662,40 +666,11 @@ pub(super) fn AppComponent() -> Element {
                                 }
                             });
 
-                            // 轮询进度更新 UI（独立 task，500ms 间隔减少 UI 负载）
-                            // 进度阈值：只有变化超过 1% 才更新 UI，减少不必要的渲染
-                            let progress_arc_for_poll = progress_arc.clone();
-                            let speed_arc_for_poll = speed_arc.clone();
-                            let total_bytes_arc_for_poll = total_bytes_arc.clone();
-                            let mut state_for_poll = state;
-                            const PROGRESS_THRESHOLD: f32 = 0.01; // 1% 阈值
-                            let mut last_updated_progress: f32 = 0.0;
-                            let mut last_updated_size: u64 = 0;
-                            spawn(async move {
-                                loop {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                    if !state_for_poll.read().is_downloading {
-                                        break;
-                                    }
-                                    let percent = progress_arc_for_poll.load(Ordering::Relaxed) as f32 / 10000.0;
-                                    // 只有进度变化超过阈值或达到完成状态才更新 UI
-                                    if (percent - last_updated_progress).abs() >= PROGRESS_THRESHOLD || percent >= 1.0 {
-                                        state_for_poll.write().download_progress = percent;
-                                        last_updated_progress = percent;
-                                    }
-                                    // 轮询下载速度（每 500ms 更新）
-                                    let speed = speed_arc_for_poll.load(Ordering::Relaxed);
-                                    state_for_poll.write().download_speed = format_speed(speed);
-                                    // 轮询文件大小（仅在变化时更新，避免重复格式化）
-                                    let total = total_bytes_arc_for_poll.load(Ordering::Relaxed);
-                                    if total != last_updated_size && total > 0 {
-                                        state_for_poll.write().download_file_size = format_file_size(total);
-                                        last_updated_size = total;
-                                    }
-                                    if percent >= 1.0 {
-                                        break;
-                                    }
-                                }
+                            // 启动单下载进度轮询（use_coroutine 调度，500ms 间隔，1% 阈值过滤）
+                            poller.send(PollMsg::Single {
+                                progress_arc: progress_arc.clone(),
+                                speed_arc: speed_arc.clone(),
+                                total_bytes_arc: total_bytes_arc.clone(),
                             });
                         },
                         style: "{state.read().theme.btn_success(\"14px\", \"10px\", \"15px\")} flex: 1;",
@@ -745,40 +720,12 @@ pub(super) fn AppComponent() -> Element {
 
                             // 克隆 arc 供轮询使用
                             let progress_arcs_for_poll: Vec<Arc<AtomicU32>> = progress_arcs.iter().filter_map(|a| a.clone()).collect();
-                            let mut state_for_poll = state;
                             let total_count = url_list.len();
 
-                            // 轮询更新批量下载进度 UI
-                            spawn(async move {
-                                loop {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                    if !state_for_poll.read().is_downloading {
-                                        break;
-                                    }
-                                    // 读取每个视频的进度
-                                    let mut total_progress = 0.0f32;
-                                    let mut all_done = true;
-                                    for (idx, arc) in progress_arcs_for_poll.iter().enumerate() {
-                                        let percent = arc.load(Ordering::Relaxed) as f32 / 10000.0;
-                                        total_progress += percent;
-                                        if percent < 1.0 {
-                                            all_done = false;
-                                        }
-                                        // 更新单个视频进度 + 速度
-                                        if idx < state_for_poll.read().batch_state.items.len() {
-                                            let speed_arc_clone = state_for_poll.read().batch_state.items[idx].speed_arc.clone();
-                                            state_for_poll.write().batch_state.items[idx].progress = percent;
-                                            if let Some(speed_arc) = speed_arc_clone {
-                                                let speed = speed_arc.load(Ordering::Relaxed);
-                                                state_for_poll.write().batch_state.items[idx].speed = format_speed(speed);
-                                            }
-                                        }
-                                    }
-                                    state_for_poll.write().batch_state.progress = total_progress / (total_count as f32);
-                                    if all_done || total_progress >= (total_count as f32) {
-                                        break;
-                                    }
-                                }
+                            // 启动批量下载进度轮询（use_coroutine 调度）
+                            poller.send(PollMsg::Batch {
+                                progress_arcs: progress_arcs_for_poll,
+                                total_count,
                             });
 
                             // 使用 spawn 在后台异步执行批量下载
