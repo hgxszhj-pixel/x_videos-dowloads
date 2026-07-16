@@ -17,7 +17,7 @@ use super::store::{
 };
 use super::theme::AppTheme;
 use super::types::{format_file_size, format_speed, AppState, BatchItemState, BatchState, BatchVideoState, ErrorDisplay, VideoInfoDisplay};
-use super::components::{CardShadow, CloseButton, ThemeSwatch, WhiteCard};
+use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, ThemeSwatch, WhiteCard};
 use super::theme::{STYLE_BTN_ICON, STYLE_INPUT_BARE, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// 主应用组件
@@ -368,14 +368,14 @@ pub(super) fn AppComponent() -> Element {
                                 oninput: move |evt| { state.write().settings_output_dir = evt.value(); },
                                 style: "flex: 1; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
                             }
-                            button {
+                            BrowseButton {
+                                label: "浏览".to_string(),
+                                theme: state.read().theme.clone(),
                                 onclick: move |_| {
                                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                                         state.write().settings_output_dir = dir.to_string_lossy().to_string();
                                     }
                                 },
-                                style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"6px 12px\", \"6px\", \"12px\")}",
-                                "浏览"
                             }
                         }
                     }
@@ -397,14 +397,14 @@ pub(super) fn AppComponent() -> Element {
                                 oninput: move |evt| { state.write().settings_cookie_file = evt.value(); },
                                 style: "flex: 1; padding: 8px; border: 1px solid {BORDER_DEFAULT}; border-radius: 6px; font-size: 13px;",
                             }
-                            button {
+                            BrowseButton {
+                                label: "浏览".to_string(),
+                                theme: state.read().theme.clone(),
                                 onclick: move |_| {
                                     if let Some(f) = rfd::FileDialog::new().pick_file() {
                                         state.write().settings_cookie_file = f.to_string_lossy().to_string();
                                     }
                                 },
-                                style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"6px 12px\", \"6px\", \"12px\")}",
-                                "浏览"
                             }
                         }
                     }
@@ -836,10 +836,9 @@ pub(super) fn AppComponent() -> Element {
                     if state.read().cancel_flag.is_some() {
                         div {
                             style: "display: flex; justify-content: flex-end; margin-top: 10px;",
-                            button {
+                            DestructivePillButton {
                                 onclick: move |_| {
                                     eprintln!("[cancel] button clicked");
-                                    // clone 拿 owned Arc，避免闭包内临时引用问题
                                     if let Some(flag) = state.read().cancel_flag.clone() {
                                         flag.store(true, Ordering::Relaxed);
                                         eprintln!("[cancel] flag.store(true) done, previous={}", flag.load(Ordering::Relaxed));
@@ -847,7 +846,6 @@ pub(super) fn AppComponent() -> Element {
                                         eprintln!("[cancel] state.cancel_flag is None — button visible but flag missing");
                                     }
                                 },
-                                style: "padding: 6px 14px; background: #ff4444; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;",
                                 "🛑 取消下载"
                             }
                         }
@@ -944,7 +942,7 @@ pub(super) fn AppComponent() -> Element {
                         }
                         div {
                             style: "display: flex; gap: 8px;",
-                            button {
+                            DestructivePillButton {
                                 onclick: move |_| {
                                     // 清空全局历史
                                     clear_global_history();
@@ -952,7 +950,6 @@ pub(super) fn AppComponent() -> Element {
                                     state.write().history.clear();
                                     state.write().show_history = false;
                                 },
-                                style: "padding: 6px 12px; background: #ff4444; color: white; border: none; border-radius: 16px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;",
                                 "🗑️ 清空历史"
                             }
                             CloseButton {

@@ -119,7 +119,7 @@ pub(super) fn DestructivePillButton(
     rsx! {
         button {
             onclick: move |e| onclick.call(e),
-            style: "{STYLE_BTN_BASE} padding: 6px 14px; background: {ALERT_RED}; border-radius: 16px; font-size: 12px;",
+            style: "{STYLE_BTN_BASE} padding: 6px 14px; background: {ALERT_RED}; border-radius: 16px; font-size: 12px; font-weight: 600;",
             {children}
         }
     }
