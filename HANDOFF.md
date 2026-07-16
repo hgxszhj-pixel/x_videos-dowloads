@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-16 (i18n flake 修复)
-**分支**: gitbutler/workspace (`ab63573`)
+**更新时间**: 2026-07-16 (i18n + hashring flake)
+**分支**: gitbutler/workspace (`a18a339`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -55,10 +55,10 @@ cargo build --release           # 发行版
 | 检查项 | 状态 |
 |--------|------|
 | cargo build | ✅ 0 errors |
-| cargo test | ✅ 189 passed（默认并发稳定，`ab63573` 修 i18n flake） |
+| cargo test | ✅ 189 passed（默认并发稳定，`ab63573` 修 i18n flake + `a18a339` 修 hashring） |
 | cargo clippy | ✅ 0 warnings（`--all-targets`: 7 warnings, 4 在 bench stub, 3 在 lib 待修） |
 
-**最近验证**: 2026-07-16 — i18n flake 修复（`ab63573`），默认并发 189 tests pass 连续 3 轮，clippy clean
+**最近验证**: 2026-07-16 — i18n + hashring flake 修复（`ab63573` + `a18a339`）；默认并发 189 tests pass 连续多轮；clippy clean
 
 ## 已知问题
 
@@ -74,11 +74,13 @@ cargo build --release           # 发行版
 
 ## 近期完成
 
-### 2026-07-16 — i18n flake 修复（HEAD `ab63573`）
+### 2026-07-16 — flake 修复 + hex cleanup（HEAD `a18a339`）
 
 | Commit | 类型 | 文件 | 内容 |
 |--------|------|------|------|
-| `ab63573` | fix | `src/i18n.rs` | `CURRENT_LANG: Mutex→thread_local!{RefCell}`，默认并发测试稳定 189 passed |
+| `ab63573` | fix | `src/i18n.rs` | `CURRENT_LANG: Mutex→thread_local!{RefCell}`，默认并发测试稳定 |
+| `1f89a98` | refactor | `src/gui_dioxus/{theme,app}.rs` | 9 处硬编码 hex → theme helper，加 `color_accent()` / `progress_gradient_success()` |
+| `a18a339` | fix | `src/collaboration/crypto/hashring.rs` | sample 100→10000 消 `DefaultHasher` 极端分布 flake |
 
 ### 2026-07-15 — perf + GUI 改进（16 commits，HEAD `522df05`）
 
