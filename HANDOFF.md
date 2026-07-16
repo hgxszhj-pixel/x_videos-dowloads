@@ -180,7 +180,7 @@ RUST_LOG=debug cargo run -- "URL" 2>/dev/null   # 详细日志（抑制 tokio pa
 3. 🟡 batch 取消（需要 BatchItemState 加 cancel_flag 字段）
 4. 🟡 URL 输入框 Enter 键提交
 5. ⛔ 拖放 URL 到输入框 [平台限制: Dioxus 0.6 desktop `SerializedDragData { mouse, files }` 无 text data；升级 Dioxus 0.7+ 或 web 端才可实现]
-6. ⛔ push 到 origin [GitHub push protection 误报 docs/HANDOFF.md:17 commit hash `492b92c` 触发 token 模式；`gh api secret-scanning/alerts` 返回 `[]` 确认无 secret；解决：浏览器 unblock URL https://github.com/hgxszhj-pixel/x_videos-dowloads/security/secret-scanning/unblock-secret/3GYsk38xMofAcIGp08mvMo39eck 或 amend line 17 改 hash]
+6. 🟢 push 到 origin [GitHub push protection 误报 docs/HANDOFF.md:17 commit hash `492b92c` 触发 token 模式；`gh api secret-scanning/alerts` 返回 `[]` 确认无 secret；解决：浏览器 unblock URL https://github.com/hgxszhj-pixel/x_videos-dowloads/security/secret-scanning/unblock-secret/3GYsk38xMofAcIGp08mvMo39eck 或 amend line 17 改 hash]
 
 ### 性能待实测
 - §6 perf claim 5 项需 `cargo bench --bench hls_concurrency` 用真实 HTTPS CDN 验证（mock HTTP server 测不出）
