@@ -1,7 +1,7 @@
 # X Video Downloader - 项目交接文档
 
-**更新时间**: 2026-07-16 (灰阶 token)
-**分支**: gitbutler/workspace (`5059edc`)
+**更新时间**: 2026-07-16 (Dioxus 0.6→0.7.9 升级)
+**分支**: gitbutler/workspace (`<待 commit>`)
 **最后提交**: Claude Code (MiniMax-M3)
 
 ---
@@ -73,6 +73,16 @@ cargo build --release           # 发行版
 ---
 
 ## 近期完成
+
+### 2026-07-16 — Dioxus 0.7.9 升级
+
+| Commit | 类型 | 文件 | 内容 |
+|--------|------|------|------|
+| `<dioxus-bump>` | build | `Cargo.toml` | `dioxus = "0.6" → "0.7.9"`；删除合并入 core 的 `dioxus-desktop` / `dioxus-hooks`；**0 源码改动**（API 用法兼容） |
+
+**升级结果**: 98 crates 编译通过、189 tests pass（默认并发）、clippy clean、build --release OK。
+
+⚠️ **HANDOFF #5 (拖放 URL) 仍 ⛔**：0.7.x changelog (PR #4997 / #5211) 只修 file drop，不解锁 text/URL drop。0.8 alpha 有相关 fix (#5487)，未升级。
 
 ### 2026-07-16 — flake 修复 + hex cleanup（HEAD `5059edc`）
 
