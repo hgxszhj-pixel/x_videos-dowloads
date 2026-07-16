@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-16（31 commits, HEAD `5c27679`）
+**更新**: 2026-07-16（32 commits, HEAD `9ab018c`）
 **分支**: `gitbutler/workspace`
 
 ---
@@ -91,6 +91,7 @@ mock HTTP 限制：50ms 网络延迟主导，alloc 改进 < 1% 噪声不可见�
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
+| `9ab018c` | feat | **ThemeSwatch 选中 ring 指示器**（use_context 读 Signal<AppTheme>，lens API 示范） |
 | `5c27679` | chore | **cargo clippy --all-targets 完全清零**（11 → 0 warnings） |
 | `322f322` | fix | **notify watcher thread 加 shutdown flag**（Arc<AtomicBool> + use_drop，AppComponent 卸载干净退出） |
 | `0007183` | fix | **bridge.rs `while let Ok` → match + warn**（Eval.recv 错误显式日志 + break，不再静默吞错） |
