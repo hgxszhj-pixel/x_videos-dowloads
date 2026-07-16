@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-16（27 commits, HEAD `a692537`）
+**更新**: 2026-07-16（28 commits, HEAD `99c8c23`）
 **分支**: `gitbutler/workspace`
 
 ---
@@ -21,7 +21,7 @@ cargo test --quiet && cargo clippy --quiet  # 验证
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | 入口 | `src/main.rs` | CLI |
-| GUI | `src/gui_dioxus/` | Dioxus 0.7.9（`mod.rs`, `app.rs`, `components.rs`, `bridge.rs`, `poller.rs`, `theme.rs`, `types.rs`, `handlers.rs`, `store.rs`） |
+| GUI | `src/gui_dioxus/` | Dioxus 0.7.9（`mod.rs`, `app.rs`, `components.rs`, `bridge.rs`, `poller.rs`, `actions.rs`, `theme.rs`, `types.rs`, `handlers.rs`, `store.rs`） |
 | 下载 | `src/downloader/` | 分段并行 + 断点续传 |
 | HLS | `src/hls/` | `parser.rs` + `downloader.rs` + `crypto.rs`，mod 导出 `M3u8Parser` + `HlsDownloader` |
 | 解析 | `src/platform/` | ResolverRegistry（x/twitter/tiktok/douyin/bilibili/youtube/...） |
@@ -91,6 +91,7 @@ mock HTTP 限制：50ms 网络延迟主导，alloc 改进 < 1% 噪声不可见�
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
+| `99c8c23` | refactor | **submit_urls 改 `use_action`**（替代 70 行手写 spawn + latest-wins 自动 cancel） |
 | `a692537` | refactor | **AppState + 7 嵌套类型改 Store**（Dioxus 0.7 lens 细粒度 reactivity） |
 | `8de3239` | fix | `use_context_provider` 拆 hook-in-hook（Signal 顶层创建 + provider return handle） |
 | `3882daf` | refactor | **`use_coroutine` 合并进度轮询**（`poller.rs` 新建 + 删 67 行手写 spawn 循环） |
