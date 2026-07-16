@@ -175,10 +175,10 @@ mod tests {
         ring.add_device(&device1).await;
         ring.add_device(&device2).await;
 
-        // 测试多个 URL 分布
+        // 测试多个 URL 分布（sample 扩到 10000 避免 DefaultHasher thread-local seed 极端分布导致单设备 0）
         let mut device1_count = 0u32;
         let mut device2_count = 0u32;
-        let urls = (0..100).map(|i| format!("https://example.com/video/{}", i));
+        let urls = (0..10000).map(|i| format!("https://example.com/video/{}", i));
 
         for url in urls {
             match ring.get_owner(&url).await {
