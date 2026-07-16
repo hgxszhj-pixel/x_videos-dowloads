@@ -64,12 +64,21 @@ pub(super) fn WhiteCard(
 // ============================================================================
 
 /// 顶部 4 个主题切换 swatch（紫 / 海洋 / 日落 / 森林）
+/// 通过 `use_context::<Signal<AppTheme>>()` 读当前主题，
+/// 当前主题等于 prop 时加 box-shadow ring 标记选中状态（Dioxus 0.7 lens 细粒度 reactivity）
 #[component]
 pub(super) fn ThemeSwatch(theme: AppTheme, onclick: EventHandler<MouseEvent>) -> Element {
+    let current = use_context::<Signal<AppTheme>>();
+    let is_selected = current.cloned() == theme;
+    let ring = if is_selected {
+        "box-shadow: 0 0 0 3px {ALERT_RED};"
+    } else {
+        ""
+    };
     rsx! {
         button {
             onclick: move |e| onclick.call(e),
-            style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid {theme.border_color()}; background: {theme.gradient()}; cursor: pointer;",
+            style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid {theme.border_color()}; background: {theme.gradient()}; cursor: pointer; {ring}",
         }
     }
 }
