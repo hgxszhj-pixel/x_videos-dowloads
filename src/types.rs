@@ -8,6 +8,46 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
+/// 平台来源
+///
+/// 历史模块使用，定义下载源平台。从 `history` 迁移到 `types` 以打破
+/// `platform ↔ history` 模块间的循环依赖（platform/url_matcher 需要 Platform）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    X,
+    YouTube,
+    TikTok,
+    DouYin,
+    Bilibili,
+    Instagram,
+    Facebook,
+    Weibo,
+    ZhiXueYun,
+    TulingPython,
+    Other,
+}
+
+impl Platform {
+    /// 平台显示名称（用于 UI 提示）
+    #[allow(dead_code)]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Platform::X => "X/Twitter",
+            Platform::YouTube => "YouTube",
+            Platform::TikTok => "TikTok",
+            Platform::DouYin => "DouYin",
+            Platform::Bilibili => "Bilibili",
+            Platform::Instagram => "Instagram",
+            Platform::Facebook => "Facebook",
+            Platform::Weibo => "Weibo",
+            Platform::ZhiXueYun => "智学云",
+            Platform::TulingPython => "图灵Python",
+            Platform::Other => "Other",
+        }
+    }
+}
+
 /// 默认 User-Agent 常量
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 

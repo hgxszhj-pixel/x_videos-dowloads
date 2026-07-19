@@ -1,6 +1,6 @@
 //! 下载历史和书签模块
 
-use crate::platform::url_matcher;
+use crate::utils::url_matcher;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,45 +17,9 @@ pub enum DownloadStatus {
     Failed,
 }
 
-/// 平台来源
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum Platform {
-    X,
-    YouTube,
-    TikTok,
-    DouYin,
-    Bilibili,
-    Instagram,
-    Facebook,
-    Weibo,
-    ZhiXueYun,
-    TulingPython,
-    Other,
-}
-
-impl Platform {
-    pub fn from_url(url: &str) -> Self {
-        url_matcher::detect_platform(url)
-    }
-
-    #[allow(dead_code)]
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Platform::X => "X/Twitter",
-            Platform::YouTube => "YouTube",
-            Platform::TikTok => "TikTok",
-            Platform::DouYin => "DouYin",
-            Platform::Bilibili => "Bilibili",
-            Platform::Instagram => "Instagram",
-            Platform::Facebook => "Facebook",
-            Platform::Weibo => "Weibo",
-            Platform::ZhiXueYun => "智学云",
-            Platform::TulingPython => "图灵Python",
-            Platform::Other => "Other",
-        }
-    }
-}
+// Platform 枚举的真正定义在 `crate::types`（避免 platform ↔ history 循环依赖）。
+// 这里 re-export 以保持 `use crate::history::Platform` 调用方零改动。
+pub use crate::types::Platform;
 
 /// 下载历史条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,7 +93,7 @@ impl HistoryEntryBuilder {
     pub fn build(self) -> Result<HistoryEntry> {
         let url = self.url.ok_or_else(|| anyhow::anyhow!("url is required"))?;
         let status = self.status.ok_or_else(|| anyhow::anyhow!("status is required"))?;
-        let platform = Platform::from_url(&url);
+        let platform = url_matcher::detect_platform(&url);
 
         Ok(HistoryEntry {
             id: Uuid::new_v4(),
@@ -221,7 +185,7 @@ impl History {
         entry.id = Uuid::new_v4();
         entry.downloaded_at = Utc::now();
         if entry.platform == Platform::Other {
-            entry.platform = Platform::from_url(&entry.url);
+            entry.platform = url_matcher::detect_platform(&entry.url);
         }
         self.entries.insert(0, entry); // 最近的在前面
         self.save()?;
@@ -249,7 +213,7 @@ impl History {
             downloaded_at: Utc::now(),
             duration_secs,
             status,
-            platform: Platform::from_url(&url),
+            platform: url_matcher::detect_platform(&url),
             error_message,
         };
         self.entries.insert(0, entry); // 最近的在前面

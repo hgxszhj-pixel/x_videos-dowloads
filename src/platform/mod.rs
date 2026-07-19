@@ -13,7 +13,9 @@ mod zhixueyun;
 mod youtube;
 mod nnyy;
 mod tulingpython;
-pub mod url_matcher;
+// Re-export 以保持 `use crate::platform::url_matcher` 调用方零改动。
+// 真正定义已迁到 `crate::utils::url_matcher`（避免 platform ↔ history 循环依赖）。
+pub use crate::utils::url_matcher;
 pub use token_manager::TokenManager;
 pub use tiktok::TikTokResolver;
 pub use douyin::DouYinResolver;

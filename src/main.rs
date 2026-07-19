@@ -24,6 +24,7 @@ mod scrapling_client;
 mod scrapling_extractor;
 mod subtitle;
 mod types;
+mod utils;
 mod website_profile;
 mod yt_dlp;
 

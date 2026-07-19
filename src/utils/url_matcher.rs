@@ -2,7 +2,7 @@
 //!
 //! 提供统一的 URL 模式匹配和平台检测功能
 
-use crate::history::Platform;
+use crate::types::Platform;
 
 /// URL 模式定义
 pub struct UrlPattern {
@@ -111,7 +111,7 @@ fn extract_hostname(url: &str) -> Option<String> {
     if let Some(host_start) = url.find("://") {
         let after_scheme = &url[host_start + 3..];
         if let Some(host_end) = after_scheme.find(['/', '?', '#']) {
-            return Some(after_scheme[..host_end].to_string());
+            return Some(after_scheme[..host_end].to_string())
         } else {
             return Some(after_scheme.to_string());
         }
