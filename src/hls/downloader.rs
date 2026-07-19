@@ -235,41 +235,21 @@ impl HlsDownloader {
         }
 
         // 4. 合并分段
-        // Phase D 优化：并行读取所有分段（写仍串行，保证顺序与原子性）
-        info!("合并 {} 个分段（并行读取）...", total_segments);
+        // 修复: 原实现并行读所有分段到 Vec<u8> → 4K 视频 1000+ 分段时 OOM
+        // 改为顺序读取 + 立即写入，内存占用恒定为单个分段大小
+        info!("合并 {} 个分段（顺序读取）...", total_segments);
         let mut output_file = File::create(output_path).await?;
         let mut total_written = 0u64;
         let failed_set: std::collections::HashSet<_> = failed_segments.iter().collect();
 
-        // 并行读取所有有效分段
-        let read_tasks: Vec<_> = segment_paths
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !failed_set.contains(&(i + 1)))
-            .map(|(i, path)| {
-                let path = path.clone();
-                tokio::spawn(async move {
-                    let data = tokio::fs::read(&path).await?;
-                    Ok::<(usize, Vec<u8>), anyhow::Error>((i, data))
-                })
-            })
-            .collect();
-
-        // 收集读取结果（保持原始顺序）
-        let mut segment_data: Vec<(usize, Vec<u8>)> = Vec::with_capacity(read_tasks.len());
-        for task in read_tasks {
-            match task.await {
-                Ok(Ok(pair)) => segment_data.push(pair),
-                Ok(Err(e)) => return Err(e),
-                Err(e) => return Err(anyhow!("read task join failed: {}", e)),
+        for (i, path) in segment_paths.iter().enumerate() {
+            if failed_set.contains(&(i + 1)) {
+                continue; // 跳过失败的
             }
-        }
-        segment_data.sort_by_key(|(i, _)| *i);
-
-        // 串行写入（顺序与原子性）
-        for (i, data) in segment_data {
+            let data = tokio::fs::read(path).await?;
             output_file.write_all(&data).await?;
             total_written += data.len() as u64;
+            drop(data); // 显式释放（对大文件场景降低峰值内存）
             info!("合并进度: {}/{}", i + 1, total_segments);
         }
 
