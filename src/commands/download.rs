@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use shell_words::quote;
 use tracing::info;
 
 use crate::cli::Cli;
@@ -113,17 +112,18 @@ pub async fn run(cli: Cli, config: AppConfig) -> Result<()> {
                 }
             } else {
                 // 使用 yt-dlp 下载
-                download_with_ytdlp(&ytdlp, info, &cli, &config, start_time).await?;
+                let result = download_with_ytdlp(&ytdlp, info, &cli, &config, start_time).await?;
                 // 记录到历史（duration 转换为 f64）
                 let duration_secs = info.duration.map(|d| d as f64);
+                let status = decide_ytdlp_history_status(result.success);
                 history.add_entry_with_all(
                     url.clone(),
                     Some(info.title.clone()),
                     None,
                     None,
                     duration_secs,
-                    DownloadStatus::Completed,
-                    None,
+                    status,
+                    result.error_message,
                 )?;
             }
         }
@@ -193,62 +193,49 @@ async fn download_with_native(info: &VideoInfo, cli: &Cli, _start_time: Instant)
         })
         .unwrap_or_default();
 
-    // 构建 wget 命令
+    // P0-2 修复：通过 reqwest header 传递 token，不再 shell out 到 wget
+    // （之前 wget --header 会把 token 写入 argv，`ps aux` 可见）
     let url = &info.url;
     let user_agent = cli
         .user_agent
         .clone()
         .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
-    let output_path_str = output_path.to_str().unwrap().to_string();
+    let auth_header = format_zhixueyun_auth_header(&token);
 
-    let output = tokio::process::Command::new("wget")
-        .args([
-            "-q",
-            "--show-progress",
-            "-O",
-            &output_path_str,
-            "--user-agent",
-            &user_agent,
-            "--header",
-            &format!("Authorization: Bearer__{}", token),
-            &*quote(url).into_owned(),
-        ])
-        .output()
+    let client = (*crate::http_client::shared()).clone();
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, user_agent)
+        .header(reqwest::header::AUTHORIZATION, auth_header)
+        .send()
         .await?;
 
-    if output.status.success() {
-        let file_size = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        println!("\n下载完成: {} ({} bytes)", output_path.display(), file_size);
-        Ok(DownloadResult {
-            success: true,
-            output_path,
-            file_size,
-            duration_secs: 0.0,
-            error_message: None,
-        })
-    } else {
-        let err = String::from_utf8_lossy(&output.stderr);
+    if !response.status().is_success() {
+        let status = response.status();
+        let err = format!("HTTP {}", status);
         println!("\n下载失败: {}", err);
-        Ok(DownloadResult {
-            success: false,
-            output_path,
-            file_size: 0,
-            duration_secs: 0.0,
-            error_message: Some(err.to_string()),
-        })
+        return Ok(DownloadResult::failure(output_path, err));
     }
+
+    let bytes = response.bytes().await?;
+    tokio::fs::write(&output_path, &bytes).await?;
+    let file_size = bytes.len() as u64;
+
+    println!("\n下载完成: {} ({} bytes)", output_path.display(), file_size);
+    Ok(DownloadResult::success(output_path, file_size, 0.0))
 }
 
 /// 使用 yt-dlp 下载
+///
+/// 返回 [`DownloadResult`] 而非 `()`，让调用方知道子进程是否真正成功
+/// （P0-1 修复：之前 `Result<()>` 永远返回 `Ok`，导致 history 全部被标 Completed）。
 async fn download_with_ytdlp(
     ytdlp: &YtDlp,
     info: &VideoInfo,
     cli: &Cli,
     config: &AppConfig,
     _start_time: Instant,
-) -> Result<()> {
+) -> Result<DownloadResult> {
     // 确定输出路径（CLI参数 > 配置文件 > 默认值）
     let output_dir = if cli.output.as_os_str() == "." {
         config.output_dir.clone()
@@ -333,7 +320,7 @@ async fn download_with_ytdlp(
             println!("下载失败: {}", result.error_message.as_deref().unwrap_or("未知错误"));
         }
 
-        return Ok(());
+        return Ok(result);
     }
 
     // 使用 yt-dlp 下载
@@ -360,8 +347,7 @@ async fn download_with_ytdlp(
         let request = DownloadRequest::new(&info.url, &hls_output)
             .with_user_agent(cli.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()))
             .with_strategy(DownloadStrategy::Hls);
-        let _ = downloader.download(&request, None).await;
-        return Ok(());
+        return downloader.download(&request, None).await;
     }
 
     // 执行下载
@@ -386,17 +372,22 @@ async fn download_with_ytdlp(
 
     println!(); // 换行
 
-    if output.status.success() {
-        println!("下载完成: {}", info.title);
-    } else {
-        println!(
-            "下载失败: {} (退出码: {:?})",
-            info.title,
-            output.status.code()
-        );
-    }
+    let success = output.status.success();
+    let output_path = std::path::PathBuf::from(output_path.to_string_lossy().to_string());
 
-    Ok(())
+    if success {
+        println!("下载完成: {}", info.title);
+        Ok(DownloadResult::success(output_path, 0, 0.0))
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        let msg = if err.trim().is_empty() {
+            format!("yt-dlp 退出码: {:?}", output.status.code())
+        } else {
+            err
+        };
+        println!("下载失败: {} ({})", info.title, msg);
+        Ok(DownloadResult::failure(output_path, msg))
+    }
 }
 
 /// 直接下载（使用 reqwest 或 HLS）
@@ -494,4 +485,63 @@ pub async fn download_direct(url: &str, cli: &Cli, _start_time: Instant) -> Resu
     }
 
     Ok(result)
+}
+
+/// 根据 yt-dlp 子进程的退出结果决定历史记录状态
+///
+/// P0-1 修复契约：失败下载不能被记录为 Completed。
+/// - `success == true`  → Completed
+/// - `success == false` → Failed
+pub(crate) fn decide_ytdlp_history_status(success: bool) -> DownloadStatus {
+    if success {
+        DownloadStatus::Completed
+    } else {
+        DownloadStatus::Failed
+    }
+}
+
+/// 格式化智学云平台的 Authorization 请求头
+///
+/// P0-2 修复契约：token 必须通过 HTTP header 传递，绝不能进入
+/// `tokio::process::Command` 的 argv（否则 `ps aux` 会泄漏）。
+/// 格式：`Authorization: Bearer__{token}`
+pub(crate) fn format_zhixueyun_auth_header(token: &str) -> String {
+    format!("Authorization: Bearer__{token}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ytdlp_success_records_completed() {
+        assert_eq!(
+            decide_ytdlp_history_status(true),
+            DownloadStatus::Completed
+        );
+    }
+
+    #[test]
+    fn ytdlp_failure_records_failed() {
+        // P0-1 regression: 失败的下载不应被记为 Completed
+        assert_eq!(
+            decide_ytdlp_history_status(false),
+            DownloadStatus::Failed
+        );
+    }
+
+    #[test]
+    fn zhixueyun_auth_header_contains_token() {
+        // P0-2 regression: token 必须出现在 Authorization header 中，
+        // 并且绝不进入 Command::args（避免 ps 可见）
+        let header = format_zhixueyun_auth_header("SECRET_TOKEN_123");
+        assert!(
+            header.contains("SECRET_TOKEN_123"),
+            "token must be in header: {header}"
+        );
+        assert!(
+            header.starts_with("Authorization:"),
+            "header must be well-formed: {header}"
+        );
+    }
 }
