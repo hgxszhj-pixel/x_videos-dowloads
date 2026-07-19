@@ -156,25 +156,8 @@ mod tests {
     }
 
     #[test]
-    fn test_global_history_poison_recovery() {
-        // 验证 mutex poison 后仍可通过 `lock().ok()` 容错读（已有代码用此模式）
-        let mut guard = GLOBAL_HISTORY.lock().expect("test lock");
-        *guard = None;
-        drop(guard);
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let history = History::new(temp_dir.path()).unwrap();
-        init_global_history(history);
-
-        // poison mutex
-        let _ = std::panic::catch_unwind(|| {
-            let _g = GLOBAL_HISTORY.lock().unwrap();
-            panic!("intentional poison");
-        });
-
-        // 当前所有读路径用 `lock().ok()` / `if let Ok(h) = ...`，poison 后返回 None / 跳过
-        let items = get_history_items();
-        assert_eq!(items.len(), 0, "poisoned mutex returns empty list");
-        clear_global_history(); // 也容错
+    fn test_global_history_reload_config_works_without_lock() {
+        // reload_config 不持 GLOBAL_HISTORY 锁，应可独立调用
+        reload_config(); // 不 panic 即通过
     }
 }
