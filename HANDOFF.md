@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-19（HEAD `10909d8`, 196/196 tests pass, branch `gitbutler/workspace`）
+**更新**: 2026-07-19（HEAD `c22634c`, 196/196 tests pass, branch `gitbutler/workspace`）
 
 ---
 
@@ -8,13 +8,11 @@
 
 | 文件 | 改动 | 一句话 |
 |------|------|--------|
-| `src/hls/downloader.rs` | −30/+12 | 分段并行读全段 → 顺序读 + 立即写（修 OOM） |
-| `src/downloader/mod.rs` | −21/+35 | `.output().await` → `.spawn()` + piped stdout（yt-dlp 实时进度） |
-| `src/gui_dioxus/mod.rs` | −3/+6 | Dioxus 0.7.9 `launch` 3-arg + `Config::with_window(...)`（设窗口标题） |
 | `src/main.rs` | −2 | `mod queue;` 移除（queue.rs 已弃用，文件待 `git rm`） |
 | `src/queue.rs` | 删除 | **#![allow(dead_code)]** 0 caller，由用户执行 `git rm` |
+| `SkillOpt` | untracked | gitbutler workspace 已删除文件，git 无影响 |
 
-> **接手必做**：逐文件 commit（不要 `git add -A`！），Intent Lock + `Intent:` 一行 + push
+> **接手必做**：用户自行 `git rm src/queue.rs` → 一次性 commit（main.rs + queue.rs 一并）；不要 `git add -A`！
 
 ---
 
@@ -89,11 +87,11 @@ cargo test --quiet && cargo clippy --quiet --all-targets  # 验证
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
-| `10909d8` | refactor | **拆 commands/download.rs (548行) 为 6 模块** |
-| `832c9b8` | docs | audit GLOBAL_HISTORY mutex invariant (P0-3 audit) |
-| `dbe3425` | perf | ResolverRegistry 提升为单例 |
-| `cd59b78` | refactor | 拆 platform ↔ history 循环依赖 |
-| `24bae6a` | fix | P0-1 历史状态 + P0-2 wget token 泄漏 |
+| `c22634c` | fix | Dioxus 0.7.9 launch 三参 + Config.with_window（窗口标题） |
+| `27696c9` | fix | yt-dlp 改用 spawn + piped stdout（实时进度） |
+| `daad859` | fix | HLS 分段合并改顺序读+立即写（修 OOM） |
+| `0298f76` | test | 用无锁路径测试替代 poison-recovery（修复 cargo test 顺序问题） |
+| `d8449ea` | docs | 同步 phase 2.2-2.4 + P0-3 audit |
 
 ---
 
