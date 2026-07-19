@@ -27,12 +27,13 @@ use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
 /// 视频下载器
@@ -482,28 +483,47 @@ impl VideoDownloader {
             cb(initial_progress);
         }
 
-        // 执行 yt-dlp，等待完成
-        let output = Command::new(&ytdlp.executable)
+        // 执行 yt-dlp,实时解析进度(spawn + piped stdout,不再 .output().await 后才解析)
+        let mut child = Command::new(&ytdlp.executable)
             .args(&args)
-            .output()
-            .await
-            .context("Failed to execute yt-dlp")?;
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn yt-dlp")?;
 
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        let stdout = child.stdout.take().context("stdout not piped")?;
+        let stderr = child.stderr.take().context("stderr not piped")?;
 
-        if !output.status.success() {
-            tracing::error!("yt-dlp 下载失败: {}", stderr_str);
-            return Err(anyhow!("yt-dlp 下载失败: {}", stderr_str));
-        }
+        // 后台读取 stderr 到 Vec (避免 pipe buffer 满阻塞 yt-dlp)
+        let stderr_handle = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let mut reader = tokio::io::BufReader::new(stderr);
+            let _ = reader.read_to_end(&mut buf).await;
+            buf
+        });
 
-        // 解析进度输出（从 stdout）
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-        for line in stdout_str.lines() {
-            if let Some(progress) = parse_ytdlp_progress(line) {
-                if let Some(ref cb) = progress_callback {
-                    cb(progress);
+        // 后台实时解析 stdout 中的 yt-dlp 进度行
+        let cb_for_progress = progress_callback.clone();
+        let progress_handle = tokio::spawn(async move {
+            let mut lines = tokio::io::BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(progress) = parse_ytdlp_progress(&line) {
+                    if let Some(ref cb) = cb_for_progress {
+                        cb(progress);
+                    }
                 }
             }
+        });
+
+        // 等待 yt-dlp 退出 + 排空两个 reader task
+        let status = child.wait().await.context("Failed to wait for yt-dlp")?;
+        let stderr_bytes = stderr_handle.await.unwrap_or_default();
+        let _ = progress_handle.await;
+
+        if !status.success() {
+            let stderr_str = String::from_utf8_lossy(&stderr_bytes);
+            tracing::error!("yt-dlp 下载失败: {}", stderr_str);
+            return Err(anyhow!("yt-dlp 下载失败: {}", stderr_str));
         }
 
         let elapsed = start_time.elapsed();
