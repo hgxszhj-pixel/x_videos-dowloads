@@ -80,6 +80,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets  # 验证
 | 抖音 "Fresh cookies needed" | 导出 Netscape 格式 Cookie |
 | TikTok 403/HTML | 配置 msToken |
 | tokio shutdown panic | `2>/dev/null` 抑制 stderr |
+| `cargo fmt --check` 报 ~490 处格式差异 | **pre-existing**（5c27679/6433dad 等历史 commit 引入），无 rustfmt.toml。修法：单独 `cargo fmt` 一个 commit，或加 rustfmt.toml 配置（建议同时加 `[profile.dev]`，避免引发 CI 动荡） |
 
 ---
 
