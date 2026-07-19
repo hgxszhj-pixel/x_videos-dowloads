@@ -21,7 +21,8 @@ mod store;
 mod theme;
 mod types;
 
-use dioxus::prelude::launch;
+use dioxus::desktop::launch::launch;
+use dioxus::desktop::{tao, Config};
 use tracing::{error, info};
 
 use crate::history::History;
@@ -53,10 +54,8 @@ pub fn run_gui() {
     };
     store::init_global_history(history);
 
-    // 启动 Dioxus Desktop
-    launch(app::AppComponent);
-
-    // 注意：文件监控在 AppComponent 内部启动
-    // 这里只是记录启动成功
-    info!("Dioxus GUI started with config hot-reload support");
+    // 启动 Dioxus Desktop (设置窗口标题为 "X Video Downloader", 覆盖默认 "Dioxus App")
+    let window_config = Config::default()
+        .with_window(tao::window::WindowBuilder::new().with_title("X Video Downloader"));
+    launch(app::AppComponent, vec![], vec![Box::new(window_config)]);
 }
