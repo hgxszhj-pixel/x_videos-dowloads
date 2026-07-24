@@ -36,7 +36,10 @@ static GLOBAL_REGISTRY: Mutex<Option<Arc<ResolverRegistry>>> = Mutex::new(None);
 /// 参数 `config` 仅在首次调用时生效（用于注入 DouYinResolver 的 msToken）。
 /// 后续调用忽略 config 参数，直接返回已缓存的 Arc clone。
 pub fn global_registry(config: &AppConfig) -> Arc<ResolverRegistry> {
-    let mut guard = GLOBAL_REGISTRY.lock().expect("GLOBAL_REGISTRY poisoned");
+    let mut guard = GLOBAL_REGISTRY.lock().unwrap_or_else(|err| {
+        tracing::warn!("GLOBAL_REGISTRY poisoned，自动重建: {}", err);
+        err.into_inner()
+    });
     if let Some(ref arc) = *guard {
         return arc.clone();
     }
@@ -71,7 +74,10 @@ pub fn global_registry(config: &AppConfig) -> Arc<ResolverRegistry> {
 /// 测试用：重置全局单例（仅在 `#[cfg(test)]` 下暴露）。
 #[cfg(test)]
 fn reset_global_registry_for_tests() {
-    let mut guard = GLOBAL_REGISTRY.lock().expect("GLOBAL_REGISTRY poisoned");
+    let mut guard = GLOBAL_REGISTRY.lock().unwrap_or_else(|err| {
+        tracing::warn!("GLOBAL_REGISTRY poisoned，自动重建: {}", err);
+        err.into_inner()
+    });
     *guard = None;
 }
 
