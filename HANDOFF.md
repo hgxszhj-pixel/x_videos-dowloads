@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-07-19（HEAD `c22634c`, 196/196 tests pass, branch `gitbutler/workspace`）
+**更新**: 2026-07-24（HEAD `3d43eae`, 196/196 tests pass, branch `gitbutler/workspace`）
 
 ---
 
@@ -8,11 +8,13 @@
 
 | 文件 | 改动 | 一句话 |
 |------|------|--------|
-| `src/main.rs` | −2 | `mod queue;` 移除（queue.rs 已弃用，文件待 `git rm`） |
-| `src/queue.rs` | 删除 | **#![allow(dead_code)]** 0 caller，由用户执行 `git rm` |
-| `SkillOpt` | untracked | gitbutler workspace 已删除文件，git 无影响 |
+| `CLAUDE.md` | 替换 | 135→36 行精简版（移除冗余 project summary / Intent Lock 范例 / 旧 build 命令） |
+| `src/gui_dioxus/CLAUDE.md` | 新建 | 嵌套 GUI 错误提示规则（⚠️ + 红色 + 解决建议） |
+| `.gitignore` | +2 行 | 例外 `download-agent-loop/SKILL.md`（其他 `.claude/skills/*` 仍忽略） |
+| `SkillOpt/` | untracked | gitbutler workspace 残留，无 git 影响 |
+| `.claude/` | untracked | gitbutler workspace 残留，无 git 影响 |
 
-> **接手必做**：用户自行 `git rm src/queue.rs` → 一次性 commit（main.rs + queue.rs 一并）；不要 `git add -A`！
+> **接手必做**：按各自 commit message 提交；Intent Lock 要求 `Intent: <一句话>` 一行。不要 `git add -A`！
 
 ---
 
@@ -61,6 +63,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets  # 验证
 3. 进度阈值过滤 — ≥ 1% 才回调 UI
 4. Cookie 文件权限 0o600 — `#[cfg(unix)]` 下 `std::fs::Permissions::from_mode(0o600)`
 5. 分段失败不回退 — 回退会重复下载，直接报错
+6. Mutex poison 自动重建 — `unwrap_or_else(|err| err.into_inner())` + `tracing::warn!`（state-atomic 类型适用）
 
 ---
 
@@ -68,8 +71,17 @@ cargo test --quiet && cargo clippy --quiet --all-targets  # 验证
 
 | 检查 | 结果 |
 |------|------|
-| cargo test | ✅ 196 passed (新加 11 个回归测试: singleton + mutex audit + dispatch + history_writer) |
+| cargo test | ✅ 196 passed |
 | cargo clippy --all-targets | ✅ 0 warnings |
+| P0 待办 | ⏳ (1) `m3u8 0.1` → `hls4-client 1.0.4`（其余 3 项已 ✅） |
+
+### P0 完成明细（2026-07-24）
+
+| 项 | 状态 | SHA | 摘要 |
+|----|------|-----|------|
+| 删除死代码 `src/queue.rs` | ✅ | `3cf736f` | 602 行 0 caller → `git rm` |
+| SQL DDL → `schema.sql` | ✅ | `b0791d8`（前置） | `db.rs:54` 改用 `include_str!` |
+| `GLOBAL_REGISTRY` poison 自动重建 | ✅ | `3d43eae` | `resolver_chain.rs:39,74` panic → `into_inner()` |
 
 ---
 
@@ -80,19 +92,21 @@ cargo test --quiet && cargo clippy --quiet --all-targets  # 验证
 | 抖音 "Fresh cookies needed" | 导出 Netscape 格式 Cookie |
 | TikTok 403/HTML | 配置 msToken |
 | tokio shutdown panic | `2>/dev/null` 抑制 stderr |
-| `cargo fmt --check` 报 ~490 处格式差异 | **pre-existing**（5c27679/6433dad 等历史 commit 引入），无 rustfmt.toml。修法：单独 `cargo fmt` 一个 commit，或加 rustfmt.toml 配置（建议同时加 `[profile.dev]`，避免引发 CI 动荡） |
+| `cargo fmt --check` 报 ~490 处格式差异 | **pre-existing**（历史 commit 引入），无 rustfmt.toml |
 
 ---
 
-## 近期 commits（近 5）
+## 近期 commits（近 7）
 
 | SHA | 类型 | 内容 |
 |-----|------|------|
+| `3d43eae` | fix | `resolver_chain` poison panic 改为自动重建 |
+| `3cf736f` | chore | 删除死代码 `src/queue.rs` (602 行) |
+| `39a1338` | docs | 标注 cargo fmt --check 490 处 pre-existing 差异 |
+| `c9109e0` | docs | 同步 c22634c 4 commits（store 测试 + HLS OOM + yt-dlp 进度 + Dioxus 标题） |
 | `c22634c` | fix | Dioxus 0.7.9 launch 三参 + Config.with_window（窗口标题） |
 | `27696c9` | fix | yt-dlp 改用 spawn + piped stdout（实时进度） |
 | `daad859` | fix | HLS 分段合并改顺序读+立即写（修 OOM） |
-| `0298f76` | test | 用无锁路径测试替代 poison-recovery（修复 cargo test 顺序问题） |
-| `d8449ea` | docs | 同步 phase 2.2-2.4 + P0-3 audit |
 
 ---
 
