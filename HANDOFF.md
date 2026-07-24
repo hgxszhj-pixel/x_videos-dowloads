@@ -73,7 +73,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets  # 验证
 |------|------|
 | cargo test | ✅ 196 passed |
 | cargo clippy --all-targets | ✅ 0 warnings |
-| P0 待办 | ⏳ (1) `m3u8 0.1` → `hls4-client 1.0.4`（其余 3 项已 ✅） |
+| P0 待办 | ⛔ 无（原 1 项 2026-07-24 调研后标 noop,见下方） |
 
 ### P0 完成明细（2026-07-24）
 
@@ -82,6 +82,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets  # 验证
 | 删除死代码 `src/queue.rs` | ✅ | `3cf736f` | 602 行 0 caller → `git rm` |
 | SQL DDL → `schema.sql` | ✅ | `b0791d8`（前置） | `db.rs:54` 改用 `include_str!` |
 | `GLOBAL_REGISTRY` poison 自动重建 | ✅ | `3d43eae` | `resolver_chain.rs:39,74` panic → `into_inner()` |
+| `m3u8 0.1` → `hls4-client 1.0.4` | ⚠️ noop | (无 commit) | m3u8 在 src/ 完全未使用 (`Cargo.toml:117` 声明,0 `use m3u8::`) + hls4-client 1.0.4 在 crates.io/docs.rs/GitHub 均不可验证(`hls4` 是 HLS 加密协议非 playlist parser),前提错误故不升级 |
 
 ---
 
