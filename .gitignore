@@ -19,7 +19,11 @@ __pycache__/
 .pytest_cache/
 
 # Claude
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/download-agent-loop/
+!.claude/skills/download-agent-loop/SKILL.md
 .omc/
 .planning/
 .gitnexus
