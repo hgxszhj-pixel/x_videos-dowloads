@@ -18,7 +18,6 @@ mod http_client;
 mod i18n;
 mod muxer;
 mod platform;
-mod queue;
 mod resolver_chain;
 mod scrapling_client;
 mod scrapling_extractor;
