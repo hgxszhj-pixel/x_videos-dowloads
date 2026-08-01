@@ -228,8 +228,10 @@ pub(super) async fn fetch_course_collection_impl(url: &str) -> Result<CourseColl
     if resolver.platform() != crate::history::Platform::TulingPython {
         return Err(format!("当前平台 ({:?}) 不支持课程池", resolver.platform()));
     }
-    // 登录态预检：未登录直接提示用户去打开登录窗口
-    if !crate::drission_client::is_logged_in("https://vip.tulingpyton.cn").await {
+    // 登录态预检:导航到用户实际想看的课程页(而非硬编码首页),
+    // 课程页一定会触发 xe.micro_page.common.public.data.get 验证访问权限,
+    // 首页可能不调该 API → 误判"未登录" → 用户报告"已用 ego-lite 登录却仍报需要登录"。
+    if !crate::drission_client::is_logged_in(url).await {
         return Err(ResolverError::AuthenticationRequired.to_string());
     }
     let entries = resolver

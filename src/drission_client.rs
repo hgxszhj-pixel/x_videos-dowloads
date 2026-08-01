@@ -95,28 +95,38 @@ pub async fn is_logged_in(url: &str) -> bool {
     use drission::cdp::{ChromiumBrowser, ChromiumOptions};
     use std::time::Duration;
 
+    let profile = default_profile_dir();
+    info!(target: "drission", "is_logged_in: 检测 {} (profile={:?})", url, profile);
+
     let opts = ChromiumOptions::new()
         .headless(true)
-        .user_data_dir(default_profile_dir())
+        .user_data_dir(profile.clone())
         .window_size(1280, 800)
         .add_arg("--mute-audio");
     let browser = match ChromiumBrowser::launch(opts).await {
         Ok(b) => b,
-        Err(_) => return false,
+        Err(e) => {
+            warn!(target: "drission", "is_logged_in: 浏览器启动失败 ({e}) — 可能 profile 被占用/锁住");
+            return false;
+        }
     };
     let tab = match browser.new_tab(None).await {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
+            warn!(target: "drission", "is_logged_in: new_tab 失败 ({e})");
             let _ = browser.quit().await;
             return false;
         }
     };
     let listen = tab.listen();
-    if listen.start(&["common.public.data.get"]).await.is_err() {
+    if let Err(e) = listen.start(&["common.public.data.get"]).await {
+        warn!(target: "drission", "is_logged_in: 监听启动失败 ({e})");
         let _ = browser.quit().await;
         return false;
     }
-    let _ = tab.get(url).await;
+    if let Err(e) = tab.get(url).await {
+        warn!(target: "drission", "is_logged_in: 导航到 {url} 失败 ({e})");
+    }
     let _ = tab
         .wait()
         .network_idle(1.0, Some(Duration::from_secs(15)))
@@ -130,15 +140,24 @@ pub async fn is_logged_in(url: &str) -> bool {
     let _ = listen.stop().await;
     let _ = browser.quit().await;
 
+    info!(target: "drission", "is_logged_in: 拦截到 {} 个 common.public.data.get 响应", packets.len());
+
     for p in &packets {
         if let Some(j) = p.json() {
             if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
                 if !ui.is_null() && ui.get("user_id").and_then(|v| v.as_str()).is_some() {
+                    info!(target: "drission", "is_logged_in: 已登录 ✓ (user_id={:?})",
+                          ui.get("user_id").and_then(|v| v.as_str()));
                     return true;
                 }
             }
         }
     }
+    warn!(
+        target: "drission",
+        "is_logged_in: {} 个响应里未找到 user_info.user_id\n  URL: {url}\n  profile: {profile:?}\n  → 用户实际未登录 / cookies 已过期 / 浏览器进程残留锁住 profile / SPA 未触发 user_info API",
+        packets.len()
+    );
     false
 }
 
