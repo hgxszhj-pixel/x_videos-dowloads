@@ -53,7 +53,7 @@ pub async fn download(url: &str, cli: &Cli, _start_time: Instant) -> Result<Down
         ..Default::default()
     };
 
-    let downloader = VideoDownloader::with_config(config)?;
+    let mut downloader = VideoDownloader::with_config(config)?;
 
     let output_path = generate_unique_filename(&output_dir, &base_filename, "mp4");
 

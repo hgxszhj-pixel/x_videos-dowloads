@@ -63,7 +63,7 @@ async fn download_direct_twimg_url(
         .unwrap_or("mp4");
     let final_output_path = generate_unique_filename(output_dir, base_filename, ext);
 
-    let downloader = VideoDownloader::new()?.with_website_profile(&info.url);
+    let mut downloader = VideoDownloader::new()?.with_website_profile(&info.url);
     let request = DownloadRequest::new(&info.url, &final_output_path)
         .with_user_agent(
             cli.user_agent
@@ -117,7 +117,7 @@ async fn download_hls(
 ) -> Result<DownloadResult> {
     info!("使用原生 HLS 下载: {}", info.title);
     let hls_output = output_dir.join(format!("{}.mp4", base_filename));
-    let downloader = VideoDownloader::new()?.with_website_profile(&info.url);
+    let mut downloader = VideoDownloader::new()?.with_website_profile(&info.url);
     let request = DownloadRequest::new(&info.url, &hls_output)
         .with_user_agent(
             cli.user_agent

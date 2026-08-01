@@ -23,6 +23,7 @@ use crate::types::{
     DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus,
     DownloadStrategy,
 };
+use crate::website_profile::{self, WebsiteProfile};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
@@ -101,7 +102,7 @@ impl VideoDownloader {
 
     /// 下载文件（带重试机制和分段并行下载）
     pub async fn download(
-        &self,
+        &mut self,
         request: &DownloadRequest,
         progress_callback: Option<Arc<dyn Fn(DownloadProgress) + Send + Sync>>,
     ) -> Result<DownloadResult> {
@@ -150,6 +151,18 @@ impl VideoDownloader {
 
             // 检查是否支持分段下载（需要先获取文件大小）
             let total_size = self.get_content_length(&request.url).await?;
+
+            // 按文件大小自适应分段数（覆盖 with_website_profile 阶段选的默认值）
+            if let Some(size) = total_size {
+                if let Some(profile) = profile_for_url(&request.url) {
+                    let size_based = profile.recommended_segments_for_size(size);
+                    if size_based != self.config.parallel_segments {
+                        info!("按文件大小调整分段: {} bytes -> {} 段 (was {})",
+                            size, size_based, self.config.parallel_segments);
+                        self.config.parallel_segments = size_based;
+                    }
+                }
+            }
 
             // 大于10MB且启用了分段下载时使用并行下载
             if let Some(size) = total_size {
@@ -539,6 +552,15 @@ impl VideoDownloader {
             error_message: None,
         })
     }
+}
+
+/// 按 URL 查全局 profile store 的 profile（懒加载 + 线程安全）
+///
+/// 用 website_profile 单例里的最新值，record_success 后立即可见。
+fn profile_for_url(url: &str) -> Option<WebsiteProfile> {
+    let store = website_profile::get_profile_store();
+    let guard = store.read().ok()?;
+    Some(guard.get_or_create(url))
 }
 
 #[cfg(test)]

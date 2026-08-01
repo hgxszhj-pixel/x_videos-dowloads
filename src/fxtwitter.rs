@@ -186,8 +186,8 @@ impl FxTwitterResolver {
         // 解析推文中的链接，找到真正的视频源
         let video_url = self.find_video_url(&tweet)?;
 
-        // 构建 VideoInfo - 使用推文文本作为标题
-        let title = tweet.text.clone();
+        // 构建 VideoInfo - 使用 build_title 4 级回退（修复空标题 bug）
+        let title = build_title(&tweet);
         let mut video_info = VideoInfo::new(title, video_url.clone(), None);
 
         video_info.uploader = Some(tweet.author.name.clone());
@@ -418,9 +418,41 @@ pub fn extract_tweet_id(url: &str) -> Result<String> {
     Err(anyhow!("无效的推文 URL 格式: {}", url))
 }
 
+/// 4 级回退构造推文标题
+///
+/// 媒体专属推文（仅视频无文字）的 `tweet.text` 是空字符串，直接用它作 title
+/// 会得到空标题。回退链：text → @screen_name_id → x_tweet_id → "x_video"。
+fn build_title(tweet: &FxTweet) -> String {
+    if !tweet.text.trim().is_empty() {
+        return tweet.text.clone();
+    }
+    if !tweet.author.screen_name.is_empty() && !tweet.id.is_empty() {
+        return format!("@{}_{}", tweet.author.screen_name, tweet.id);
+    }
+    if !tweet.id.is_empty() {
+        return format!("x_tweet_{}", tweet.id);
+    }
+    "x_video".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_tweet(text: &str, screen_name: &str, id: &str) -> FxTweet {
+        FxTweet {
+            url: String::new(),
+            id: id.to_string(),
+            text: text.to_string(),
+            raw_text: None,
+            author: FxAuthor {
+                screen_name: screen_name.to_string(),
+                name: String::new(),
+                avatar: None,
+            },
+            media: None,
+        }
+    }
 
     #[test]
     fn test_extract_tweet_id() {
@@ -438,5 +470,40 @@ mod tests {
             extract_tweet_id("https://twitter.com/user/status/123456789").unwrap(),
             "123456789"
         );
+    }
+
+    /// text 非空 → 用 text
+    #[test]
+    fn test_build_title_prefers_text() {
+        let tweet = make_tweet("Hello world", "alice", "123");
+        assert_eq!(build_title(&tweet), "Hello world");
+    }
+
+    /// text 全空白（trim 后空）也走回退
+    #[test]
+    fn test_build_title_treats_whitespace_as_empty() {
+        let tweet = make_tweet("   \n\t  ", "alice", "123");
+        assert_eq!(build_title(&tweet), "@alice_123");
+    }
+
+    /// text 空 + author + id 都有 → @screen_name_id（媒体专属推文主用例）
+    #[test]
+    fn test_build_title_falls_back_to_handle_and_id() {
+        let tweet = make_tweet("", "Chad_A_lac", "2083185913861951718");
+        assert_eq!(build_title(&tweet), "@Chad_A_lac_2083185913861951718");
+    }
+
+    /// text 空 + screen_name 空 + id 仍有 → x_tweet_id
+    #[test]
+    fn test_build_title_falls_back_to_id_only() {
+        let tweet = make_tweet("", "", "999");
+        assert_eq!(build_title(&tweet), "x_tweet_999");
+    }
+
+    /// 全空 → 兜底 "x_video"
+    #[test]
+    fn test_build_title_ultimate_fallback() {
+        let tweet = make_tweet("", "", "");
+        assert_eq!(build_title(&tweet), "x_video");
     }
 }

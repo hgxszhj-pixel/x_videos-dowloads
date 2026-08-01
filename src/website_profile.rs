@@ -274,11 +274,11 @@ impl WebsiteProfile {
         self.success_count += 1;
         self.last_visited = chrono_now();
 
-        // 更新平均速度（指数移动平均）
+        // 更新平均速度（指数移动平均，50/50 权重：让网络环境变化在 2 次下载内反映到 profile）
         if self.avg_speed_bps == 0 {
             self.avg_speed_bps = speed_bps;
         } else {
-            self.avg_speed_bps = ((self.avg_speed_bps as u128 * 3 + speed_bps as u128) / 4) as u64;
+            self.avg_speed_bps = ((self.avg_speed_bps as u128 + speed_bps as u128) / 2) as u64;
         }
 
         // 如果速度很快，降低线程需求
@@ -317,6 +317,23 @@ impl WebsiteProfile {
         (self.min_threads, threads, self.speed_threshold_bps)
     }
 
+    /// 根据预期文件大小推荐分段数（自适应按文件大小调整并行度）
+    ///
+    /// - 小文件 (< 50MB): 1 段（合并开销 > 并行收益）
+    /// - 中等 (50-500MB): 4 段（受限 max_threads）
+    /// - 大文件 (> 500MB): max_threads 段（最饱和）
+    pub fn recommended_segments_for_size(&self, total_size: u64) -> u32 {
+        let max = self.max_threads.max(1);
+
+        if total_size < 50 * 1024 * 1024 {
+            1.min(max)
+        } else if total_size < 500 * 1024 * 1024 {
+            4.min(max)
+        } else {
+            max
+        }
+    }
+
     /// 可信度（基于成功次数）
     pub fn confidence(&self) -> f64 {
         let total = self.success_count + self.failure_count;
@@ -331,7 +348,17 @@ impl WebsiteProfile {
 fn get_profile_for_domain(domain: &str) -> Option<WebsiteProfile> {
     let template = match domain {
         // ===== 社交媒体视频 =====
-        "video.twimg.com" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
+        // video.twimg.com 不支持并发 Range 分片请求 (实测 4 路并发下
+        // "Got error: Downloaded X bytes, expected Y" 重试 10 次仍失败);
+        // 单连接直下可达 7 MiB/s。绕开 Cloudflare 模板直接定 max_threads=1。
+        "video.twimg.com" => return Some(WebsiteProfile {
+            domain: domain.to_string(),
+            adaptive_threads: false,
+            min_threads: 1,
+            max_threads: 1,
+            speed_threshold_bps: 500 * 1024,
+            ..Default::default()
+        }),
         "api.fxtwitter.com" => return Some(WebsiteProfile {
             domain: domain.to_string(),
             adaptive_threads: false,
@@ -610,5 +637,35 @@ mod tests {
 
         assert!(profile.has_thread_limit);
         assert!(profile.max_threads <= 4);
+    }
+
+    /// 三个文件大小分桶：小 (< 50MB) / 中 (50-500MB) / 大 (> 500MB)
+    #[test]
+    fn test_recommended_segments_for_size() {
+        // from_domain 默认 max_threads=8
+        let profile = WebsiteProfile::from_domain("test-cdn.com");
+        assert_eq!(profile.max_threads, 8);
+
+        // 小文件：1 段（省合并开销）
+        assert_eq!(profile.recommended_segments_for_size(10 * 1024 * 1024), 1);
+        assert_eq!(profile.recommended_segments_for_size(49 * 1024 * 1024), 1);
+
+        // 中等：4 段（受限 max）
+        assert_eq!(profile.recommended_segments_for_size(50 * 1024 * 1024), 4);
+        assert_eq!(profile.recommended_segments_for_size(499 * 1024 * 1024), 4);
+
+        // 大文件：8 段（饱和）
+        assert_eq!(profile.recommended_segments_for_size(500 * 1024 * 1024), 8);
+        assert_eq!(profile.recommended_segments_for_size(2 * 1024 * 1024 * 1024), 8);
+
+        // max_threads=1 的域（video.twimg.com 风格）所有分桶都退化到 1
+        let low = WebsiteProfile {
+            domain: "limited.com".to_string(),
+            max_threads: 1,
+            ..Default::default()
+        };
+        assert_eq!(low.recommended_segments_for_size(10 * 1024 * 1024), 1);
+        assert_eq!(low.recommended_segments_for_size(200 * 1024 * 1024), 1);
+        assert_eq!(low.recommended_segments_for_size(2 * 1024 * 1024 * 1024), 1);
     }
 }
