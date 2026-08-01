@@ -178,12 +178,7 @@ async fn is_logged_in_via_ego_lite() -> LoginStatus {
 /// 用 Keychain "ego safe storage" 派生 AES-128-GCM 密钥解密,返回 `name=value; ...` 字符串。
 #[cfg(target_os = "macos")]
 fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
-    use aes_gcm::aead::Aead;
-    use aes_gcm::KeyInit;
-    use aes_gcm::{Aes128Gcm, Nonce};
-    use pbkdf2::pbkdf2_hmac_array;
     use rusqlite::Connection;
-    use sha1::Sha1;
 
     // 1. ego-lite profile 路径
     let home = std::env::var_os("HOME")
@@ -216,27 +211,21 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         anyhow::bail!("Keychain 'ego safe storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
     }
 
-    // 3. 派生 AES-128 密钥
-    //    2026-08-01 实测: Chromium 在 macOS Keychain 存的是 base64(random_16_bytes),
-    //    base64 解码后直接当 AES-128 key 用 — 不用 PBKDF2 派生 (这是与 Chromium 文档
-    //    常见的 PBKDF2 描述不一致的地方,实测密钥是 base64 编码的随机 16 字节)。
-    //    兼容旧/新 Chromium:PBKDF2 派生也保留作 fallback (有些 fork 用)。
+    // 3. 解密密钥 = base64 decode(Keychain 密码) = 16 字节 (Chromium macOS 实测)
+    //    2026-08-01 实测 (Python 脚本验证):Keychain 密码是 base64 编码的随机 16 字节,
+    //    base64 解码后直接当 AES-128 key 用,不需要 PBKDF2 派生。
+    //    cookies 用 **AES-128-CBC** 加密(不是 GCM!),v10 格式 = "v10" (3) + IV (16) + ct (PKCS7 padded)
     use base64::Engine;
-    let raw_key: Option<Vec<u8>> = base64::engine::general_purpose::STANDARD
+    let raw_key: [u8; 16] = match base64::engine::general_purpose::STANDARD
         .decode(password.as_bytes())
         .ok()
-        .filter(|v| v.len() == 16);
-    let cipher_raw = raw_key.as_ref().map(|k| {
-        Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(k.as_slice()))
-    });
-    let key_1003: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1003);
-    let key_1: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1);
-    let cipher_1003 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1003));
-    let cipher_1 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1));
-
-    info!(target: "drission", "Keychain 密码: len={} base64_decoded_len={:?} 用 raw_key={}",
-          password.len(), raw_key.as_ref().map(|v| v.len()),
-          if cipher_raw.is_some() { "✓" } else { "✗" });
+        .and_then(|v| <[u8; 16]>::try_from(v.as_slice()).ok())
+    {
+        Some(k) => k,
+        None => anyhow::bail!("Keychain 密码 base64 decode 后不是 16 字节 (实际 len={})", password.len()),
+    };
+    info!(target: "drission", "Keychain 密码: b64_len={} raw_key_hex={}",
+          password.len(), raw_key.iter().map(|b| format!("{:02x}", b)).collect::<String>());
 
     // 4. 读 SQLite cookies (只关心 vip.tulingpyton.cn 域)
     let conn = Connection::open(&cookies_db)
@@ -266,33 +255,42 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
             }
         }
 
-        // 解密 encrypted_value (v10 格式: "v10" + 12 byte nonce + ciphertext + 16 byte tag)
+        // 解密 v10 (AES-128-CBC + PKCS7): "v10" + 16-byte IV + ciphertext
         let value: String = if !encrypted_value.is_empty() {
             let total = encrypted_value.len();
-            if total < 3 + 12 + 16 || &encrypted_value[0..3] != b"v10" {
+            if total < 3 + 16 + 16 || &encrypted_value[0..3] != b"v10" {
                 continue;
             }
-            let nonce_slice: &[u8] = &encrypted_value[3..15];
-            let nonce = Nonce::from_slice(nonce_slice);
-            let ct_end = total - 16;
-            let ct_slice: &[u8] = &encrypted_value[3..ct_end];
-            // 4 路 fallback:raw key (实测真值) > PBKDF2 iter=1003 > iter=1
-            let result = if let Some(ref c) = cipher_raw {
-                c.decrypt(nonce, ct_slice).ok()
-            } else {
-                None
-            }
-            .or_else(|| cipher_1003.decrypt(nonce, ct_slice).ok())
-            .or_else(|| cipher_1.decrypt(nonce, ct_slice).ok());
-            match result {
-                Some(pt) => String::from_utf8_lossy(&pt).into_owned(),
-                None => {
-                    if name == "userInfo" || name == "show_user_icon" {
-                        warn!(target: "drission", "认证 cookie {} 解密失败 (raw+1003+1 三密钥都试过)", name);
-                    }
-                    String::new()
+            let iv: [u8; 16] = encrypted_value[3..19].try_into()
+                .map_err(|_| anyhow!("IV 长度异常"))?;
+            let ct = &encrypted_value[19..];
+            if !ct.len().is_multiple_of(16) { continue; }
+            // 手动 AES-128-CBC + PKCS7 unpad (避开 aes crate 的 trait 缺失问题)
+            use aes::cipher::{KeyInit, BlockDecrypt};
+            use aes::cipher::generic_array::GenericArray;
+            let cipher = aes::Aes128::new_from_slice(&raw_key)
+                .map_err(|e| anyhow!("AES key 初始化失败: {e}"))?;
+            let mut prev = iv;
+            let mut out = Vec::with_capacity(ct.len());
+            for chunk in ct.chunks_exact(16) {
+                let mut ga = GenericArray::clone_from_slice(chunk);
+                cipher.decrypt_block(&mut ga);
+                let block: [u8; 16] = ga.into();
+                let mut plain = block;
+                for (o, p) in plain.iter_mut().zip(prev.iter()) {
+                    *o ^= *p;
                 }
+                prev = block;
+                out.extend_from_slice(&plain);
             }
+            // PKCS7 unpad
+            let pad = match out.last() {
+                Some(&b) if (1..=16).contains(&b) => b as usize,
+                _ => continue,
+            };
+            if pad > out.len() { continue; }
+            out.truncate(out.len() - pad);
+            String::from_utf8_lossy(&out).into_owned()
         } else {
             plain_value
         };
@@ -306,7 +304,7 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
     }
 
     if parts.is_empty() {
-        anyhow::bail!("ego-lite 找到 0 个 tulingpyton cookies (解密全失败,可能是 PBKDF2 iter 错或 cookies 已过期)");
+        anyhow::bail!("ego-lite 找到 0 个 tulingpyton cookies (CBC 解密全失败,检查加密算法或过期)");
     }
     info!(target: "drission", "ego-lite 解密出 {} 个 cookies", parts.len());
     Ok(parts.join("; "))
