@@ -211,15 +211,15 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         anyhow::bail!("Keychain 'ego safe storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
     }
 
-    // 3. 派生 AES-128 key (Chromium macOS 标准算法 — 2026-08-01 GitHub chromium-cookies-secure 实测):
-    //    key = PBKDF2-HMAC-SHA1(Keychain_password_utf8, salt=b"saltysalt", iter=1003, dklen=16)
-    //    IV  = b" " * 16 (16 个空格,常量,不嵌入 cookie!)
-    //    cookies v10 = "v10" (3) + ciphertext (AES-128-CBC + PKCS7)
+    // 3. 派生 AES-128 key + 解析 v10 格式
+    //    2026-08-01 Python 实测 (最终正确版):
+    //      key = PBKDF2-HMAC-SHA1(Keychain_pw_utf8, salt=b"saltysalt", iter=1003, dklen=16)
+    //      cookies v10 = "v10" (3) + IV (16 bytes 随机) + ciphertext (AES-128-CBC + PKCS7)
+    //    跳过 v10 prefix 后前 16 字节是 IV,后面才是真正的密文。
     use pbkdf2::pbkdf2_hmac;
     use sha1::Sha1;
     let mut key = [0u8; 16];
     pbkdf2_hmac::<Sha1>(password.as_bytes(), b"saltysalt", 1003, &mut key);
-    let iv: [u8; 16] = [b' '; 16];
     info!(target: "drission", "Keychain 密码: len={} → PBKDF2 key_hex={}",
           password.len(), key.iter().map(|b| format!("{:02x}", b)).collect::<String>());
 
@@ -248,13 +248,15 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
             if expires_unix < now_unix { continue; }
         }
 
-        // 解密 v10 (AES-128-CBC + PKCS7, IV 是常量 16 个空格)
+        // 解密 v10 (AES-128-CBC + PKCS7, IV 在 cookie 里)
         let value: String = if !encrypted_value.is_empty() {
             let total = encrypted_value.len();
-            if total < 3 + 16 || &encrypted_value[0..3] != b"v10" {
+            if total < 3 + 16 + 16 || &encrypted_value[0..3] != b"v10" {
                 continue;
             }
-            let ct = &encrypted_value[3..];
+            let iv: [u8; 16] = encrypted_value[3..19].try_into()
+                .map_err(|_| anyhow!("IV 长度异常"))?;
+            let ct = &encrypted_value[19..];
             if !ct.len().is_multiple_of(16) { continue; }
             use aes::cipher::{KeyInit, BlockDecrypt};
             use aes::cipher::generic_array::GenericArray;
