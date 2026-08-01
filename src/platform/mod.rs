@@ -224,6 +224,29 @@ pub trait PlatformResolver: Send + Sync {
     fn download_strategy(&self) -> crate::types::DownloadStrategy {
         crate::types::DownloadStrategy::YtDlp
     }
+    /// 可选：列出 URL 对应的课程/合集条目（如小鹅通课程目录）。
+    /// 默认返回空 → 沿用单视频流程。
+    async fn list_collection(
+        &self,
+        _url: &str,
+    ) -> Result<Vec<CollectionEntry>, ResolverError> {
+        Ok(vec![])
+    }
+}
+
+/// 单条课程/合集条目（仅稳定字段；m3u8 之类时效性数据按需实时拦截）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionEntry {
+    pub id: String,
+    pub name: String,
+    /// 课节/子课程的直接访问 URL。**对于 l_xxx 直播回放课节,已改写为
+    /// `/p/t_pc/live_pc/pc/l_xxx?product_id=p_xxx&app_id=appssry6rs71641`
+    /// (2026-07-31 ego-browser 实测有效)**;原来的 API jump_url `/v4/course/alive/...`
+    /// 单独访问返"暂无内容",会让下载阶段 get_video_info 拦不到 m3u8。
+    /// 小鹅通课程页主 URL 拼 `?resource_id=l_xxx` 会触发登录跳转,
+    /// 所以下载时要用 jump_url 直接打开课节页拦截 m3u8。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_url: Option<String>,
 }
 
 /// 字幕信息

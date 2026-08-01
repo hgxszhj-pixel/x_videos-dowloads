@@ -120,6 +120,11 @@ cbc = "0.2"
 generic-array = "0.14"
 typenum = "1.17"
 
+# 浏览器自动化(CDP)—— 用于 TulingPython 解析器拦截 m3u8，替换原 Python patchright 子进程。
+# 个人自用：source-available 协议（禁商用），详见 https://github.com/MageGojo/drission-rs/LICENSE
+# crates.io 落后到 0.3.2，必须用 git tag 锁定 v0.5.0。
+drission = { git = "https://github.com/MageGojo/drission-rs", tag = "v0.5.0", default-features = false, features = ["cdp"] }
+
 [dev-dependencies]
 tempfile = "3.10"
 bumpalo = "3.16"

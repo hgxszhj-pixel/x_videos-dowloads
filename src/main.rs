@@ -21,6 +21,7 @@ mod platform;
 mod resolver_chain;
 mod scrapling_client;
 mod scrapling_extractor;
+mod drission_client;
 mod subtitle;
 mod types;
 mod utils;
@@ -101,10 +102,32 @@ fn main() {
 
     // 初始化日志（根据 verbose 参数设置级别）
     let log_level = if cli.verbose { Level::DEBUG } else { Level::INFO };
-    FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .with_target(false)
-        .init();
+    if cli.gui {
+        // GUI 模式:写到文件 (macOS: ~/Library/Application Support/com.xvd.x-video-downloader/x-video-downloader.log)
+        // 用户点击按钮后可 `tail -f` 看实时 trace,排查"卡在分析中"等。
+        let log_path = std::path::PathBuf::from(
+            directories::ProjectDirs::from("com", "xvd", "x-video-downloader")
+                .map(|d| d.data_dir().join("x-video-downloader.log").to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/x-video-downloader.log")),
+        );
+        let _ = std::fs::create_dir_all(log_path.parent().unwrap());
+        let writer = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .unwrap_or_else(|_| std::fs::File::create("/tmp/x-video-downloader.log").unwrap());
+        FmtSubscriber::builder()
+            .with_max_level(log_level)
+            .with_target(false)
+            .with_writer(writer)
+            .init();
+        eprintln!("[GUI 日志] {}", log_path.display());
+    } else {
+        FmtSubscriber::builder()
+            .with_max_level(log_level)
+            .with_target(false)
+            .init();
+    }
 
     // 预初始化共享 HTTP 客户端，避免在 runtime 内触发 once_cell panic
     let _ = crate::http_client::shared();
