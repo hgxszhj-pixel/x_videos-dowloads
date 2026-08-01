@@ -224,6 +224,12 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
     let cipher_1003 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1003));
     let cipher_1 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1));
 
+    // 诊断: 打印 Keychain 密码信息
+    let pw_bytes = password.as_bytes();
+    let pw_hex: String = pw_bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect();
+    info!(target: "drission", "Keychain 密码: len={} head_hex={}... ({})",
+          pw_bytes.len(), pw_hex, if pw_bytes.len() <= 16 { "<=16B 用作 raw key" } else { ">16B 必须派生" });
+
     // 4. 读 SQLite cookies (只关心 vip.tulingpyton.cn 域)
     let conn = Connection::open(&cookies_db)
         .map_err(|e| anyhow!("打开 Cookies SQLite 失败: {e}"))?;
