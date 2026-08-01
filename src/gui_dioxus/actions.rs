@@ -145,7 +145,7 @@ pub(super) fn sync_course_action_to_state(
             }
             Some(Err(captured)) => {
                 let msg = format!("{captured}");
-                let (error_type, suggestion) = if msg.starts_with("🔑") {
+                let (error_type, suggestion) = if msg.starts_with("🔑") || msg.contains("Code:2506") || msg.contains("当前用户不存在") {
                     (
                         "login",
                         "请在小鹅通网站登录账号后，点击“打开登录窗口”复用登录态。",

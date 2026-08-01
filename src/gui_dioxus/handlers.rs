@@ -236,7 +236,8 @@ pub(super) async fn fetch_course_collection_impl(url: &str) -> Result<CourseColl
     match crate::drission_client::is_logged_in(url).await {
         crate::drission_client::LoginStatus::LoggedIn => {}
         crate::drission_client::LoginStatus::SessionExpired => {
-            return Err("登录已过期 (Code:2506 当前用户不存在): 请点击\"打开登录窗口\"扫码重新登录".to_string());
+            // 前缀 🔑 让 actions.rs 的错误分类识别为 login 类型,而不是 course
+            return Err("🔑 登录已过期 (Code:2506 当前用户不存在): 请点击\"打开登录窗口\"扫码重新登录".to_string());
         }
         crate::drission_client::LoginStatus::NotLoggedIn => {
             return Err(ResolverError::AuthenticationRequired.to_string());
