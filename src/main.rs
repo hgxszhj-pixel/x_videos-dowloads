@@ -103,25 +103,34 @@ fn main() {
     // 初始化日志（根据 verbose 参数设置级别）
     let log_level = if cli.verbose { Level::DEBUG } else { Level::INFO };
     if cli.gui {
-        // GUI 模式:写到文件 (macOS: ~/Library/Application Support/com.xvd.x-video-downloader/x-video-downloader.log)
-        // 用户点击按钮后可 `tail -f` 看实时 trace,排查"卡在分析中"等。
-        let log_path = std::path::PathBuf::from(
-            directories::ProjectDirs::from("com", "xvd", "x-video-downloader")
-                .map(|d| d.data_dir().join("x-video-downloader.log").to_path_buf())
-                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/x-video-downloader.log")),
-        );
-        let _ = std::fs::create_dir_all(log_path.parent().unwrap());
-        let writer = std::fs::OpenOptions::new()
+        // GUI 模式:写到 /tmp/x-video-downloader.log (always writable, no permission issues)。
+        // 用户点击按钮后可 `tail -f /tmp/x-video-downloader.log` 看实时 trace,排查"卡在分析中"等。
+        // 2026-08-01 改: 原路径 ~/Library/Application Support/com.xvd.x-video-downloader/ 偶尔
+        // 创建失败(权限/沙箱)且无明显报错,导致 log 完全丢失。/tmp 是 POSIX 标准临时目录,跨平台都稳。
+        let log_path = std::path::PathBuf::from("/tmp/x-video-downloader.log");
+        let file_writer = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&log_path)
-            .unwrap_or_else(|_| std::fs::File::create("/tmp/x-video-downloader.log").unwrap());
-        FmtSubscriber::builder()
-            .with_max_level(log_level)
-            .with_target(false)
-            .with_writer(writer)
-            .init();
-        eprintln!("[GUI 日志] {}", log_path.display());
+            .open(&log_path);
+        match file_writer {
+            Ok(file) => {
+                FmtSubscriber::builder()
+                    .with_max_level(log_level)
+                    .with_target(false)
+                    .with_writer(file)
+                    .init();
+            }
+            Err(e) => {
+                // 文件打不开就回 stderr-only,保证至少有一处能看
+                eprintln!("[GUI 日志] 无法打开 {}: {} — 回退 stderr-only", log_path.display(), e);
+                FmtSubscriber::builder()
+                    .with_max_level(log_level)
+                    .with_target(false)
+                    .with_writer(std::io::stderr)
+                    .init();
+            }
+        }
+        eprintln!("[GUI 日志] tail -f {}", log_path.display());
     } else {
         FmtSubscriber::builder()
             .with_max_level(log_level)
