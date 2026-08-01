@@ -130,7 +130,17 @@ async fn is_logged_in_via_ego_lite() -> LoginStatus {
         .header("Cookie", &cookies)
         .header("Origin", "https://vip.tulingpyton.cn")
         .header("Referer", "https://vip.tulingpyton.cn/")
-        .body(r#"{"type":"pc"}"#)
+        // 请求体 `Modules` 字段名(首字母大写)匹配服务端校验错误信息
+        // `Key: 'GetPublicDataReq.Modules' Error:Field validation for 'Modules' failed on the 'required' tag`,
+        // 即 Go struct 字段名(无 json tag 时的默认序列化)。最小请求:只问 user_info,
+        // 够判断登录态(LoggedIn/SessionExpired/NotLoggedIn),不浪费服务端计算其他模块。
+        //
+        // 2026-08-01 之前这里是 `{"type":"pc"}`,漏 Modules 字段 → 服务端返回
+        // `code:-1` (校验失败) → 函数退化成 NotLoggedIn → 触发 Drission fallback (~30 秒)。
+        // 修好后 ego-lite 路径能直接复用用户已登录的会话,无需启动 headless Chrome。
+        //
+        // 字段名/格式若推测错 → 仍是 code:-1 → 自动 fallback 到 Drission,不会回归。
+        .body(r#"{"type":"pc","Modules":["user_info"]}"#)
         .send()
         .await
     {
@@ -1687,5 +1697,74 @@ mod tests {
         // 如果 result = false 但用户报告已登录,看 dump 的 profile 内容能定位问题
         // (Cookies 不存在 → ego-lite 根本没登录小鹅通;Cookies 存在 → headless Chrome 版本不匹配读不到)
         let _ = result;
+    }
+
+    /// 诊断用:直接打 user_info API,验证 ego-lite 路径新请求体字段名(`Modules`)是否正确。
+    /// 2026-08-01 旧 body `{"type":"pc"}` 服务端返回 `code:-1` (Field validation for 'Modules' failed)。
+    /// 修成 `{"type":"pc","Modules":["user_info"]}` 后:
+    ///   - 若 200 + code:0 → user_info 模块成功(可能 user_info 为 null 表示未登录,也可能返回用户数据)
+    ///   - 若 200 + code:-1 仍报 Modules 错误 → 字段名/格式仍不对,需再调整
+    ///   - 若 200 + Code:2506 → 字段名对了但 cookie 失效,符合预期
+    ///
+    /// 用法:
+    ///   cargo test diag_ego_lite_modules_body -- --ignored --nocapture
+    /// (需要 ego-lite 已登录过小鹅通,且已授权 Terminal 访问 Keychain)
+    #[tokio::test]
+    #[ignore = "诊断用:需 ego-lite 已登录态 + Keychain 访问,会联网"]
+    async fn diag_ego_lite_modules_body() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        // 取 ego-lite cookies(复用 production 代码,保证字段名/解密算法一致)
+        let cookies = match super::decrypt_ego_lite_cookies_for_vip() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("❌ 解密 ego-lite cookies 失败: {e}");
+                return;
+            }
+        };
+        println!("✓ 解密出 {} 字节 cookies", cookies.len());
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        // 测两种候选 body,用户从输出能立刻看出哪个对
+        for (label, body) in &[
+            ("Modules(大写 M, 数组)", r#"{"type":"pc","Modules":["user_info"]}"#),
+            ("modules(小写 m, 数组)", r#"{"type":"pc","modules":["user_info"]}"#),
+        ] {
+            println!("\n========== 试 body: {label} ==========");
+            println!("body: {body}");
+            match client
+                .post("https://vip.tulingpyton.cn/xe.micro_page.common.public.data.get/1.0.0")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Cookie", &cookies)
+                .header("Origin", "https://vip.tulingpyton.cn")
+                .header("Referer", "https://vip.tulingpyton.cn/")
+                .body(*body)
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    let preview: String = text.chars().take(400).collect();
+                    println!("status: {status}");
+                    println!("body 前 400: {preview}");
+                    if text.contains("Field validation for 'Modules'") {
+                        println!("❌ 此 body 仍报 Modules 校验失败 → 字段名不对");
+                    } else if text.contains("Code:2506") || text.contains("当前用户不存在") {
+                        println!("⚠️  body 字段名对了,但 cookie 已失效 (Code:2506) — 重新扫码后即可");
+                    } else if text.contains("\"user_info\"") || text.contains("user_id") {
+                        println!("✅  body 字段名对了,且服务端返回了 user_info 数据!");
+                    } else {
+                        println!("?  未知响应(可能正确,需看 body 内容判断)");
+                    }
+                }
+                Err(e) => eprintln!("❌ 请求失败: {e}"),
+            }
+        }
     }
 }
