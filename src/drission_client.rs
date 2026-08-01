@@ -55,27 +55,18 @@ impl Default for DrissionConfig {
 /// 因此优先复用系统浏览器的 profile;只有两者都没装 / 都被锁时,才回退到自建目录
 /// (此时用户必须先在 GUI「打开登录窗口」扫码登录)。
 pub fn default_profile_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        let app_support = home.join("Library").join("Application Support");
-        // 优先级:ego-lite → Chrome → 自建。
-        // ego-lite 真实路径是 `<AppSupport>/Citro Labs/ego lite` (父目录名是发行公司
-        // Citro Labs,不是 Bundle ID com.citrolabs.ego.lite)。后者是手写假设,实测
-        // 2026-08-01 用户机器上不存在,导致 fallback 到 Chrome profile。
-        // 注:**不**检查 SingletonLock,因为 Chrome crash / 强制 kill 后
-        // 残留符号链接指向死 PID 很常见,会让 Chrome profile 永远被跳过。
-        // 真在用 Chrome 时 Drission 启动会报 "profile locked" 错误,用户能看到。
-        for candidate in [
-            "Citro Labs/ego lite",      // 真实路径(2026-08-01 实测)
-            "com.citrolabs.ego.lite",   // 兼容老路径
-            "Google/Chrome",
-        ] {
-            let p = app_support.join(candidate);
-            if p.exists() {
-                return p;
-            }
-        }
-    }
+    // 2026-08-01 重构: 放弃复用系统浏览器 (ego-lite / Chrome) 的 profile,
+    // 改用 Drission 自己的项目自建 profile (`tulingpyton_profile/`)。
+    //
+    // 复用系统浏览器 profile 的根本问题: macOS Chrome 用 Keychain entry 加密
+    // cookies (entry 名 = "<ProductName> Safe Storage")。ego-lite 是 Chromium
+    // fork, ProductName = "ego lite", Keychain entry = "ego lite Safe Storage"。
+    // Drission 内置 Chromium 的 ProductName 可能是 "Chromium", Keychain entry
+    // 不同 → 解密 cookies 失败 → 服务端收到无效 cookie → Code:2506 "当前用户不存在"。
+    // 日志验证 (2026-08-01): 三个 ego-lite profile 尝试都返 Code:2506。
+    //
+    // 自建 profile 优势: Drission 启动 headed (登录) 和 headless (检测) 用同一份
+    // profile, 同一套 encryption key, cookie 必然可读。
     directories::ProjectDirs::from("com", "xvd", "x-video-downloader")
         .map(|d| d.cache_dir().join("tulingpyton_profile"))
         .unwrap_or_else(|| PathBuf::from("./tulingpyton_profile"))
@@ -261,81 +252,65 @@ fn log_candidate_profiles() {
 /// 启动浏览器让用户登录小鹅通;180s 后仅关闭 tulingpyton 相关标签页。
 /// GUI 在捕获 "需要登录" 错误后调用此函数。
 ///
-/// 优先级:ego-lite (项目 marketplace 推荐) → Google Chrome → 系统 `open <url>` 默认浏览器。
-/// macOS 用 `open -a <name> <url>`;非 macOS 走 PATH 默认 `xdg-open` / `open`。
-/// 关闭阶段用 AppleScript `tell application "<name>" to close (first window whose URL contains "tulingpyton.cn")`
-/// 精确匹配 tulingpyton 标签,不打扰用户其他窗口。
+/// 2026-08-01 重构: 不再用系统浏览器 (ego-lite / Chrome) 弹登录窗口。原因是
+/// 跨浏览器 cookie 加密密钥不匹配 (见 `default_profile_dir` 注释)。
+/// 改为启动 Drission 自己的 headed Chrome 指向项目自建 profile ——
+/// 用户扫码登录 → cookies 用 Drission 的 Keychain entry 加密 → 写到自建 profile
+/// → is_logged_in 用同一 profile headless 检测 → 同 key 解密 → 成功。
 pub async fn open_login_window(url: &str) -> Result<()> {
-    let browser = detect_login_browser();
-    info!("打开 {} 让用户登录小鹅通: {}", browser.label(), url);
-    launch_browser(browser, url)?;
-    tokio::time::sleep(std::time::Duration::from_secs(180)).await;
-    let _ = close_browser_tuling_tab(browser);
-    Ok(())
-}
+    use drission::cdp::{ChromiumBrowser, ChromiumOptions};
+    use std::time::Duration;
 
-/// 浏览器枚举 + AppleScript 友好名
-#[derive(Debug, Clone, Copy)]
-enum LoginBrowser {
-    EgoLite,
-    Chrome,
-}
-
-impl LoginBrowser {
-    fn label(self) -> &'static str {
-        match self {
-            LoginBrowser::EgoLite => "ego-lite",
-            LoginBrowser::Chrome => "Google Chrome",
-        }
-    }
-
-    fn app_name(self) -> &'static str {
-        match self {
-            LoginBrowser::EgoLite => "ego lite",
-            LoginBrowser::Chrome => "Google Chrome",
-        }
-    }
-}
-
-/// macOS 检测:ego-lite → Chrome → 默认 (走系统 `open <url>`);
-/// 非 macOS 一律返回 Chrome (依赖 PATH 上的 `open` / `xdg-open`)。
-fn detect_login_browser() -> LoginBrowser {
-    #[cfg(target_os = "macos")]
-    {
-        if std::path::Path::new("/Applications/ego lite.app").exists() {
-            return LoginBrowser::EgoLite;
-        }
-        if std::path::Path::new("/Applications/Google Chrome.app").exists() {
-            return LoginBrowser::Chrome;
-        }
-    }
-    LoginBrowser::Chrome
-}
-
-fn launch_browser(browser: LoginBrowser, url: &str) -> Result<()> {
-    let mut cmd = std::process::Command::new("open");
-    cmd.arg(url);
-    #[cfg(target_os = "macos")]
-    cmd.arg("-a").arg(browser.app_name());
-    let status = cmd
-        .status()
-        .map_err(|e| anyhow!("启动 {} 失败: {e}", browser.label()))?;
-    if !status.success() {
-        return Err(anyhow!("open {} 返回非 0: {status:?}", browser.label()));
-    }
-    Ok(())
-}
-
-fn close_browser_tuling_tab(browser: LoginBrowser) -> Result<()> {
-    let script = format!(
-        r#"tell application "{}" to close (first window whose URL contains "tulingpyton.cn")"#,
-        browser.app_name()
+    let profile = default_profile_dir();
+    info!(
+        "打开 Drission headed Chrome 让用户登录小鹅通 (profile={:?})",
+        profile
     );
-    std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .status()
-        .map_err(|e| anyhow!("osascript 关闭 {} 标签失败: {e}", browser.label()))?;
+
+    let opts = ChromiumOptions::new()
+        .headless(false)  // 关键: headed 模式,用户能看到窗口能扫码
+        .user_data_dir(profile)
+        .window_size(1280, 800)
+        .add_arg("--no-first-run");
+    let browser = ChromiumBrowser::launch(opts).await
+        .map_err(|e| anyhow!("Drission headed 启动失败: {e}"))?;
+    let tab = browser.new_tab(Some(url)).await
+        .map_err(|e| anyhow!("new_tab 失败: {e}"))?;
+
+    // 轮询检测 user_info: 用户登录成功后立刻返 (不必等满 180s)
+    let listen = tab.listen();
+    let _ = listen.start(&["common.public.data.get"]).await;
+    let _ = tab.get(url).await;
+
+    let mut logged_in = false;
+    for _ in 0..36 {
+        // 最多 180s, 每 5s 检查一次
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let packets = listen
+            .wait_count(50, Some(Duration::from_millis(500)))
+            .await
+            .unwrap_or_default();
+        for p in &packets {
+            if let Some(j) = p.json() {
+                if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
+                    if !ui.is_null() && ui.get("user_id").is_some() {
+                        info!("检测到登录成功 (user_id={:?})", ui.get("user_id"));
+                        logged_in = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if logged_in { break; }
+    }
+    let _ = listen.stop().await;
+    let _ = browser.quit().await;
+
+    if logged_in {
+        info!("用户登录完成,headed 浏览器已关闭");
+    } else {
+        warn!("180s 内未检测到登录成功,headed 浏览器已关闭 (用户可能中途取消)");
+    }
     Ok(())
 }
 
