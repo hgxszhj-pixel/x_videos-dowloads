@@ -216,9 +216,13 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         anyhow::bail!("Keychain 'ego safe storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
     }
 
-    // 3. PBKDF2-HMAC-SHA1 派生 AES-128 密钥 (Chrome 80+ macOS 标准: salt="saltysalt", iter=1003)
-    let key_bytes: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1003);
-    let cipher = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_bytes));
+    // 3. PBKDF2-HMAC-SHA1 派生 AES-128 密钥
+    //    Chromium macOS 在不同版本用不同 iteration:Chrome 80-90 用 1003,
+    //    Chrome 91+ 部分用 1。ego-lite 实测可能是 1003 或 1。两个都试,看哪个解密成功。
+    let key_1003: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1003);
+    let key_1: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1);
+    let cipher_1003 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1003));
+    let cipher_1 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1));
 
     // 4. 读 SQLite cookies (只关心 vip.tulingpyton.cn 域)
     let conn = Connection::open(&cookies_db)
@@ -259,13 +263,22 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
             let nonce = Nonce::from_slice(nonce_slice);
             let ct_end = total - 16;
             let ct_slice: &[u8] = &encrypted_value[3..ct_end];
-            match cipher.decrypt(nonce, ct_slice) {
-                Ok(pt) => String::from_utf8_lossy(&pt).into_owned(),
-                Err(_) => continue,
-            }
+            // 双密钥 fallback:Chrome 80-90 用 iter=1003,Chrome 91+ 用 iter=1
+            cipher_1003.decrypt(nonce, ct_slice)
+                .or_else(|_| cipher_1.decrypt(nonce, ct_slice))
+                .map(|pt| String::from_utf8_lossy(&pt).into_owned())
+                .unwrap_or_else(|_| {
+                    if name == "userInfo" || name == "show_user_icon" {
+                        warn!(target: "drission", "认证 cookie {} 解密失败 (双密钥都试过)", name);
+                    }
+                    String::new()
+                })
         } else {
             plain_value
         };
+        if value.is_empty() {
+            continue;
+        }
 
         if !value.is_empty() && !name.is_empty() {
             parts.push(format!("{name}={value}"));
@@ -273,8 +286,9 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
     }
 
     if parts.is_empty() {
-        anyhow::bail!("ego-lite 没找到任何 tulingpyton cookies (用户未在该域登录)");
+        anyhow::bail!("ego-lite 找到 0 个 tulingpyton cookies (解密全失败,可能是 PBKDF2 iter 错或 cookies 已过期)");
     }
+    info!(target: "drission", "ego-lite 解密出 {} 个 cookies", parts.len());
     Ok(parts.join("; "))
 }
 
