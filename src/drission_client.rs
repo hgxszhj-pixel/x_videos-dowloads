@@ -218,7 +218,7 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
 
     // 3. PBKDF2-HMAC-SHA1 派生 AES-128 密钥 (Chrome 80+ macOS 标准: salt="saltysalt", iter=1003)
     let key_bytes: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1003);
-    let cipher = Aes128Gcm::new(&aes_gcm::Key::<Aes128Gcm>::from_slice(&key_bytes));
+    let cipher = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_bytes));
 
     // 4. 读 SQLite cookies (只关心 vip.tulingpyton.cn 域)
     let conn = Connection::open(&cookies_db)
