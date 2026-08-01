@@ -2,7 +2,7 @@
 
 use super::theme::AppTheme;
 use dioxus_stores::Store;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::Arc;
 
 /// 下载历史记录项
@@ -11,7 +11,6 @@ pub(super) struct HistoryItem {
     pub(super) title: String,
     pub(super) uploader: String,
     pub(super) duration: String,
-    pub(super) path: String,
     pub(super) completed_at: String,
     pub(super) url: String,
 }
@@ -20,11 +19,11 @@ pub(super) struct HistoryItem {
 #[derive(Default, Clone, Store)]
 pub(super) struct VideoInfoDisplay {
     pub(super) url: String,
-    pub(super) original_url: Option<String>,  // 原始 URL（用于 yt-dlp 格式选择）
+    pub(super) original_url: Option<String>, // 原始 URL（用于 yt-dlp 格式选择）
     pub(super) title: String,
     pub(super) uploader: String,
     pub(super) duration: String,
-    pub(super) formats: Vec<VideoFormatDisplay>,  // 存储可选择的格式列表
+    pub(super) formats: Vec<VideoFormatDisplay>, // 存储可选择的格式列表
     pub(super) download_strategy: crate::types::DownloadStrategy,
 }
 
@@ -72,7 +71,6 @@ pub(super) fn format_speed(bytes_per_sec: u64) -> String {
 pub(super) struct AppState {
     pub(super) url: String,
     pub(super) status_message: String,
-    pub(super) error_message: String,
     pub(super) is_fetching: bool,
     pub(super) is_downloading: bool,
     pub(super) has_video_info: bool,
@@ -86,13 +84,14 @@ pub(super) struct AppState {
     pub(super) settings_ms_token: String,
     pub(super) settings_cookie_file: String,
     pub(super) settings_concurrent: u32,
-    pub(super) is_batch_mode: bool,
     pub(super) batch_state: BatchState,
     pub(super) batch_video_state: BatchVideoState,
+    pub(super) course_collection_state: CourseCollectionState,
     pub(super) theme: AppTheme,
     pub(super) history: Vec<HistoryItem>,
     pub(super) show_history: bool,
     pub(super) selected_format_id: Option<String>,
+    pub(super) is_logging_in: bool,
 }
 
 impl Default for AppState {
@@ -100,7 +99,6 @@ impl Default for AppState {
         Self {
             url: String::new(),
             status_message: "Ready".to_string(),
-            error_message: String::new(),
             is_fetching: false,
             is_downloading: false,
             has_video_info: false,
@@ -114,13 +112,14 @@ impl Default for AppState {
             settings_ms_token: String::new(),
             settings_cookie_file: String::new(),
             settings_concurrent: 3,
-            is_batch_mode: false,
             batch_state: BatchState::default(),
             batch_video_state: BatchVideoState::default(),
+            course_collection_state: CourseCollectionState::default(),
             theme: AppTheme::default(),
             history: Vec::new(),
             show_history: false,
             selected_format_id: None,
+            is_logging_in: false,
         }
     }
 }
@@ -128,9 +127,9 @@ impl Default for AppState {
 /// 错误信息结构
 #[derive(Default, Clone, Store)]
 pub(super) struct ErrorDisplay {
-    pub(super) error_type: String,   // "network" | "auth" | "parse" | "download" | "unknown"
-    pub(super) message: String,       // 具体错误信息
-    pub(super) suggestion: String,    // 解决建议
+    pub(super) error_type: String, // "network" | "auth" | "login" | "course" | "parse" | "download" | "unknown"
+    pub(super) message: String,    // 具体错误信息
+    pub(super) suggestion: String, // 解决建议
 }
 
 /// 从结构化 DownloadError 转换为 GUI ErrorDisplay
@@ -157,7 +156,11 @@ impl From<crate::types::DownloadError> for ErrorDisplay {
 
 /// 通用错误转 ErrorDisplay（带类型提示）
 impl ErrorDisplay {
-    pub(super) fn new(error_type: &str, message: impl Into<String>, suggestion: impl Into<String>) -> Self {
+    pub(super) fn new(
+        error_type: &str,
+        message: impl Into<String>,
+        suggestion: impl Into<String>,
+    ) -> Self {
         Self {
             error_type: error_type.to_string(),
             message: message.into(),
@@ -170,9 +173,24 @@ impl ErrorDisplay {
         match self.error_type.as_str() {
             "network" => "🌐",
             "auth" => "🔐",
+            "login" => "🔑",
+            "course" => "📚",
             "parse" => "🔍",
             "download" => "📥",
             _ => "⚠️",
+        }
+    }
+
+    /// 根据错误类型返回类型标签(用于面板 heading,替代硬编码 "下载失败")
+    pub(super) fn label(&self) -> &'static str {
+        match self.error_type.as_str() {
+            "network" => "网络错误",
+            "auth" => "认证失败",
+            "login" => "需要登录",
+            "course" => "课程解析失败",
+            "parse" => "URL 解析失败",
+            "download" => "下载失败",
+            _ => "发生错误",
         }
     }
 }
@@ -180,15 +198,11 @@ impl ErrorDisplay {
 /// 单个批量下载项的状态
 #[derive(Clone, Store)]
 pub(super) struct BatchItemState {
-    pub(super) url: String,
-    pub(super) title: String,
-    pub(super) status: String,        // "pending" | "downloading" | "completed" | "failed" | "cancelled"
-    pub(super) progress: f32,         // 0.0 - 1.0
+    pub(super) status: String, // "pending" | "resolving" | "downloading" | "completed" | "failed" | "cancelled"
+    pub(super) progress: f32,  // 0.0 - 1.0
     pub(super) speed: String,
     pub(super) visible: bool,
-    // 原子进度追踪（跨 task 共享）
-    pub(super) progress_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>, // 0-10000 表示 0.00%-100.00%
-    pub(super) speed_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>, // 字节/秒
+    pub(super) speed_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,    // 字节/秒
     // 单项取消标志（点击行末 ✕ 触发 store(true)）
     pub(super) cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
@@ -197,7 +211,7 @@ pub(super) struct BatchItemState {
 #[derive(Default, Clone, Store)]
 pub(crate) struct BatchState {
     pub(super) visible: bool,
-    pub(super) progress: f32,         // 总体进度
+    pub(super) progress: f32, // 总体进度
     pub(super) status: String,
     pub(super) items: Vec<BatchItemState>,
     pub(super) is_downloading: bool,
@@ -208,6 +222,38 @@ pub(crate) struct BatchState {
 pub(crate) struct BatchVideoState {
     pub(super) visible: bool,
     pub(super) items: Vec<VideoInfoDisplay>,
+}
+
+/// 课程池单条课节显示
+#[derive(Default, Clone, Store)]
+pub(super) struct CourseItemDisplay {
+    pub(super) id: String,
+    pub(super) index: u32, // 1-based 序号
+    pub(super) title: String,
+    pub(super) page_url: String, // 课节页 URL（用于实时 CDP 解析）
+    /// 课节真实直接访问 URL(从 list_collection 的 jump_url 透传)
+    /// 优先用这个而非 page_url+resource_id (会触发登录跳转)
+    pub(super) jump_url: Option<String>,
+    pub(super) selected: bool,   // 默认全选
+    pub(super) status: String, // "pending" | "resolving" | "downloading" | "completed" | "failed" | "cancelled"
+    pub(super) progress: f32,
+    #[allow(dead_code)] // 同 batch 端 speed,poller M6 已重构成 per-item 写入
+    pub(super) speed: String,
+    #[allow(dead_code)] // poller 已用,但 BatchItemState 内的 atomic 槽字段未来可能直接读
+    pub(super) progress_arc: Option<Arc<AtomicU32>>,
+    #[allow(dead_code)] // 同上,保留供未来 per-item 进度直读
+    pub(super) speed_arc: Option<Arc<AtomicU64>>,
+    #[allow(dead_code)] // 课程池取消由 CourseItemSlot 内部控制,字段保留供未来直接读
+    pub(super) cancel_flag: Option<Arc<AtomicBool>>,
+    /// 进度槽（跨 task 共享，use_effect 轮询把原子值写回 progress/status）
+    pub(super) slot: Option<Arc<super::handlers::CourseItemSlot>>,
+}
+
+/// 课程池整体状态
+#[derive(Default, Clone, Store)]
+pub(crate) struct CourseCollectionState {
+    pub(super) visible: bool,
+    pub(super) items: Vec<CourseItemDisplay>,
     pub(super) status: String,
 }
 
@@ -218,4 +264,39 @@ pub(super) enum FetchResult {
     Single(VideoInfoDisplay),
     /// 批量视频信息列表
     Batch(Vec<VideoInfoDisplay>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ErrorDisplay::label 必须按 error_type 返回中文类型标签,未知类型回退 "发生错误"
+    /// (避免 components.rs 硬编码 "下载失败" 让 login/course/parse 等错误误标)。
+    #[test]
+    fn test_error_display_label_covers_all_known_types() {
+        assert_eq!(ErrorDisplay::new("network", "", "").label(), "网络错误");
+        assert_eq!(ErrorDisplay::new("auth", "", "").label(), "认证失败");
+        assert_eq!(ErrorDisplay::new("login", "", "").label(), "需要登录");
+        assert_eq!(ErrorDisplay::new("course", "", "").label(), "课程解析失败");
+        assert_eq!(ErrorDisplay::new("parse", "", "").label(), "URL 解析失败");
+        assert_eq!(ErrorDisplay::new("download", "", "").label(), "下载失败");
+    }
+
+    #[test]
+    fn test_error_display_label_falls_back_for_unknown_type() {
+        // 未来新增 error_type 不会被 panic;icon() 同样回退 ⚠️,label 同样回退 "发生错误"。
+        assert_eq!(ErrorDisplay::new("future_thing", "", "").label(), "发生错误");
+        assert_eq!(ErrorDisplay::new("", "", "").label(), "发生错误");
+    }
+
+    #[test]
+    fn test_error_display_icon_and_label_are_consistent() {
+        // icon() 和 label() 对同一 error_type 必须同时命中已知分支(防止 6 个值改了 label 漏改 icon)。
+        let cases = ["network", "auth", "login", "course", "parse", "download"];
+        for t in cases {
+            let e = ErrorDisplay::new(t, "", "");
+            assert_ne!(e.icon(), "⚠️", "{t} should have a specific icon, not fallback");
+            assert_ne!(e.label(), "发生错误", "{t} should have a specific label, not fallback");
+        }
+    }
 }

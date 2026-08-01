@@ -543,16 +543,12 @@ pub(super) fn AppComponent() -> Element {
                             let cancel_flags: Vec<Option<Arc<AtomicBool>>> = url_list.iter().map(|_| Some(Arc::new(AtomicBool::new(false)))).collect();
 
                             // 初始化批量状态（关联 progress_arc + cancel_flag）
-                            let batch_items: Vec<BatchItemState> = url_list.iter().enumerate().map(|(idx, url)| {
+                            let batch_items: Vec<BatchItemState> = url_list.iter().enumerate().map(|(idx, _url)| {
                                 BatchItemState {
-                                    url: url.clone(),
-                                    title: "视频".to_string(),
                                     status: "pending".to_string(),
                                     progress: 0.0,
                                     speed: String::new(),
                                     visible: true,
-                                    selected: true,
-                                    progress_arc: progress_arcs[idx].clone(),
                                     speed_arc: speed_arcs[idx].clone(),
                                     cancel_flag: cancel_flags[idx].clone(),
                                 }

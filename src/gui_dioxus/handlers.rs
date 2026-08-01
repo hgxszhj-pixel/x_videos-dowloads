@@ -1,7 +1,7 @@
 //! 业务逻辑：视频信息解析、单/批量下载实现
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tracing::info;
@@ -9,13 +9,17 @@ use tracing::info;
 use crate::config::AppConfig;
 use crate::downloader::VideoDownloader;
 use crate::fxtwitter::FxTwitterResolver;
+use crate::types::sanitize_filename;
 use crate::platform::{
-    BilibiliResolver, DouYinResolver, NnyyResolver, ResolverRegistry, TikTokResolver,
-    YouTubeResolver,
+    BilibiliResolver, DouYinResolver, NnyyResolver, PlatformResolver, ResolverRegistry,
+    TikTokResolver, TulingPythonResolver, YouTubeResolver,
 };
 use crate::types::{DownloadProgress, DownloadRequest};
 
-use super::types::{format_file_size, ErrorDisplay, VideoFormatDisplay, VideoInfoDisplay};
+use super::types::{
+    format_file_size, CourseCollectionState, CourseItemDisplay, ErrorDisplay, VideoFormatDisplay,
+    VideoInfoDisplay,
+};
 
 /// 同步下载 - 使用 VideoDownloader
 #[allow(clippy::too_many_arguments)]
@@ -82,7 +86,7 @@ pub(super) async fn start_download_impl(
         }) as ProgressCallback
     });
 
-    let downloader = VideoDownloader::new().map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查下载器初始化"))?;
+    let mut downloader = VideoDownloader::new().map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查下载器初始化"))?;
     downloader.download(&request, callback).await
         .map_err(|e| {
             // 尝试 downcast 到结构化 DownloadError，否则 fallback
@@ -132,11 +136,23 @@ pub(super) async fn batch_download_impl(
     let total = handles.len();
 
     for handle in handles {
-        if let Ok(result) = handle.await {
-            completed += 1;
-            let (url, _success, status, _progress) = result;
-            // 更新状态（这里简化处理，实际需要通过状态管理）
-            info!("批量下载进度: {}/{} - {} - {}", completed, total, url, status);
+        match handle.await {
+            Ok(result) => {
+                completed += 1;
+                let (url, _success, status, _progress) = result;
+                // 更新状态（这里简化处理，实际需要通过状态管理）
+                info!("批量下载进度: {}/{} - {} - {}", completed, total, url, status);
+            }
+            Err(join_err) => {
+                // spawn task panic/cancel 不再静默:记 warning,completed 计入但状态标 failed
+                tracing::warn!(
+                    "批量下载 task join 失败 (panic/cancel): {} - {}/{}",
+                    join_err,
+                    completed + 1,
+                    total
+                );
+                completed += 1;
+            }
         }
     }
 
@@ -166,6 +182,9 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
     registry.register(BilibiliResolver::new());
     registry.register(YouTubeResolver::new()); // youtube.com
     registry.register(NnyyResolver::new()); // nnyy.in
+    if let Ok(tp) = TulingPythonResolver::new() {
+        registry.register(tp); // vip.tulingpyton.cn / tulingpyton.cn（含课程池 list_collection）
+    }
     // 其他平台使用默认的 YtDlpResolver
 
     // 使用 try_resolve_all 尝试所有解析器
@@ -195,4 +214,276 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
         }
         Err(e) => Err(format!("Failed to fetch video info: {}", e)),
     }
+}
+
+/// 从课程页 URL 拉取课程目录。仅供具备 list_collection 的解析器使用
+/// （目前只有 `TulingPythonResolver`），其他平台返回 `Err` 让上层走单视频流程。
+pub(super) async fn fetch_course_collection_impl(url: &str) -> Result<CourseCollectionState, String> {
+    use crate::platform::ResolverError;
+    let mut registry = ResolverRegistry::new();
+    if let Ok(tp) = TulingPythonResolver::new() {
+        registry.register(tp);
+    }
+    let resolver = registry.select_resolver(url);
+    if resolver.platform() != crate::history::Platform::TulingPython {
+        return Err(format!("当前平台 ({:?}) 不支持课程池", resolver.platform()));
+    }
+    // 登录态预检：未登录直接提示用户去打开登录窗口
+    if !crate::drission_client::is_logged_in("https://vip.tulingpyton.cn").await {
+        return Err(ResolverError::AuthenticationRequired.to_string());
+    }
+    let entries = resolver
+        .list_collection(url)
+        .await
+        .map_err(|e| match e {
+            ResolverError::AuthenticationRequired => {
+                "需要登录：请点击“打开登录窗口”扫码/账号登录".to_string()
+            }
+            other => format!("课程目录解析失败：{other}"),
+        })?;
+    if entries.is_empty() {
+        return Err("未识别到课程条目，已回退到单视频流程".into());
+    }
+    let items: Vec<CourseItemDisplay> = entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, e)| CourseItemDisplay {
+            id: e.id,
+            index: (i + 1) as u32,
+            title: e.name,
+            page_url: url.to_string(),
+            jump_url: e.jump_url,
+            selected: true,
+            status: "pending".into(),
+            progress: 0.0,
+            speed: String::new(),
+            progress_arc: None,
+            speed_arc: None,
+            cancel_flag: None,
+            slot: None,
+        })
+        .collect();
+    let total = items.len();
+    Ok(CourseCollectionState {
+        visible: true,
+        items,
+        status: format!("已识别 {total} 个课节"),
+    })
+}
+
+/// 打开 headed 浏览器让用户登录小鹅通账号；180s 后自动关闭。
+/// GUI 在捕获 "需要登录" 错误后,或用户主动点按钮时调用此函数。
+/// `target_url` 是用户在主输入框填的视频/课程页 URL(SPA 会自动跳到登录页,
+/// 登录后回跳),为空则回退到小鹅通首页。
+pub(super) async fn open_tuling_login(target_url: &str) -> anyhow::Result<()> {
+    let url = if target_url.trim().is_empty() {
+        "https://vip.tulingpyton.cn"
+    } else {
+        target_url
+    };
+    crate::drission_client::open_login_window(url).await
+}
+
+/// 课程池串行解析 + 并发下载：
+/// - 课节页 CDP 解析必须串行（共享一个浏览器 profile，避免锁冲突）；
+/// - 解析完成或失败后，把 m3u8 交给现有 HLS 下载器，按 settings_concurrent 并发。
+///
+/// 返回每项最终状态 (id, status) 供调用方写回 UI。
+/// 单条课节下载进度槽（跨 task 共享，GUI 端 use_effect 轮询拉取）
+#[derive(Default)]
+pub struct CourseItemSlot {
+    pub progress: AtomicU32, // 0-10000 表示 0.00%-100.00%
+    pub status: AtomicU8,    // 0=pending 1=resolving 2=downloading 3=completed 4=failed 5=skipped
+}
+
+impl CourseItemSlot {
+    pub fn set_status(&self, s: &str) {
+        let v = match s {
+            "resolving" => 1,
+            "downloading" => 2,
+            "completed" => 3,
+            "failed" => 4,
+            "skipped" => 5,
+            _ => 0,
+        };
+        self.status.store(v, Ordering::Relaxed);
+    }
+}
+
+pub(super) async fn course_download_pool_impl(
+    state: CourseCollectionState,
+    slots: Vec<Arc<CourseItemSlot>>,
+) -> Vec<(String, String)> {
+    // 第一步：串行解析所有课节（CDP 同一 profile，必须串行）
+    let (results, resolved) = resolve_items_serially(&state, &slots).await;
+    // 第二步：并发下载已解析的 m3u8（HLS 独立任务，互不依赖）
+    let dl_results = download_resolved_concurrently(&state, &slots, &resolved).await;
+    let mut all = results;
+    all.extend(dl_results);
+    all
+}
+
+/// 串行解析每个课节：检查登录态 → 调 Drission → 翻译错误。
+/// 返回：每项的 (id, status) 临时结果 + 已成功解析的 m3u8 列表。
+async fn resolve_items_serially(
+    state: &CourseCollectionState,
+    slots: &[Arc<CourseItemSlot>],
+) -> (Vec<(String, String)>, Vec<Option<String>>) {
+    use crate::platform::TulingPythonResolver;
+    let total = state.items.len();
+    let mut results: Vec<(String, String)> = Vec::with_capacity(total);
+    let mut resolved: Vec<Option<String>> = vec![None; total];
+
+    for (i, item) in state.items.iter().enumerate() {
+        let slot = slots.get(i).cloned();
+        if !item.selected {
+            results.push((item.id.clone(), "skipped".into()));
+            if let Some(s) = slot { s.set_status("skipped"); }
+            continue;
+        }
+        if let Some(s) = slot.as_ref() { s.set_status("resolving"); }
+        // 登录态已在 fetch_course_collection_impl 入口预检；每条课节复用同一 session。
+        // 单条课节页若 m3u8 未拦截到（CatCatch 提示），由 translate_resolve_error 归类为“需要登录”。
+        // 优先用 item.jump_url(从 list_collection 透传),否则 fallback 到 page_url+resource_id
+        let session_url = item
+            .jump_url
+            .clone()
+            .unwrap_or_else(|| build_session_url(&item.page_url, &item.id));
+        let resolver = match TulingPythonResolver::new() {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("failed: TulingPythonResolver 初始化失败 ({e})");
+                results.push((item.id.clone(), msg));
+                if let Some(s) = slot.as_ref() { s.set_status("failed"); }
+                continue;
+            }
+        };
+        match resolver.get_video_info(&session_url).await {
+            Ok(info) => {
+                resolved[i] = Some(info.url);
+                if let Some(s) = slot.as_ref() { s.set_status("downloading"); }
+            }
+            Err(e) => {
+                let norm = translate_resolve_error(&e);
+                results.push((item.id.clone(), norm));
+                if let Some(s) = slot.as_ref() { s.set_status("failed"); }
+            }
+        }
+    }
+    (results, resolved)
+}
+
+/// 把课节页 URL 拼成课节播放页（追加 resource_id=xxx）。
+fn build_session_url(page_url: &str, id: &str) -> String {
+    if page_url.contains("resource_id=") {
+        return page_url.to_string();
+    }
+    let sep = if page_url.contains('?') { '&' } else { '?' };
+    format!("{page_url}{sep}resource_id={id}")
+}
+
+/// 把解析阶段错误归类（CatCatch 提示即登录缺失）。
+fn translate_resolve_error(e: &crate::platform::ResolverError) -> String {
+    let msg = e.to_string();
+    if msg.contains("CatCatch") || msg.contains("需要用 CatCatch") {
+        "failed: 需要登录（m3u8 未拦截到）".to_string()
+    } else {
+        format!("failed: {msg}")
+    }
+}
+
+/// 并发下载已解析的 m3u8：受信号量控制；每项独立 task，原子进度回写。
+async fn download_resolved_concurrently(
+    state: &CourseCollectionState,
+    slots: &[Arc<CourseItemSlot>],
+    resolved: &[Option<String>],
+) -> Vec<(String, String)> {
+    let concurrency = AppConfig::load()
+        .map(|c| c.concurrent_downloads.max(1))
+        .unwrap_or(3);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut handles = Vec::with_capacity(state.items.len());
+
+    for (i, item) in state.items.iter().enumerate() {
+        let Some(m3u8) = resolved[i].clone() else { continue };
+        let title = item.title.clone();
+        let id = item.id.clone();
+        let slot = slots.get(i).cloned();
+        let progress_cb: Arc<dyn Fn(crate::types::DownloadProgress) + Send + Sync> =
+            Arc::new(move |dp: crate::types::DownloadProgress| {
+                if let Some(s) = slot.as_ref() {
+                    s.progress
+                        .store((dp.percent * 10000.0) as u32, Ordering::Relaxed);
+                }
+            });
+        let slot_for_done = slots.get(i).cloned();
+        let semaphore = semaphore.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await;
+            match download_one(&id, &title, &m3u8, progress_cb).await {
+                Ok(()) => {
+                    if let Some(s) = slot_for_done.as_ref() {
+                        s.progress.store(10000, Ordering::Relaxed);
+                        s.set_status("completed");
+                    }
+                    (id, "completed".into())
+                }
+                Err(msg) => {
+                    if let Some(s) = slot_for_done.as_ref() {
+                        s.set_status("failed");
+                    }
+                    (id, format!("failed: {msg}"))
+                }
+            }
+        }));
+    }
+    let mut out = Vec::with_capacity(handles.len());
+    for h in handles {
+        match h.await {
+            Ok((id, status)) => out.push((id, status)),
+            Err(join_err) => {
+                // 课程池 task panic/cancel 不再静默:记 warning 并把受影响项标 failed,
+                // 上层 M7 聚合时能看见这条记录
+                tracing::warn!("课程池下载 task join 失败 (panic/cancel): {}", join_err);
+                out.push((
+                    "<unknown>".to_string(),
+                    format!("failed: task join error: {join_err}"),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// 单条 HLS 下载：构造请求 + 调用 VideoDownloader，错误统一为 String。
+async fn download_one(
+    id: &str,
+    title: &str,
+    m3u8: &str,
+    progress_cb: Arc<dyn Fn(crate::types::DownloadProgress) + Send + Sync>,
+) -> Result<(), String> {
+    let output_dir = AppConfig::load()
+        .map(|c| c.output_dir)
+        .unwrap_or_else(|_| PathBuf::from("./Downloads"));
+    let output_path = build_output_path(&output_dir, title);
+    let req = DownloadRequest::new(m3u8, output_path)
+        .with_strategy(crate::types::DownloadStrategy::Hls);
+    let mut dl = VideoDownloader::new().map_err(|e| format!("VideoDownloader 初始化失败：{e}"))?;
+    let result = dl
+        .download(&req, Some(progress_cb))
+        .await
+        .map_err(|e| e.to_string())?;
+    if result.success {
+        // 显式引用 id 以满足 “use id when not downloaded” 的语义，但当前不需要
+        let _ = id;
+        Ok(())
+    } else {
+        Err(result.error_message.unwrap_or_default())
+    }
+}
+
+/// 构造安全文件路径：复用 `crate::types::sanitize_filename` 防止路径遍历。
+fn build_output_path(dir: &std::path::Path, title: &str) -> PathBuf {
+    let safe = sanitize_filename(title);
+    dir.join(format!("{safe}.mp4"))
 }

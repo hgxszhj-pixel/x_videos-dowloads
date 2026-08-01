@@ -69,13 +69,11 @@ pub(super) fn get_history_items() -> Vec<HistoryItem> {
             return entries.iter().rev().map(|e| {
                 let duration = e.duration_secs.map(|d| format!("{}:{:02}", (d as i64) / 60, (d as i64) % 60)).unwrap_or_default();
                 let completed_at = e.downloaded_at.format("%Y-%m-%d %H:%M").to_string();
-                let path = e.file_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
                 let platform_name = format!("{:?}", e.platform);
                 HistoryItem {
                     title: e.title.clone().unwrap_or_default(),
                     uploader: platform_name,
                     duration,
-                    path,
                     completed_at,
                     url: e.url.clone(),
                 }
@@ -104,12 +102,22 @@ pub(super) fn reload_config() {
     }
 }
 
+/// AppleScript 字符串转义:先转反斜杠(否则后面替换 \\\" 时反斜杠会被重复 escape),
+/// 再转双引号;换行/制表等控制字符替换为空格,防注入到 AppleScript 字符串外。
+fn escape_applescript_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 /// 发送系统通知 (使用 macOS osascript)
 pub(super) fn send_notification(title: &str, body: &str) {
     let script = format!(
         "display notification \"{}\" with title \"{}\"",
-        body.replace("\"", "\\\""),
-        title.replace("\"", "\\\"")
+        escape_applescript_string(body),
+        escape_applescript_string(title)
     );
     if let Err(e) = std::process::Command::new("osascript")
         .args(["-e", &script])
@@ -159,5 +167,32 @@ mod tests {
     fn test_global_history_reload_config_works_without_lock() {
         // reload_config 不持 GLOBAL_HISTORY 锁，应可独立调用
         reload_config(); // 不 panic 即通过
+    }
+
+    /// escape_applescript_string 必须按顺序:反斜杠 → 双引号 → 控制字符
+    /// (反斜杠先转义,否则替换 \" 时反斜杠会被重复 escape;控制字符防注入到字符串外)
+    #[test]
+    fn test_escape_applescript_string_handles_quotes_and_backslashes() {
+        // 反斜杠优先于双引号
+        assert_eq!(escape_applescript_string("a\\b"), "a\\\\b");
+        // 双引号转义
+        assert_eq!(escape_applescript_string("say \"hi\""), "say \\\"hi\\\"");
+        // 反斜杠 + 双引号 组合:每个反斜杠必须变 \\,每个引号必须变 \"
+        assert_eq!(escape_applescript_string("\\\"x"), "\\\\\\\"x");
+    }
+
+    #[test]
+    fn test_escape_applescript_string_replaces_control_chars() {
+        // 换行/制表符/回车 → 空格(防 AppleScript 字符串边界逃逸)
+        assert_eq!(escape_applescript_string("line1\nline2"), "line1 line2");
+        assert_eq!(escape_applescript_string("a\tb"), "a b");
+        assert_eq!(escape_applescript_string("a\rb"), "a b");
+    }
+
+    #[test]
+    fn test_escape_applescript_string_preserves_normal_text() {
+        // ASCII 中文 空格 不应被改动
+        assert_eq!(escape_applescript_string("下载完成"), "下载完成");
+        assert_eq!(escape_applescript_string("hello world"), "hello world");
     }
 }

@@ -68,15 +68,11 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                     let progress_arcs: Vec<Option<Arc<AtomicU32>>> = items.iter().map(|_| Some(Arc::new(AtomicU32::new(0)))).collect();
                     let speed_arcs: Vec<Option<Arc<AtomicU64>>> = items.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
                     let cancel_flags: Vec<Option<Arc<AtomicBool>>> = items.iter().map(|_| Some(Arc::new(AtomicBool::new(false)))).collect();
-                    let initial_items: Vec<BatchItemState> = items.iter().enumerate().map(|(idx, i)| BatchItemState {
-                        url: i.url.clone(),
-                        title: i.title.clone(),
+                    let initial_items: Vec<BatchItemState> = items.iter().enumerate().map(|(idx, _i)| BatchItemState {
                         status: "pending".to_string(),
                         progress: 0.0,
                         speed: String::new(),
                         visible: true,
-                        selected: true,
-                        progress_arc: progress_arcs[idx].clone(),
                         speed_arc: speed_arcs[idx].clone(),
                         cancel_flag: cancel_flags[idx].clone(),
                     }).collect();

@@ -66,16 +66,6 @@ impl AppTheme {
             AppTheme::Forest => "rgba(17, 153, 142, 0.15)",
         }
     }
-    /// 文字颜色
-    pub(super) fn text_color(&self) -> &'static str {
-        match self {
-            AppTheme::Purple => "#e8e8e8",
-            AppTheme::Ocean => "#e0e0e0",
-            AppTheme::Sunset => "#f0e0e0",
-            AppTheme::Forest => "#e0f0ed",
-        }
-    }
-
     // ------------------------------------------------------------------------
     // 语义色 — 跨主题一致的语义色（danger/success/primary），避免散落 hex
     // ------------------------------------------------------------------------
@@ -105,10 +95,6 @@ impl AppTheme {
     // ------------------------------------------------------------------------
     // Button style helpers — 返回 String 因为依赖 theme.gradient()
     // ------------------------------------------------------------------------
-    /// 主题色填充的实心按钮（如"获取信息"主操作）
-    pub(super) fn btn_primary(&self, padding: &str, radius: &str, font_size: &str) -> String {
-        format!("{STYLE_BTN_BASE} background: {}; padding: {padding}; border-radius: {radius}; font-size: {font_size}; font-weight: 600;", self.gradient())
-    }
     /// 成功色填充（绿色渐变，用于下载/确认）
     pub(super) fn btn_success(&self, padding: &str, radius: &str, font_size: &str) -> String {
         format!("{STYLE_BTN_BASE} background: linear-gradient(135deg, {} 0%, {} 100%); padding: {padding}; border-radius: {radius}; font-size: {font_size}; font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(52, 168, 83, 0.4);", self.color_success(), self.color_success())

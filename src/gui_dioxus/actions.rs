@@ -6,8 +6,10 @@
 
 use dioxus::prelude::*;
 
-use super::handlers::fetch_video_info_impl;
-use super::types::{AppState, BatchVideoState, ErrorDisplay, FetchResult, VideoInfoDisplay};
+use super::handlers::{fetch_course_collection_impl, fetch_video_info_impl};
+use super::types::{
+    AppState, BatchVideoState, CourseCollectionState, ErrorDisplay, FetchResult, VideoInfoDisplay,
+};
 
 /// anyhow::Error 自动 impl Into<CapturedError>，所以 action 用 anyhow::Error 作 E
 /// 创建 fetch action：输入 URL 文本（空格/逗号分隔支持批量），输出 FetchResult
@@ -74,11 +76,10 @@ pub(super) fn sync_fetch_action_to_state(
                         state.write().error_display = None;
                     }
                     FetchResult::Batch(items) => {
-                        let count = items.len();
+                        let _count = items.len();
                         state.write().batch_video_state = BatchVideoState {
                             visible: true,
                             items,
-                            status: format!("获取了 {} 个视频信息", count),
                         };
                         state.write().has_video_info = false;
                         state.write().status_message = "Video info fetched".to_string();
@@ -95,6 +96,81 @@ pub(super) fn sync_fetch_action_to_state(
                     "URL 无效或平台不支持",
                 ));
                 state.write().status_message = "Failed to fetch video info".to_string();
+            }
+            None => {}
+        }
+    });
+}
+
+/// 课程池分析 action：输入课程页 URL，输出 CourseCollectionState。
+/// 解析失败时回退到 `CourseCollectionState::default()`（visible=false），
+/// 并把"需要登录"等错误显示在 ErrorPanel 中。
+pub(super) fn use_fetch_course_action() -> Action<(String,), CourseCollectionState> {
+    use_action(move |url: String| async move {
+        let url = url.trim().to_string();
+        if url.is_empty() {
+            return Err(anyhow::anyhow!("请输入课程页 URL"));
+        }
+        match fetch_course_collection_impl(&url).await {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                tracing::warn!("课程池分析失败：{e}");
+                // 区分登录缺失 vs 其它错误
+                if e.contains("需要登录") || e.contains("AuthenticationRequired") {
+                    Err(anyhow::anyhow!("🔑 需要登录：{e}"))
+                } else {
+                    Err(anyhow::anyhow!("📚 课程池失败：{e}"))
+                }
+            }
+        }
+    })
+}
+
+/// 把课程池分析结果同步到 AppState：成功后切换 course_collection_state。
+/// 失败时若不是登录错误，自动回退到 fetch_action 让用户拿到单视频信息。
+pub(super) fn sync_course_action_to_state(
+    mut state: Store<AppState>,
+    mut fetch_action: Action<(String,), FetchResult>,
+    course_action: Action<(String,), CourseCollectionState>,
+) {
+    use_effect(move || {
+        state.write().is_fetching = course_action.pending();
+        match course_action.value() {
+            Some(Ok(sig)) => {
+                let s = sig.cloned();
+                if s.visible {
+                    state.write().course_collection_state = s.clone();
+                    state.write().status_message = "课程目录已加载".to_string();
+                    state.write().error_display = None;
+                }
+            }
+            Some(Err(captured)) => {
+                let msg = format!("{captured}");
+                let (error_type, suggestion) = if msg.starts_with("🔑") {
+                    (
+                        "login",
+                        "请在小鹅通网站登录账号后，点击“打开登录窗口”复用登录态。",
+                    )
+                } else {
+                    (
+                        "course",
+                        "该 URL 不属于小鹅通课程，或网络问题。请检查 URL 后用主流程下载单视频。",
+                    )
+                };
+                state.write().error_display = Some(ErrorDisplay::new(
+                    error_type,
+                    msg.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '：' && c != ':')
+                        .to_string(),
+                    suggestion.to_string(),
+                ));
+                state.write().status_message = "课程池分析失败".to_string();
+                // 非登录错误 → 自动回退单视频流程(原 trigger_course 仅做课程分析,这里补全回退)
+                if error_type == "course" {
+                    let url = state.read().url.clone();
+                    if !url.is_empty() {
+                        fetch_action.call(url);
+                    }
+                }
             }
             None => {}
         }
