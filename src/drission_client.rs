@@ -280,7 +280,10 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
                 Some(&b) if (1..=16).contains(&b) => b as usize,
                 _ => continue,
             };
-            if pad > out.len() { continue; }
+            if pad > out.len() || pad + 16 > out.len() { continue; }
+            // Chromium 在 plaintext 前面加 16 字节随机 salt(2026-08-01 Python 实测)
+            // — 跳过前 16 字节,然后 unpad
+            out.drain(..16);
             out.truncate(out.len() - pad);
             String::from_utf8_lossy(&out).into_owned()
         } else {
