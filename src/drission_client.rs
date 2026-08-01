@@ -87,99 +87,74 @@ pub enum LoginStatus {
     NotLoggedIn,
 }
 
-/// macOS: 通过 AppleScript 在 ego-lite 中注入同步 XHR,直接复用用户已登录的会话。
-/// 避开跨浏览器 cookie 加密密钥不匹配的问题(ego-lite 自带的 Chromium 用
-/// "ego lite Safe Storage" Keychain entry,Drission 启动的 Chromium 用别的 entry,
-/// 互相解不出对方的 cookies — 见 `is_logged_in` 顶部注释)。
+/// macOS: 从 ego-lite 的 SQLite cookies 数据库读取并解密 vip.tulingpyton.cn 的 cookies,
+/// 然后用 reqwest 直接调 user_info API。
 ///
-/// 同步 XHR 原因:AppleScript `execute javascript` 是同步阻塞调用,异步 fetch
-/// 会返回 `[object Promise]` 拿不到值。同步 XHR 会冻结 ego-lite UI 约 500ms,
-/// 对检测场景可接受。
+/// 历程 (2026-08-01):
+///   1.0 AppleScript `execute javascript` + 同步 XHR → 失败 (`missing value`,ego-lite 字典无此命令)
+///   2.0 AppleScript `execute javascript "document.cookie"` + reqwest → 失败 (同上 execute javascript 不可用)
+///   3.0 直接读 SQLite + Keychain AES-GCM 解密 + reqwest ← 当前方案,完全不靠 AppleScript 注入
+///
+/// Chromium 80+ cookies 加密:
+///   Keychain "ego lite Safe Storage" entry 存密码
+///   PBKDF2-HMAC-SHA1(password, "saltysalt", 1003, 16 bytes) 派生 AES 密钥
+///   v10 格式: "v10" (3) + nonce (12) + ciphertext + tag (16),AES-128-GCM
 #[cfg(target_os = "macos")]
 async fn is_logged_in_via_ego_lite() -> LoginStatus {
-    use std::process::Command;
-
-    // AppleScript: 优先确保当前页是 vip.tulingpyton.cn(SPA XHR 必须 same-origin,
-    // 否则 CORS 拒绝读 responseText)。先 navigate,再注入。
-    let nav_script = format!(
-        r#"tell application "ego lite"
-            try
-                activate
-                if not (exists front window) then
-                    error "NO_WINDOW"
-                end if
-                set URL of active tab of front window to "{}"
-                delay 2
-                return "OK"
-            on error errMsg
-                return "NAV_ERROR: " & errMsg
-            end try
-        end tell"#,
-        "https://vip.tulingpyton.cn"
-    );
-    let nav_out = Command::new("osascript").arg("-e").arg(&nav_script).output();
-    if let Ok(o) = &nav_out {
-        let nav_stdout = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        if !nav_stdout.starts_with("OK") {
-            warn!(target: "drission", "ego-lite 导航失败: {}", nav_stdout);
-            // 不直接 return — 试一次看看用户是否已在 vip 域页面
-        }
-    }
-
-    let script = r#"
-        tell application "ego lite"
-            try
-                if not (exists front window) then
-                    return "NO_WINDOW"
-                end if
-                set jsResult to (execute javascript "
-                    var xhr = new XMLHttpRequest();
-                    xhr.open('POST', 'https://vip.tulingpyton.cn/xe.micro_page.common.public.data.get/1.0.0', false);
-                    xhr.setRequestHeader('Content-Type', 'application/json');
-                    xhr.send(JSON.stringify({type: 'pc'}));
-                    xhr.responseText;
-                ")
-                return jsResult
-            on error errMsg
-                return "AS_ERROR: " & errMsg
-            end try
-        end tell
-    "#;
-
-    let output = match Command::new("osascript").arg("-e").arg(script).output() {
-        Ok(o) => o,
+    let cookies = match decrypt_ego_lite_cookies_for_vip() {
+        Ok(c) => c,
         Err(e) => {
-            warn!(target: "drission", "osascript 启动失败: {}", e);
+            warn!(target: "drission", "ego-lite cookie 提取失败: {}", e);
             return LoginStatus::NotLoggedIn;
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.is_empty() {
-        warn!(target: "drission", "osascript stderr: {}", stderr);
-    }
-    if stdout.starts_with("NO_WINDOW") {
-        warn!(target: "drission", "ego-lite 未开/无 window — fallback");
-        return LoginStatus::NotLoggedIn;
-    }
-    if stdout.starts_with("AS_ERROR") {
-        warn!(target: "drission", "ego-lite AppleScript 错误: {}", stdout);
-        return LoginStatus::NotLoggedIn;
-    }
-    info!(target: "drission", "ego-lite user_info 响应 (前 200): {}",
-          stdout.chars().take(200).collect::<String>());
+    info!(target: "drission", "ego-lite 拿到 cookies (前 200): {}",
+          cookies.chars().take(200).collect::<String>());
 
-    let json: serde_json::Value = match serde_json::from_str(&stdout) {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(target: "drission", "reqwest 初始化失败: {}", e);
+            return LoginStatus::NotLoggedIn;
+        }
+    };
+
+    let resp = match client
+        .post("https://vip.tulingpyton.cn/xe.micro_page.common.public.data.get/1.0.0")
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .header("Cookie", &cookies)
+        .header("Origin", "https://vip.tulingpyton.cn")
+        .header("Referer", "https://vip.tulingpyton.cn/")
+        .body(r#"{"type":"pc"}"#)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(target: "drission", "user_info API 请求失败: {}", e);
+            return LoginStatus::NotLoggedIn;
+        }
+    };
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    info!(target: "drission", "user_info API 响应: status={} body 前 200: {}",
+          status, body.chars().take(200).collect::<String>());
+
+    let json: serde_json::Value = match serde_json::from_str(&body) {
         Ok(j) => j,
         Err(e) => {
-            warn!(target: "drission", "ego-lite 响应解析失败: {} (raw 前 100: {})",
-                  e, stdout.chars().take(100).collect::<String>());
+            warn!(target: "drission", "user_info API 响应解析失败: {} (raw 前 100: {})",
+                  e, body.chars().take(100).collect::<String>());
             return LoginStatus::NotLoggedIn;
         }
     };
 
-    // SessionExpired:Code:2506 / 当前用户不存在
     let msg = json.get("msg").and_then(|v| v.as_str()).unwrap_or("");
     if msg.contains("Code:2506") || msg.contains("当前用户不存在") {
         warn!(target: "drission", "ego-lite 登录已过期 (Code:2506)");
@@ -197,6 +172,108 @@ async fn is_logged_in_via_ego_lite() -> LoginStatus {
         }
     }
     LoginStatus::NotLoggedIn
+}
+
+/// 从 ego-lite 的 Default/Cookies SQLite 数据库读 tulingpyton.cn 相关 cookies,
+/// 用 Keychain "ego lite Safe Storage" 派生 AES-128-GCM 密钥解密,返回 `name=value; ...` 字符串。
+#[cfg(target_os = "macos")]
+fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::KeyInit;
+    use aes_gcm::{Aes128Gcm, Nonce};
+    use pbkdf2::pbkdf2_hmac_array;
+    use rusqlite::Connection;
+    use sha1::Sha1;
+
+    // 1. ego-lite profile 路径
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| anyhow!("HOME not set"))?;
+    let profile = std::path::PathBuf::from(home)
+        .join("Library/Application Support/Citro Labs/ego lite");
+    if !profile.exists() {
+        anyhow::bail!("ego-lite profile 不存在: {profile:?}");
+    }
+    let cookies_db = profile.join("Default/Cookies");
+    if !cookies_db.exists() {
+        anyhow::bail!("ego-lite Default/Cookies 不存在: {cookies_db:?}");
+    }
+
+    // 2. Keychain 密码
+    let kc_out = std::process::Command::new("security")
+        .args(["find-generic-password", "-s", "ego lite Safe Storage", "-w"])
+        .output()
+        .map_err(|e| anyhow!("security 命令失败: {e}"))?;
+    if !kc_out.status.success() {
+        anyhow::bail!(
+            "Keychain 读取失败 (用户需在 Keychain 允许 Terminal 访问 'ego lite Safe Storage'): {}",
+            String::from_utf8_lossy(&kc_out.stderr)
+        );
+    }
+    let password = String::from_utf8_lossy(&kc_out.stdout).trim().to_string();
+    if password.is_empty() {
+        anyhow::bail!("Keychain 'ego lite Safe Storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
+    }
+
+    // 3. PBKDF2-HMAC-SHA1 派生 AES-128 密钥 (Chrome 80+ macOS 标准: salt="saltysalt", iter=1003)
+    let key_bytes: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1003);
+    let cipher = Aes128Gcm::new(&aes_gcm::Key::<Aes128Gcm>::from_slice(&key_bytes));
+
+    // 4. 读 SQLite cookies (只关心 vip.tulingpyton.cn 域)
+    let conn = Connection::open(&cookies_db)
+        .map_err(|e| anyhow!("打开 Cookies SQLite 失败: {e}"))?;
+    let mut stmt = conn.prepare(
+        "SELECT name, value, encrypted_value, host_key, expires_utc \
+         FROM cookies WHERE host_key LIKE '%tulingpyton%' OR host_key LIKE '%ego-lite%'"
+    )
+    .map_err(|e| anyhow!("SQL 准备失败: {e}"))?;
+
+    let now_unix = chrono::Utc::now().timestamp();
+    let mut parts: Vec<String> = Vec::new();
+    let mut rows = stmt.query([])
+        .map_err(|e| anyhow!("SQL 查询失败: {e}"))?;
+    while let Some(row) = rows.next().map_err(|e| anyhow!("SQL next: {e}"))? {
+        let name: String = row.get(0).unwrap_or_default();
+        let plain_value: String = row.get(1).unwrap_or_default();
+        let encrypted_value: Vec<u8> = row.get(2).unwrap_or_default();
+        let _host: String = row.get(3).unwrap_or_default();
+        let expires_utc: i64 = row.get(4).unwrap_or(0);
+
+        // 跳过已过期 (Chrome 存 Windows epoch 微秒;转 unix 秒比较)
+        if expires_utc > 0 {
+            let expires_unix = expires_utc / 1_000_000 - 11_644_473_600;
+            if expires_unix < now_unix {
+                continue;
+            }
+        }
+
+        // 解密 encrypted_value (v10 格式: "v10" + 12 byte nonce + ciphertext + 16 byte tag)
+        let value: String = if !encrypted_value.is_empty() {
+            let total = encrypted_value.len();
+            if total < 3 + 12 + 16 || &encrypted_value[0..3] != b"v10" {
+                continue;
+            }
+            // 用独立变量持有切片,避开 borrow checker
+            let nonce_slice: &[u8] = &encrypted_value[3..15];
+            let nonce = Nonce::from_slice(nonce_slice);
+            let ct_end = total - 16;
+            let ct_slice: &[u8] = &encrypted_value[3..ct_end];
+            match cipher.decrypt(nonce, ct_slice) {
+                Ok(pt) => String::from_utf8_lossy(&pt).into_owned(),
+                Err(_) => continue,
+            }
+        } else {
+            plain_value
+        };
+
+        if !value.is_empty() && !name.is_empty() {
+            parts.push(format!("{name}={value}"));
+        }
+    }
+
+    if parts.is_empty() {
+        anyhow::bail!("ego-lite 没找到任何 tulingpyton cookies (用户未在该域登录)");
+    }
+    Ok(parts.join("; "))
 }
 
 /// 轻量级登录态检测:优先级
