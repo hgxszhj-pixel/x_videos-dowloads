@@ -1235,4 +1235,52 @@ mod tests {
         // 关键 endpoint
         assert!(js.contains("xe.course.business_go.column.items.get/2.0.0"));
     }
+
+    /// 诊断用 E2E: 直接调 is_logged_in,看 headless Chrome 是否真的读到 ego-lite profile 的 cookies。
+    /// 用户报告"已用 ego-lite 登录却仍报需要登录",此测试隔离 GUI 流程直接验证 is_logged_in。
+    ///
+    /// 用法:
+    ///   cargo test diag_is_logged_in_real_profile -- --ignored --nocapture 2>&1 | tee /tmp/iso.log
+    ///   LOGIN_URL=https://...  cargo test diag_is_logged_in_real_profile -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "诊断用:需真实已登录 profile,会联网"]
+    async fn diag_is_logged_in_real_profile() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let url = std::env::var("LOGIN_URL").unwrap_or_else(|_| {
+            "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_69e86659e4b0694c5bb4b923?product_id=p_69e86659e4b0694c5bb4b923".to_string()
+        });
+
+        let profile = default_profile_dir();
+        println!("\n========== IS_LOGGED_IN DIAG ==========");
+        println!("URL:    {url}");
+        println!("profile: {:?}", profile);
+        println!("profile exists: {}", profile.exists());
+        if profile.exists() {
+            println!("profile contents (前 20 项):");
+            if let Ok(entries) = std::fs::read_dir(&profile) {
+                for (i, entry) in entries.flatten().take(20).enumerate() {
+                    println!("  [{:2}] {:?}", i + 1, entry.file_name());
+                }
+            }
+            // 检查 Default/Cookies 是否存在(关键 cookie 存储)
+            let cookies_path = profile.join("Default").join("Cookies");
+            let cookies_sqlite = profile.join("Default").join("Cookies-journal");
+            println!("Default/Cookies exists: {}", cookies_path.exists());
+            println!("Default/Cookies-journal exists: {}", cookies_sqlite.exists());
+            if cookies_path.exists() {
+                let meta = std::fs::metadata(&cookies_path);
+                println!("Default/Cookies size: {:?}", meta.map(|m| m.len()));
+            }
+        }
+
+        let result = super::is_logged_in(&url).await;
+        println!("\n========== RESULT ==========");
+        println!("is_logged_in({url}) = {result}");
+        println!("=========================================\n");
+
+        // 不 assert! — 此测试只是 dump 状态,让用户看到真实情况。
+        // 如果 result = false 但用户报告已登录,看 dump 的 profile 内容能定位问题
+        // (Cookies 不存在 → ego-lite 根本没登录小鹅通;Cookies 存在 → headless Chrome 版本不匹配读不到)
+        let _ = result;
+    }
 }
