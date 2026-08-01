@@ -8,7 +8,10 @@
 
 | Commit | 主题 | 改动文件 |
 |---|---|---|
-| `1de74e9` | `fix(drission): macOS 用 AppleScript + ego-lite 检测登录态,避开 Keychain 加密密钥不匹配` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` + `open_login_window_via_ego_lite` + `default_profile_dir` 重写) |
+| `853ae12` | `fix(drission): Keychain service 名是 "ego safe storage" 不是 "ego lite Safe Storage"` | `src/drission_client.rs` (`decrypt_ego_lite_cookies_for_vip` service 名修正) |
+| `609e265` | `fix(drission): macOS 用 SQLite+Keychain 解密 ego-lite cookies,AppleScript execute javascript 在 ego-lite 中不可用` | `Cargo.toml` (`aes-gcm` + `pbkdf2` + `sha1`) + `src/drission_client.rs` (`decrypt_ego_lite_cookies_for_vip` 新增) |
+| `9da4209` | `docs(handoff): 登记 1de74e9 AppleScript+ego-lite 检测 + 经验 #28-31` | HANDOFF.md |
+| `1de74e9` | `fix(drission): macOS 用 AppleScript + ego-lite 检测登录态,避开 Keychain 加密密钥不匹配` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` AppleScript 路径,后被 SQLite 路径取代) |
 | `9c7e763` | `fix(drission): 登录轮询要求 user_id 是非空字符串,加 30s/60s 进度日志` | `src/drission_client.rs` (`open_login_window` polling) |
 | `b784420` | `fix(drission): 改用 Drission headed 模式 + 项目自建 profile 解决跨浏览器 cookie 加密不匹配` | `src/drission_client.rs` (`default_profile_dir` → 项目自建) |
 | `d89a182` | `fix(gui): tracing subscriber 移到 run_gui(),main() 里那 30 行是 dead code` | `src/main.rs` + `src/gui_dioxus/mod.rs` |
@@ -100,13 +103,16 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 - GUI: `course_action.call(url)` → `fetch_course_collection_impl` (`src/gui_dioxus/handlers.rs:221`)
 - 登录窗口: `open_tuling_login(url)` (`src/gui_dioxus/handlers.rs:285`)
 
-### 登录态检测 (macOS AppleScript + Drission fallback)
+### 登录态检测 (macOS SQLite+Keychain + Drission fallback)
 ```
-1. macOS + ego-lite 已开:is_logged_in_via_ego_lite()
-   → osascript 同步 XHR common.public.data.get → 读 user_info.user_id
-   → 用户在 ego-lite 已登录的会话直接复用 (Keychain 加密密钥自动一致)
-2. fallback (非 macOS / ego-lite 未开): is_logged_in()
-   → check_login_at(project_profile, url) — headless Chrome 启动 + 拦 common.public.data.get
+1. macOS:is_logged_in_via_ego_lite()
+   → decrypt_ego_lite_cookies_for_vip() — rusqlite 读 ~/Library/Application Support/Citro Labs/ego lite/Default/Cookies
+   → security find-generic-password -s "ego safe storage" -w 拿 Keychain 密码
+   → PBKDF2-HMAC-SHA1(password, "saltysalt", 1003, 16) 派生 AES-128 密钥
+   → AES-128-GCM 解密 v10 cookies (Cookie value)
+   → reqwest 带这些 cookies 打 xe.micro_page.common.public.data.get → 读 user_info.user_id
+2. fallback (非 macOS / ego-lite 未开 / SQLite 失败): is_logged_in()
+   → check_login_at(project_profile, url) — Drission headless 启动 + 拦 common.public.data.get
 ```
 
 ### profile 目录 (2026-08-01 第三次重构)
@@ -121,9 +127,10 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | `default_profile_dir()` | 永远返回项目自建 profile (系统浏览器 profile 已被放弃) |
 | `is_profile_dir_in_use()` | SingletonLock / SingletonCookie 探测 |
 | `LoginStatus` enum | `LoggedIn` / `SessionExpired` / `NotLoggedIn` |
-| `is_logged_in(url)` | macOS 优先 AppleScript,fallback Drission headless |
-| `is_logged_in_via_ego_lite()` (macOS) | osascript 同步 XHR → user_info |
-| `check_login_at(profile, url)` | 单 URL Drission 探针 |
+| `is_logged_in(url)` | macOS 优先 SQLite+Keychain 解密 ego-lite cookies,fallback Drission headless |
+| `decrypt_ego_lite_cookies_for_vip()` (macOS) | rusqlite + security CLI + PBKDF2 + AES-GCM 解密 v10 cookies |
+| `is_logged_in_via_ego_lite()` (macOS) | 用上面 cookies 调 reqwest → user_info |
+| `check_login_at(profile, url)` | 单 URL Drission 探针 (fallback) |
 | `log_candidate_profiles()` | 扫描 Application Support 诊断 |
 | `open_login_window(url)` | macOS AppleScript 开 ego-lite;其他平台 Drission headed |
 | `open_login_window_via_ego_lite(url)` (macOS) | osascript open location |
@@ -203,7 +210,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | 26 | `is_logged_in(url)` 必须用调用方传入的 URL (SPA 首页不触发 user_info API → 误判未登录) | `src/gui_dioxus/handlers.rs:234` + `src/drission_client.rs:101` |
 | 27 | macOS app profile 路径 ≠ Bundle ID: ego-lite 真实路径是 `~/Library/Application Support/Citro Labs/ego lite/` (父目录是发行公司 Citro Labs) | `src/drission_client.rs:57-82` |
 | 28 | LoginStatus 必须 3 态: LoggedIn / SessionExpired / NotLoggedIn。Code:2506 ≠ NotLoggedIn (cookie 还在但服务端不认),GUI 需分别给"重扫码"和"打开登录窗口"指引 | `src/drission_client.rs` + `src/gui_dioxus/handlers.rs` |
-| 29 | macOS Chromium cookie 加密密钥 = Keychain entry "<ProductName> Safe Storage"。ego-lite (ProductName="ego lite") 和 Drission (ProductName≠"ego lite") 互解不出对方 cookies → 服务端 Code:2506。**唯一可靠方案**: 在用户已登录的浏览器 (ego-lite) 里直接发请求 (AppleScript 注入 JS),完全不切换 profile | `src/drission_client.rs` (`default_profile_dir` + `is_logged_in_via_ego_lite`) |
+| 29 | macOS Chromium cookie 加密密钥 = Keychain entry "<ProductName> Safe Storage"(ego-lite 实测是 **"ego safe storage"** 小写)。跨浏览器互解不出对方 cookies → 服务端 Code:2506。**唯一可靠方案**: 直接读 ego-lite SQLite + Keychain 解密出 cookies,再 reqwest 直发 API — 不切 profile、不开新浏览器、不靠 AppleScript(ego-lite 字典无 execute javascript) | `src/drission_client.rs` (`decrypt_ego_lite_cookies_for_vip`) |
 | 30 | `tracing` subscriber 必须在实际跑日志的代码路径上 init。`cli.gui → run_gui()` 早 return 时,main() 里的 init 是 dead code — GUI 日志全丢。**位置**: `src/gui_dioxus/mod.rs::run_gui()` 顶部 | `src/main.rs` + `src/gui_dioxus/mod.rs` |
 | 31 | LoginStatus 判定必须严格:`user_id` 是 **非空字符串** 才算登录。`user_id: null` (Code:2506 响应常见) 用 `is_some()` 误判 true。Code: `uid = ui.get("user_id").and_then(\|v\| v.as_str()).filter(\|s\| !s.is_empty())` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` + `check_login_at`) |
 
