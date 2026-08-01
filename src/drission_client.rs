@@ -45,28 +45,22 @@ impl Default for DrissionConfig {
     }
 }
 
-/// 默认 profile 目录:
-/// 优先级 **ego-lite → Google Chrome → 项目自建**,让用户已在系统浏览器登录的 cookie 直接复用。
+/// 默认 profile 目录(2026-08-01 第三次重构):只返回项目自建 profile。
 ///
-/// 项目自建 profile 在系统 cache 下,跨进程复用登录态;
-/// 但与系统浏览器(ego-lite / Chrome)的 profile 完全隔离 — 用户在 GUI「打开登录窗口」
-/// 走的是系统浏览器(ego-lite / Chrome),cookies 落到系统浏览器自己的 profile 里,
-/// Drission 用项目自建 profile 就永远看不到这些 cookies。
-/// 因此优先复用系统浏览器的 profile;只有两者都没装 / 都被锁时,才回退到自建目录
-/// (此时用户必须先在 GUI「打开登录窗口」扫码登录)。
+/// 历程:
+/// 1.0 - 复用 ego-lite / Chrome 系统浏览器 profile(2026-07 起):
+///       失败 → macOS Chromium 用 Keychain "<ProductName> Safe Storage"
+///       entry 加密 cookies。ego-lite (ProductName="ego lite") 和
+///       Drission 内置 Chromium (ProductName≠"ego lite") 密钥不同,
+///       跨浏览器解密失败,服务端 Code:2506 "当前用户不存在"。
+/// 2.0 - Drission headed + 项目自建 profile 让用户扫码(本 commit 前):
+///       部分工作,但用户实际扫码的是 ego-lite(不是 Drission Chrome),
+///       项目 profile 一直空 cookies,is_logged_in 持续 SessionExpired。
+/// 3.0 - **当前**: macOS 用 AppleScript + ego-lite 直接检测与登录,
+///       项目自建 profile 只在 is_logged_in fallback 和 DrissionClient
+///       视频抓取(m3u8 拦截)时使用,不再用于登录窗口。
+///       见 `is_logged_in_via_ego_lite` 与 `open_login_window_via_ego_lite`。
 pub fn default_profile_dir() -> PathBuf {
-    // 2026-08-01 重构: 放弃复用系统浏览器 (ego-lite / Chrome) 的 profile,
-    // 改用 Drission 自己的项目自建 profile (`tulingpyton_profile/`)。
-    //
-    // 复用系统浏览器 profile 的根本问题: macOS Chrome 用 Keychain entry 加密
-    // cookies (entry 名 = "<ProductName> Safe Storage")。ego-lite 是 Chromium
-    // fork, ProductName = "ego lite", Keychain entry = "ego lite Safe Storage"。
-    // Drission 内置 Chromium 的 ProductName 可能是 "Chromium", Keychain entry
-    // 不同 → 解密 cookies 失败 → 服务端收到无效 cookie → Code:2506 "当前用户不存在"。
-    // 日志验证 (2026-08-01): 三个 ego-lite profile 尝试都返 Code:2506。
-    //
-    // 自建 profile 优势: Drission 启动 headed (登录) 和 headless (检测) 用同一份
-    // profile, 同一套 encryption key, cookie 必然可读。
     directories::ProjectDirs::from("com", "xvd", "x-video-downloader")
         .map(|d| d.cache_dir().join("tulingpyton_profile"))
         .unwrap_or_else(|| PathBuf::from("./tulingpyton_profile"))
@@ -93,21 +87,147 @@ pub enum LoginStatus {
     NotLoggedIn,
 }
 
-/// 轻量级登录态检测:用持久 profile 启动 headless Chrome 访问首页,
-/// 拦截 `xe.micro_page.common.public.data.get` 响应里的 `data.user_info`:
-///   - `user_info` 非 null 且含 user_id → LoggedIn
-///   - `user_info` 为 null → NotLoggedIn
-///   - 服务端响应 msg 含 "Code:2506"/"当前用户不存在" → SessionExpired
+/// macOS: 通过 AppleScript 在 ego-lite 中注入同步 XHR,直接复用用户已登录的会话。
+/// 避开跨浏览器 cookie 加密密钥不匹配的问题(ego-lite 自带的 Chromium 用
+/// "ego lite Safe Storage" Keychain entry,Drission 启动的 Chromium 用别的 entry,
+/// 互相解不出对方的 cookies — 见 `is_logged_in` 顶部注释)。
 ///
-/// 旧的 HTML 启发式对 SPA 页面不可靠(登录关键字在 JS bundle 里,不渲染),所以
-/// 用 API 探针 + 用户字段直查。多花 ~25s 启动 Chrome 但准确率 100%。
+/// 同步 XHR 原因:AppleScript `execute javascript` 是同步阻塞调用,异步 fetch
+/// 会返回 `[object Promise]` 拿不到值。同步 XHR 会冻结 ego-lite UI 约 500ms,
+/// 对检测场景可接受。
+#[cfg(target_os = "macos")]
+async fn is_logged_in_via_ego_lite() -> LoginStatus {
+    use std::process::Command;
+
+    // AppleScript: 优先确保当前页是 vip.tulingpyton.cn(SPA XHR 必须 same-origin,
+    // 否则 CORS 拒绝读 responseText)。先 navigate,再注入。
+    let nav_script = format!(
+        r#"tell application "ego lite"
+            try
+                activate
+                if not (exists front window) then
+                    error "NO_WINDOW"
+                end if
+                set URL of active tab of front window to "{}"
+                delay 2
+                return "OK"
+            on error errMsg
+                return "NAV_ERROR: " & errMsg
+            end try
+        end tell"#,
+        "https://vip.tulingpyton.cn"
+    );
+    let nav_out = Command::new("osascript").arg("-e").arg(&nav_script).output();
+    if let Ok(o) = &nav_out {
+        let nav_stdout = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !nav_stdout.starts_with("OK") {
+            warn!(target: "drission", "ego-lite 导航失败: {}", nav_stdout);
+            // 不直接 return — 试一次看看用户是否已在 vip 域页面
+        }
+    }
+
+    let script = r#"
+        tell application "ego lite"
+            try
+                if not (exists front window) then
+                    return "NO_WINDOW"
+                end if
+                set jsResult to (execute javascript "
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('POST', 'https://vip.tulingpyton.cn/xe.micro_page.common.public.data.get/1.0.0', false);
+                    xhr.setRequestHeader('Content-Type', 'application/json');
+                    xhr.send(JSON.stringify({type: 'pc'}));
+                    xhr.responseText;
+                ")
+                return jsResult
+            on error errMsg
+                return "AS_ERROR: " & errMsg
+            end try
+        end tell
+    "#;
+
+    let output = match Command::new("osascript").arg("-e").arg(script).output() {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(target: "drission", "osascript 启动失败: {}", e);
+            return LoginStatus::NotLoggedIn;
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        warn!(target: "drission", "osascript stderr: {}", stderr);
+    }
+    if stdout.starts_with("NO_WINDOW") {
+        warn!(target: "drission", "ego-lite 未开/无 window — fallback");
+        return LoginStatus::NotLoggedIn;
+    }
+    if stdout.starts_with("AS_ERROR") {
+        warn!(target: "drission", "ego-lite AppleScript 错误: {}", stdout);
+        return LoginStatus::NotLoggedIn;
+    }
+    info!(target: "drission", "ego-lite user_info 响应 (前 200): {}",
+          stdout.chars().take(200).collect::<String>());
+
+    let json: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(j) => j,
+        Err(e) => {
+            warn!(target: "drission", "ego-lite 响应解析失败: {} (raw 前 100: {})",
+                  e, stdout.chars().take(100).collect::<String>());
+            return LoginStatus::NotLoggedIn;
+        }
+    };
+
+    // SessionExpired:Code:2506 / 当前用户不存在
+    let msg = json.get("msg").and_then(|v| v.as_str()).unwrap_or("");
+    if msg.contains("Code:2506") || msg.contains("当前用户不存在") {
+        warn!(target: "drission", "ego-lite 登录已过期 (Code:2506)");
+        return LoginStatus::SessionExpired;
+    }
+
+    if let Some(ui) = json.get("data").and_then(|d| d.get("user_info")) {
+        if !ui.is_null() {
+            if let Some(uid) = ui.get("user_id").and_then(|v| v.as_str()) {
+                if !uid.is_empty() {
+                    info!(target: "drission", "✓ ego-lite 已登录 (user_id={})", uid);
+                    return LoginStatus::LoggedIn;
+                }
+            }
+        }
+    }
+    LoginStatus::NotLoggedIn
+}
+
+/// 轻量级登录态检测:优先级
+/// 1. **macOS + ego-lite**:AppleScript 注入同步 XHR,直接复用用户已登录的 ego-lite 会话
+///    (cookie 加密密钥 = ego-lite 的 Keychain entry,自动一致)
+/// 2. **fallback** (非 macOS / ego-lite 未开):Drission headless + 项目自建 profile
+///
+/// 旧方案 (Drission 启动浏览器) 的根本问题 (2026-08-01 复盘):
+///   跨浏览器 cookie 加密密钥不匹配。macOS Chromium 系用 Keychain entry
+///   "<ProductName> Safe Storage" 加密 cookies:ego-lite (Citro Labs fork)
+///   ProductName="ego lite" → "ego lite Safe Storage"。Drission 自带 Chromium
+///   ProductName 另算 → 解密失败 → 服务端收到空 cookie → Code:2506。
+///   即使用户在 ego-lite 登录态完好,Drission 也读不出 cookies。
+///   改用 AppleScript 直接在 ego-lite 里发请求,完全避开密钥不匹配问题。
 pub async fn is_logged_in(url: &str) -> LoginStatus {
+    // macOS 优先:AppleScript + ego-lite(用户在系统浏览器已登录)
+    #[cfg(target_os = "macos")]
+    {
+        match is_logged_in_via_ego_lite().await {
+            LoginStatus::LoggedIn => return LoginStatus::LoggedIn,
+            LoginStatus::SessionExpired => return LoginStatus::SessionExpired,
+            LoginStatus::NotLoggedIn => {
+                // ego-lite 未开/无 window/JS 注入失败 — fallback 到 Drission
+                warn!(target: "drission", "ego-lite 检测失败 (未开/无 window),fallback 到 Drission");
+            }
+        }
+    }
+
     let profile = default_profile_dir();
-
-    // 诊断:列出 Application Support 下所有 candidate,看 ego-lite 实际路径
     log_candidate_profiles();
-
-    info!(target: "drission", "is_logged_in: 检测 {} (profile={:?})", url, profile);
+    info!(target: "drission", "is_logged_in (Drission fallback): 检测 {} (profile={:?})", url, profile);
 
     // 多 URL 兜底: 课程 URL → 首页。任何一路拿到 user_info 都算登录。
     // SPA 不同页触发 user_info API 时机不一致,只测一个 URL 容易假阴性。
@@ -249,15 +369,54 @@ fn log_candidate_profiles() {
     }
 }
 
-/// 启动浏览器让用户登录小鹅通;180s 后仅关闭 tulingpyton 相关标签页。
-/// GUI 在捕获 "需要登录" 错误后调用此函数。
+/// 启动浏览器让用户登录小鹅通。
+/// - macOS + ego-lite 已开 → AppleScript 打开 ego-lite 让用户在熟悉的环境扫码登录
+///   (避免 Drission headed 的 Keychain 加密密钥不匹配问题)
+/// - 其他平台 → Drission headed Chrome + 项目自建 profile
 ///
-/// 2026-08-01 重构: 不再用系统浏览器 (ego-lite / Chrome) 弹登录窗口。原因是
-/// 跨浏览器 cookie 加密密钥不匹配 (见 `default_profile_dir` 注释)。
-/// 改为启动 Drission 自己的 headed Chrome 指向项目自建 profile ——
-/// 用户扫码登录 → cookies 用 Drission 的 Keychain entry 加密 → 写到自建 profile
-/// → is_logged_in 用同一 profile headless 检测 → 同 key 解密 → 成功。
+/// GUI 在捕获 "需要登录" 错误后调用此函数。
 pub async fn open_login_window(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        return open_login_window_via_ego_lite(url).await;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        return open_login_window_via_drission(url).await;
+    }
+}
+
+/// macOS: AppleScript 打开 ego-lite 让用户扫码登录小鹅通。
+/// 不做任何 polling — 用户在熟悉的浏览器手动登录,关闭/切换 tab 后 is_logged_in
+/// 自然能查到。
+#[cfg(target_os = "macos")]
+async fn open_login_window_via_ego_lite(url: &str) -> Result<()> {
+    use std::process::Command;
+
+    info!("打开 ego-lite 让用户登录小鹅通 (url={})", url);
+
+    let script = format!(
+        r#"tell application "ego lite"
+            activate
+            open location "{url}"
+        end tell"#,
+        url = url.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+
+    Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .map_err(|e| anyhow!("osascript 失败: {e}"))?;
+
+    info!("ego-lite 已打开,等待用户在小鹅通登录...");
+    Ok(())
+}
+
+/// 非 macOS / 无 ego-lite:Drission headed + 项目自建 profile(2026-08-01 旧方案)。
+/// Keychain 加密密钥一致性:headed 写入与 headless 检测共享同一 profile → 同 key 解密。
+#[cfg(not(target_os = "macos"))]
+async fn open_login_window_via_drission(url: &str) -> Result<()> {
     use drission::cdp::{ChromiumBrowser, ChromiumOptions};
     use std::time::Duration;
 
@@ -268,7 +427,7 @@ pub async fn open_login_window(url: &str) -> Result<()> {
     );
 
     let opts = ChromiumOptions::new()
-        .headless(false)  // 关键: headed 模式,用户能看到窗口能扫码
+        .headless(false)
         .user_data_dir(profile)
         .window_size(1280, 800)
         .add_arg("--no-first-run");
@@ -277,14 +436,12 @@ pub async fn open_login_window(url: &str) -> Result<()> {
     let tab = browser.new_tab(Some(url)).await
         .map_err(|e| anyhow!("new_tab 失败: {e}"))?;
 
-    // 轮询检测 user_info: 用户登录成功后立刻返 (不必等满 180s)
     let listen = tab.listen();
     let _ = listen.start(&["common.public.data.get"]).await;
     let _ = tab.get(url).await;
 
     let mut logged_in = false;
     for i in 0..36 {
-        // 最多 180s, 每 5s 检查一次
         tokio::time::sleep(Duration::from_secs(5)).await;
         let packets = listen
             .wait_count(50, Some(Duration::from_millis(500)))
@@ -293,8 +450,6 @@ pub async fn open_login_window(url: &str) -> Result<()> {
         for p in &packets {
             if let Some(j) = p.json() {
                 if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
-                    // 必须 user_id 是非空字符串才算登录。Code:2506 时 user_info 经常是
-                    // {"user_id": null, ...} 形式存在但值为 null,旧逻辑 is_some() 会误判 true
                     let uid = ui.get("user_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
                     if !ui.is_null() && uid.is_some() {
                         info!("检测到登录成功 (user_id={:?})", uid);
@@ -650,18 +805,14 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_dir_returns_first_available_priority() {
-        // 优先级:ego-lite (Citro Labs/ego lite) → Chrome → 项目自建。
-        // 用户机器可能装其中 0/1/2 个,任一命中即合法。
+    fn test_profile_dir_returns_self_built_under_project_cache() {
+        // 2026-08-01 第三次重构:不再优先复用系统浏览器 profile(跨浏览器 Keychain
+        // 加密密钥不匹配,见 `default_profile_dir` 注释)。统一只返回项目自建目录。
         let dir = default_profile_dir();
         let s = dir.to_string_lossy();
-        let is_ego_lite =
-            s.contains("Citro Labs/ego lite") || s.contains("com.citrolabs.ego.lite");
-        let is_chrome = s.contains("Google/Chrome");
-        let is_self_built = s.contains("tulingpyton_profile");
         assert!(
-            is_ego_lite || is_chrome || is_self_built,
-            "返回路径 {dir:?} 既不是已知的浏览器 profile,也不是自建目录"
+            s.contains("tulingpyton_profile"),
+            "default_profile_dir 必须返回项目自建路径 (含 tulingpyton_profile),实际: {dir:?}"
         );
     }
 
