@@ -231,8 +231,16 @@ pub(super) async fn fetch_course_collection_impl(url: &str) -> Result<CourseColl
     // 登录态预检:导航到用户实际想看的课程页(而非硬编码首页),
     // 课程页一定会触发 xe.micro_page.common.public.data.get 验证访问权限,
     // 首页可能不调该 API → 误判"未登录" → 用户报告"已用 ego-lite 登录却仍报需要登录"。
-    if !crate::drission_client::is_logged_in(url).await {
-        return Err(ResolverError::AuthenticationRequired.to_string());
+    // 2026-08-01: 区分 SessionExpired (Code:2506 当前用户不存在,cookie 过期需重扫码)
+    // vs NotLoggedIn (从未登录)。后者提示"打开登录窗口"足够,前者必须显式说明过期。
+    match crate::drission_client::is_logged_in(url).await {
+        crate::drission_client::LoginStatus::LoggedIn => {}
+        crate::drission_client::LoginStatus::SessionExpired => {
+            return Err("登录已过期 (Code:2506 当前用户不存在): 请点击\"打开登录窗口\"扫码重新登录".to_string());
+        }
+        crate::drission_client::LoginStatus::NotLoggedIn => {
+            return Err(ResolverError::AuthenticationRequired.to_string());
+        }
     }
     let entries = resolver
         .list_collection(url)

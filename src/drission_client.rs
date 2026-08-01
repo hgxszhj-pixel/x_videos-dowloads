@@ -91,14 +91,26 @@ pub fn is_profile_dir_in_use(dir: &std::path::Path) -> bool {
     candidates.iter().any(|p| p.exists())
 }
 
+/// 登录状态细粒度分类。SPA 检测常见 3 种情况,GUI 需区分提示:
+/// - `LoggedIn`        找到 `data.user_info.user_id`
+/// - `SessionExpired`  cookie 存在但服务端识别失败 (Code:2506 "当前用户不存在"),需重新扫码
+/// - `NotLoggedIn`     user_info 为 null,从未在该浏览器登录过
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginStatus {
+    LoggedIn,
+    SessionExpired,
+    NotLoggedIn,
+}
+
 /// 轻量级登录态检测:用持久 profile 启动 headless Chrome 访问首页,
 /// 拦截 `xe.micro_page.common.public.data.get` 响应里的 `data.user_info`:
-///   - `user_info` 非 null 且含 user_id → 已登录
-///   - `user_info` 为 null 或 code != 0 → 未登录
+///   - `user_info` 非 null 且含 user_id → LoggedIn
+///   - `user_info` 为 null → NotLoggedIn
+///   - 服务端响应 msg 含 "Code:2506"/"当前用户不存在" → SessionExpired
 ///
 /// 旧的 HTML 启发式对 SPA 页面不可靠(登录关键字在 JS bundle 里,不渲染),所以
 /// 用 API 探针 + 用户字段直查。多花 ~25s 启动 Chrome 但准确率 100%。
-pub async fn is_logged_in(url: &str) -> bool {
+pub async fn is_logged_in(url: &str) -> LoginStatus {
     let profile = default_profile_dir();
 
     // 诊断:列出 Application Support 下所有 candidate,看 ego-lite 实际路径
@@ -117,20 +129,26 @@ pub async fn is_logged_in(url: &str) -> bool {
     for (i, probe_url) in urls.iter().enumerate() {
         info!(target: "drission", "is_logged_in: 第 {}/{} 路探测 {}",
               i + 1, urls.len(), probe_url);
-        if check_login_at(profile.clone(), probe_url).await {
-            return true;
+        let status = check_login_at(profile.clone(), probe_url).await;
+        match status {
+            LoginStatus::LoggedIn => return LoginStatus::LoggedIn,
+            LoginStatus::SessionExpired => {
+                // 任何一路拿到过期信号 → 立即返回过期 (无需继续探)
+                return LoginStatus::SessionExpired;
+            }
+            LoginStatus::NotLoggedIn => continue,
         }
     }
     warn!(
         target: "drission",
-        "is_logged_in: {} 路探测全部失败 (URL={url}, profile={profile:?})\n  → 用户实际未登录 / cookies 已过期 / headless Chrome 无法读 ego-lite profile 的 cookies / SPA 未触发 user_info API",
+        "is_logged_in: {} 路探测全部 NotLoggedIn (URL={url}, profile={profile:?})\n  → 用户从未在该浏览器登录 / headless Chrome 无法读 profile cookies / SPA 未触发 user_info API",
         urls.len()
     );
-    false
+    LoginStatus::NotLoggedIn
 }
 
-/// 单 URL 探测:启动 headless Chrome → 导航 → 拦 common.public.data.get → 找 user_info
-async fn check_login_at(profile: PathBuf, url: &str) -> bool {
+/// 单 URL 探测:启动 headless Chrome → 导航 → 拦 common.public.data.get → 分类登录状态
+async fn check_login_at(profile: PathBuf, url: &str) -> LoginStatus {
     use drission::cdp::{ChromiumBrowser, ChromiumOptions};
 
     let opts = ChromiumOptions::new()
@@ -142,7 +160,7 @@ async fn check_login_at(profile: PathBuf, url: &str) -> bool {
         Ok(b) => b,
         Err(e) => {
             warn!(target: "drission", "  浏览器启动失败 ({e}) — 可能 profile 被占用/锁住");
-            return false;
+            return LoginStatus::NotLoggedIn;
         }
     };
     let tab = match browser.new_tab(None).await {
@@ -150,14 +168,14 @@ async fn check_login_at(profile: PathBuf, url: &str) -> bool {
         Err(e) => {
             warn!(target: "drission", "  new_tab 失败 ({e})");
             let _ = browser.quit().await;
-            return false;
+            return LoginStatus::NotLoggedIn;
         }
     };
     let listen = tab.listen();
     if let Err(e) = listen.start(&["common.public.data.get"]).await {
         warn!(target: "drission", "  监听启动失败 ({e})");
         let _ = browser.quit().await;
-        return false;
+        return LoginStatus::NotLoggedIn;
     }
     if let Err(e) = tab.get(url).await {
         warn!(target: "drission", "  导航到 {url} 失败 ({e})");
@@ -175,23 +193,29 @@ async fn check_login_at(profile: PathBuf, url: &str) -> bool {
     info!(target: "drission", "  拦截到 {} 个 common.public.data.get 响应", packets.len());
 
     for (idx, p) in packets.iter().enumerate() {
-        if let Some(j) = p.json() {
-            // 诊断:首个 packet body 预览(看 user_info 是 null 还是缺字段)
-            if idx == 0 {
-                let body = p.response.body.as_str();
-                let preview: String = body.chars().take(400).collect();
-                info!(target: "drission", "  [packet #0 preview] {}", preview);
-            }
-            if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
-                if !ui.is_null() && ui.get("user_id").and_then(|v| v.as_str()).is_some() {
-                    info!(target: "drission", "  已登录 ✓ (user_id={:?})",
-                          ui.get("user_id").and_then(|v| v.as_str()));
-                    return true;
-                }
+        let Some(j) = p.json() else { continue };
+        // 诊断:首个 packet body 预览(看 user_info 是 null / 过期 / 缺字段)
+        if idx == 0 {
+            let body = p.response.body.as_str();
+            let preview: String = body.chars().take(400).collect();
+            info!(target: "drission", "  [packet #0 preview] {}", preview);
+        }
+        // 优先识别 SessionExpired (服务端 msg 含 Code:2506 / 当前用户不存在)
+        // 这种 cookie 仍然在 profile 里,但服务端已拒绝识别 → 必须重新扫码
+        let msg = j.get("msg").and_then(|v| v.as_str()).unwrap_or("");
+        if msg.contains("当前用户不存在") || msg.contains("Code:2506") {
+            warn!(target: "drission", "  登录已过期 ✗ (Code:2506 当前用户不存在) — cookie 还在但服务端不识别");
+            return LoginStatus::SessionExpired;
+        }
+        if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
+            if !ui.is_null() && ui.get("user_id").and_then(|v| v.as_str()).is_some() {
+                info!(target: "drission", "  已登录 ✓ (user_id={:?})",
+                      ui.get("user_id").and_then(|v| v.as_str()));
+                return LoginStatus::LoggedIn;
             }
         }
     }
-    false
+    LoginStatus::NotLoggedIn
 }
 
 /// 诊断:列出 Application Support 下所有 candidate profile,帮助定位 ego-lite 实际路径
@@ -955,7 +979,7 @@ mod tests {
             "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_6981db02e4b0694c5bb0b781?product_id=p_6981db02e4b0694c5bb0b781&resource_id=l_69de2160e4b0694c5baf5082".to_string()
         });
 
-        if !bypass_login && !super::is_logged_in("https://vip.tulingpyton.cn/").await {
+        if !bypass_login && super::is_logged_in("https://vip.tulingpyton.cn/").await != super::LoginStatus::LoggedIn {
             panic!("profile 未登录 → 请先在 GUI 里点 🔑 打开登录窗口 扫码登录\n(或设 BYPASS_LOGIN=1 跳过 login 检查)");
         }
         println!("\n[模式 {}] login check 跳过={}", if bypass_login { "B" } else { "A" }, bypass_login);
@@ -1283,7 +1307,7 @@ mod tests {
 
         let result = super::is_logged_in(&url).await;
         println!("\n========== RESULT ==========");
-        println!("is_logged_in({url}) = {result}");
+        println!("is_logged_in({url}) = {result:?}");
         println!("=========================================\n");
 
         // 不 assert! — 此测试只是 dump 状态,让用户看到真实情况。
