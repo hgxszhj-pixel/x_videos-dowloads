@@ -27,13 +27,41 @@ mod types;
 
 use dioxus::desktop::launch::launch;
 use dioxus::desktop::{tao, Config};
-use tracing::{error, info};
+use tracing::{error, info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 use crate::history::History;
 use crate::yt_dlp::YtDlp;
 
 /// 运行 Dioxus GUI
 pub fn run_gui() {
+    // 初始化 tracing: 写 /tmp/x-video-downloader.log (always writable) + stderr 兜底。
+    // 2026-08-01 修: 之前此函数无 subscriber,所有 info!/warn!/error! 调用全丢,排查问题盲飞。
+    // main() 里也有 init 但 cli.gui 直接 return 走 run_gui,那段是 dead code。
+    let log_path = std::path::PathBuf::from("/tmp/x-video-downloader.log");
+    let file_writer = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path);
+    match file_writer {
+        Ok(file) => {
+            FmtSubscriber::builder()
+                .with_max_level(Level::INFO)
+                .with_target(false)
+                .with_writer(file)
+                .init();
+            eprintln!("[GUI 日志] tail -f {}", log_path.display());
+        }
+        Err(e) => {
+            eprintln!("[GUI 日志] 无法打开 {}: {} — 回退 stderr-only", log_path.display(), e);
+            FmtSubscriber::builder()
+                .with_max_level(Level::INFO)
+                .with_target(false)
+                .with_writer(std::io::stderr)
+                .init();
+        }
+    }
+
     info!("Starting Dioxus GUI...");
 
     // 检查 yt-dlp

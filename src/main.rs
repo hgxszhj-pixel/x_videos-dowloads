@@ -100,38 +100,9 @@ fn main() {
         return;
     }
 
-    // 初始化日志（根据 verbose 参数设置级别）
-    let log_level = if cli.verbose { Level::DEBUG } else { Level::INFO };
-    if cli.gui {
-        // GUI 模式:写到 /tmp/x-video-downloader.log (always writable, no permission issues)。
-        // 用户点击按钮后可 `tail -f /tmp/x-video-downloader.log` 看实时 trace,排查"卡在分析中"等。
-        // 2026-08-01 改: 原路径 ~/Library/Application Support/com.xvd.x-video-downloader/ 偶尔
-        // 创建失败(权限/沙箱)且无明显报错,导致 log 完全丢失。/tmp 是 POSIX 标准临时目录,跨平台都稳。
-        let log_path = std::path::PathBuf::from("/tmp/x-video-downloader.log");
-        let file_writer = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path);
-        match file_writer {
-            Ok(file) => {
-                FmtSubscriber::builder()
-                    .with_max_level(log_level)
-                    .with_target(false)
-                    .with_writer(file)
-                    .init();
-            }
-            Err(e) => {
-                // 文件打不开就回 stderr-only,保证至少有一处能看
-                eprintln!("[GUI 日志] 无法打开 {}: {} — 回退 stderr-only", log_path.display(), e);
-                FmtSubscriber::builder()
-                    .with_max_level(log_level)
-                    .with_target(false)
-                    .with_writer(std::io::stderr)
-                    .init();
-            }
-        }
-        eprintln!("[GUI 日志] tail -f {}", log_path.display());
-    } else {
+    // 初始化日志（根据 verbose 参数设置级别）。GUI 模式在 run_gui() 里初始化 (2026-08-01 修)。
+    if !cli.gui {
+        let log_level = if cli.verbose { Level::DEBUG } else { Level::INFO };
         FmtSubscriber::builder()
             .with_max_level(log_level)
             .with_target(false)
