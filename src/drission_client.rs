@@ -211,23 +211,19 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         anyhow::bail!("Keychain 'ego safe storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
     }
 
-    // 3. 解密密钥 = base64 decode(Keychain 密码) = 16 字节 (Chromium macOS 实测)
-    //    2026-08-01 实测 (Python 脚本验证):Keychain 密码是 base64 编码的随机 16 字节,
-    //    base64 解码后直接当 AES-128 key 用,不需要 PBKDF2 派生。
-    //    cookies 用 **AES-128-CBC** 加密(不是 GCM!),v10 格式 = "v10" (3) + IV (16) + ct (PKCS7 padded)
-    use base64::Engine;
-    let raw_key: [u8; 16] = match base64::engine::general_purpose::STANDARD
-        .decode(password.as_bytes())
-        .ok()
-        .and_then(|v| <[u8; 16]>::try_from(v.as_slice()).ok())
-    {
-        Some(k) => k,
-        None => anyhow::bail!("Keychain 密码 base64 decode 后不是 16 字节 (实际 len={})", password.len()),
-    };
-    info!(target: "drission", "Keychain 密码: b64_len={} raw_key_hex={}",
-          password.len(), raw_key.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+    // 3. 派生 AES-128 key (Chromium macOS 标准算法 — 2026-08-01 GitHub chromium-cookies-secure 实测):
+    //    key = PBKDF2-HMAC-SHA1(Keychain_password_utf8, salt=b"saltysalt", iter=1003, dklen=16)
+    //    IV  = b" " * 16 (16 个空格,常量,不嵌入 cookie!)
+    //    cookies v10 = "v10" (3) + ciphertext (AES-128-CBC + PKCS7)
+    use pbkdf2::pbkdf2_hmac;
+    use sha1::Sha1;
+    let mut key = [0u8; 16];
+    pbkdf2_hmac::<Sha1>(password.as_bytes(), b"saltysalt", 1003, &mut key);
+    let iv: [u8; 16] = [b' '; 16];
+    info!(target: "drission", "Keychain 密码: len={} → PBKDF2 key_hex={}",
+          password.len(), key.iter().map(|b| format!("{:02x}", b)).collect::<String>());
 
-    // 4. 读 SQLite cookies (只关心 vip.tulingpyton.cn 域)
+    // 4. 读 SQLite cookies
     let conn = Connection::open(&cookies_db)
         .map_err(|e| anyhow!("打开 Cookies SQLite 失败: {e}"))?;
     let mut stmt = conn.prepare(
@@ -247,40 +243,34 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         let _host: String = row.get(3).unwrap_or_default();
         let expires_utc: i64 = row.get(4).unwrap_or(0);
 
-        // 跳过已过期 (Chrome 存 Windows epoch 微秒;转 unix 秒比较)
         if expires_utc > 0 {
             let expires_unix = expires_utc / 1_000_000 - 11_644_473_600;
-            if expires_unix < now_unix {
-                continue;
-            }
+            if expires_unix < now_unix { continue; }
         }
 
-        // 解密 v10 (AES-128-CBC + PKCS7): "v10" + 16-byte IV + ciphertext
+        // 解密 v10 (AES-128-CBC + PKCS7, IV 是常量 16 个空格)
         let value: String = if !encrypted_value.is_empty() {
             let total = encrypted_value.len();
-            if total < 3 + 16 + 16 || &encrypted_value[0..3] != b"v10" {
+            if total < 3 + 16 || &encrypted_value[0..3] != b"v10" {
                 continue;
             }
-            let iv: [u8; 16] = encrypted_value[3..19].try_into()
-                .map_err(|_| anyhow!("IV 长度异常"))?;
-            let ct = &encrypted_value[19..];
+            let ct = &encrypted_value[3..];
             if !ct.len().is_multiple_of(16) { continue; }
-            // 手动 AES-128-CBC + PKCS7 unpad (避开 aes crate 的 trait 缺失问题)
             use aes::cipher::{KeyInit, BlockDecrypt};
             use aes::cipher::generic_array::GenericArray;
-            let cipher = aes::Aes128::new_from_slice(&raw_key)
+            let cipher = aes::Aes128::new_from_slice(&key)
                 .map_err(|e| anyhow!("AES key 初始化失败: {e}"))?;
-            let mut prev = iv;  // prev = 上一个 ciphertext (首块 XOR IV)
+            let mut prev = iv;
             let mut out = Vec::with_capacity(ct.len());
             for chunk in ct.chunks_exact(16) {
-                let original_ct: [u8; 16] = chunk.try_into().unwrap();  // 记住原始密文
+                let original_ct: [u8; 16] = chunk.try_into().unwrap();
                 let mut ga = GenericArray::clone_from_slice(chunk);
                 cipher.decrypt_block(&mut ga);
                 let mut plain: [u8; 16] = ga.into();
                 for (o, p) in plain.iter_mut().zip(prev.iter()) {
                     *o ^= *p;
                 }
-                prev = original_ct;  // CBC: prev 是上一步的 ciphertext,不是解密结果
+                prev = original_ct;
                 out.extend_from_slice(&plain);
             }
             // PKCS7 unpad
@@ -294,9 +284,7 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         } else {
             plain_value
         };
-        if value.is_empty() {
-            continue;
-        }
+        if value.is_empty() { continue; }
 
         if !value.is_empty() && !name.is_empty() {
             parts.push(format!("{name}={value}"));
@@ -304,7 +292,7 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
     }
 
     if parts.is_empty() {
-        anyhow::bail!("ego-lite 找到 0 个 tulingpyton cookies (CBC 解密全失败,检查加密算法或过期)");
+        anyhow::bail!("ego-lite 找到 0 个 tulingpyton cookies (CBC 解密全失败,检查算法或过期)");
     }
     info!(target: "drission", "ego-lite 解密出 {} 个 cookies", parts.len());
     Ok(parts.join("; "))

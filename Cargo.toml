@@ -121,6 +121,10 @@ cbc = "0.2"
 generic-array = "0.14"
 typenum = "1.17"
 
+# Chromium cookie 解密 (PBKDF2-HMAC-SHA1(password, saltysalt, 1003, 16) → AES-128-CBC)
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+sha1 = "0.10"
+
 # 浏览器自动化(CDP)—— 用于 TulingPython 解析器拦截 m3u8，替换原 Python patchright 子进程。
 # 个人自用：source-available 协议（禁商用），详见 https://github.com/MageGojo/drission-rs/LICENSE
 # crates.io 落后到 0.3.2，必须用 git tag 锁定 v0.5.0。
