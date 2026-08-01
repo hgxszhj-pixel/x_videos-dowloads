@@ -283,7 +283,7 @@ pub async fn open_login_window(url: &str) -> Result<()> {
     let _ = tab.get(url).await;
 
     let mut logged_in = false;
-    for _ in 0..36 {
+    for i in 0..36 {
         // 最多 180s, 每 5s 检查一次
         tokio::time::sleep(Duration::from_secs(5)).await;
         let packets = listen
@@ -293,8 +293,11 @@ pub async fn open_login_window(url: &str) -> Result<()> {
         for p in &packets {
             if let Some(j) = p.json() {
                 if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
-                    if !ui.is_null() && ui.get("user_id").is_some() {
-                        info!("检测到登录成功 (user_id={:?})", ui.get("user_id"));
+                    // 必须 user_id 是非空字符串才算登录。Code:2506 时 user_info 经常是
+                    // {"user_id": null, ...} 形式存在但值为 null,旧逻辑 is_some() 会误判 true
+                    let uid = ui.get("user_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                    if !ui.is_null() && uid.is_some() {
+                        info!("检测到登录成功 (user_id={:?})", uid);
                         logged_in = true;
                         break;
                     }
@@ -302,6 +305,9 @@ pub async fn open_login_window(url: &str) -> Result<()> {
             }
         }
         if logged_in { break; }
+        if i % 6 == 5 {
+            warn!("已等待 {} 秒还未检测到登录,继续等...", (i + 1) * 5);
+        }
     }
     let _ = listen.stop().await;
     let _ = browser.quit().await;
@@ -309,7 +315,7 @@ pub async fn open_login_window(url: &str) -> Result<()> {
     if logged_in {
         info!("用户登录完成,headed 浏览器已关闭");
     } else {
-        warn!("180s 内未检测到登录成功,headed 浏览器已关闭 (用户可能中途取消)");
+        warn!("180s 内未检测到登录成功,headed 浏览器已关闭 (用户可能未完成扫码)");
     }
     Ok(())
 }
