@@ -158,6 +158,9 @@ async fn is_logged_in_via_ego_lite() -> LoginStatus {
     let msg = json.get("msg").and_then(|v| v.as_str()).unwrap_or("");
     if msg.contains("Code:2506") || msg.contains("当前用户不存在") {
         warn!(target: "drission", "ego-lite 登录已过期 (Code:2506)");
+        // 顺手清掉项目自建 profile 里的旧 cookie(用户在 ego-lite 已失效,我们 profile 里的 cookie 大概率也失效;
+        // 否则下次 fallback 启动 Drission 还会再报 Code:2506,提示用户重复扫码)
+        clear_stale_tulingpyton_cookies(&default_profile_dir());
         return LoginStatus::SessionExpired;
     }
 
@@ -362,6 +365,53 @@ pub async fn is_logged_in(url: &str) -> LoginStatus {
     LoginStatus::NotLoggedIn
 }
 
+/// 清理项目自建 profile 中所有 `*.tulingpyton.cn` 失效 cookies。
+///
+/// 仅清理 `~/Library/Caches/com.xvd.x-video-downloader/tulingpyton_profile`(我们自己的数据),
+/// **不**碰 ego-lite 的 profile(第三方 app 的数据,改了等于污染别人)。
+///
+/// 触发时机:服务端响应 `Code:2506` / "当前用户不存在" 时 → 这些 cookie 已失效,
+/// 留着只会让下次启动又触发一次 Code:2506 误报,用户每次都被提示"重新扫码"。
+///
+/// 返回实际删除的 row 数(0 表示 profile 不存在 / SQLite 暂时被 Chrome 句柄锁住)。
+/// 锁住时**不重试** — 下次 `is_logged_in` 会自然再试一次(`browser.quit()` 之后通常锁已释放)。
+fn clear_stale_tulingpyton_cookies(profile_dir: &std::path::Path) -> usize {
+    use rusqlite::Connection;
+
+    let cookies_db = profile_dir.join("Default").join("Cookies");
+    if !cookies_db.exists() {
+        return 0;
+    }
+
+    let conn = match Connection::open(&cookies_db) {
+        Ok(c) => c,
+        Err(e) => {
+            // 通常是 Chrome 句柄还没释放(刚刚 `browser.quit()`),下次调用会重试
+            warn!(target: "drission", "  ✗ 打开 Cookies SQLite 失败 (跳过本次清理): {e}");
+            return 0;
+        }
+    };
+
+    // WAL checkpoint:把 WAL 强制 truncate 掉,确保 Chrome 下次启动读到的是我们改完的 main DB
+    // (否则 WAL replay 会把我们 DELETE 的行"还原"回来)
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+    match conn.execute(
+        "DELETE FROM cookies WHERE host_key LIKE '%tulingpyton.cn'",
+        [],
+    ) {
+        Ok(n) => {
+            info!(target: "drission", "  ✓ 清理 {} 个失效 tulingpyton cookies ({:?})",
+                  n, cookies_db);
+            n
+        }
+        Err(e) => {
+            warn!(target: "drission", "  ✗ DELETE tulingpyton cookies 失败: {e}");
+            0
+        }
+    }
+}
+
 /// 单 URL 探测:启动 headless Chrome → 导航 → 拦 common.public.data.get → 分类登录状态
 async fn check_login_at(profile: PathBuf, url: &str) -> LoginStatus {
     use drission::cdp::{ChromiumBrowser, ChromiumOptions};
@@ -420,6 +470,9 @@ async fn check_login_at(profile: PathBuf, url: &str) -> LoginStatus {
         let msg = j.get("msg").and_then(|v| v.as_str()).unwrap_or("");
         if msg.contains("当前用户不存在") || msg.contains("Code:2506") {
             warn!(target: "drission", "  登录已过期 ✗ (Code:2506 当前用户不存在) — cookie 还在但服务端不识别");
+            // 顺手清掉本地 profile 里的失效 cookies,否则下次启动又会重复一次 Code:2506 误报。
+            // `browser.quit()` 在前面已 await,SQLite 锁通常已释放;若仍锁住则跳过,下次 is_logged_in 会重试。
+            clear_stale_tulingpyton_cookies(&profile);
             return LoginStatus::SessionExpired;
         }
         if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
@@ -918,6 +971,90 @@ mod tests {
             s.contains("tulingpyton_profile"),
             "default_profile_dir 必须返回项目自建路径 (含 tulingpyton_profile),实际: {dir:?}"
         );
+    }
+
+    /// 回归测试 (Code:2506 自动清理):
+    /// `clear_stale_tulingpyton_cookies` 必须只删 `*.tulingpyton.cn` 相关 cookie,
+    /// **不能**误伤其他域(否则把用户其他网站登录态也清了,等于 bug)。
+    ///
+    /// 2026-08-01:曾考虑过用 `host_key LIKE '%tulingpyton%'`,会误删 `nottulingpyton.com`
+    /// 之类不相关域;改用 `LIKE '%tulingpyton.cn'` 后缀匹配才安全。
+    #[test]
+    fn clear_stale_tulingpyton_cookies_only_removes_target_host() {
+        use rusqlite::Connection;
+
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let default_dir = dir.path().join("Default");
+        std::fs::create_dir_all(&default_dir).unwrap();
+        let db_path = default_dir.join("Cookies");
+
+        // 准备一个最小 Chromium cookies schema (DELETE 谓词只用到 host_key,但其它列也加上
+        // 以匹配真实 Chromium 表结构,避免未来 schema 严格化时炸)
+        let conn = Connection::open(&db_path).expect("open SQLite");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE cookies (
+                host_key TEXT NOT NULL,
+                name TEXT,
+                value TEXT,
+                encrypted_value BLOB,
+                expires_utc INTEGER
+            );
+            "#,
+        )
+        .expect("create table");
+
+        // 5 行:3 个 tulingpyton 相关(应被删) + 2 个其他域(应保留)
+        let rows: &[(&str, &str, &str)] = &[
+            (".vip.tulingpyton.cn", "user_id", "u123"),
+            ("vip.tulingpyton.cn", "session", "abc"),
+            (".tulingpyton.cn", "sub_cookie", "xyz"),
+            ("x.com", "tw_session", "should_keep_1"),
+            // 反例:包含 `tulingpyton` 子串但不是 `.cn` 后缀 → 不应删
+            ("nottulingpyton.com", "decoy", "must_keep_3"),
+            ("github.com", "user_session", "must_keep_4"),
+        ];
+        for (host, name, value) in rows {
+            conn.execute(
+                "INSERT INTO cookies(host_key, name, value, encrypted_value, expires_utc) \
+                 VALUES (?, ?, ?, ?, ?)",
+                rusqlite::params![host, name, value, Vec::<u8>::new(), 0i64],
+            )
+            .expect("insert");
+        }
+        drop(conn);
+
+        // 调清理函数
+        let n = clear_stale_tulingpyton_cookies(dir.path());
+        assert_eq!(n, 3, "应删除 3 个 tulingpyton.cn 相关 cookie (含子域),实际 {n}");
+
+        // 验证剩余行(只剩 3 个非目标域)
+        let conn = Connection::open(&db_path).expect("reopen SQLite");
+        let mut stmt = conn
+            .prepare("SELECT host_key FROM cookies ORDER BY host_key, name")
+            .unwrap();
+        let hosts: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            hosts,
+            vec![
+                "github.com".to_string(),
+                "nottulingpyton.com".to_string(),
+                "x.com".to_string(),
+            ],
+            "应只保留非 tulingpyton.cn 的 cookie (含 decoy 反例)"
+        );
+    }
+
+    /// 回归测试:profile 目录不存在时必须返回 0,不能 panic。
+    #[test]
+    fn clear_stale_tulingpyton_cookies_handles_missing_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        // 不创建 Default/Cookies
+        assert_eq!(clear_stale_tulingpyton_cookies(dir.path()), 0);
     }
 
     /// 回归测试:CDP 监听的 COURSE_API 子串必须能匹配小鹅通真实课节 API 的 URL,
