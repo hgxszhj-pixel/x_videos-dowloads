@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-01（is_logged_in 修复 × 5 commit + ego-lite profile 路径修正, 225 tests pass）
+**更新**: 2026-08-01（is_logged_in 改 AppleScript+ego-lite,跨浏览器 Keychain 加密密钥问题彻底绕过,225 tests pass）
 
 ---
 
@@ -8,11 +8,18 @@
 
 | Commit | 主题 | 改动文件 |
 |---|---|---|
+| `1de74e9` | `fix(drission): macOS 用 AppleScript + ego-lite 检测登录态,避开 Keychain 加密密钥不匹配` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` + `open_login_window_via_ego_lite` + `default_profile_dir` 重写) |
+| `9c7e763` | `fix(drission): 登录轮询要求 user_id 是非空字符串,加 30s/60s 进度日志` | `src/drission_client.rs` (`open_login_window` polling) |
+| `b784420` | `fix(drission): 改用 Drission headed 模式 + 项目自建 profile 解决跨浏览器 cookie 加密不匹配` | `src/drission_client.rs` (`default_profile_dir` → 项目自建) |
+| `d89a182` | `fix(gui): tracing subscriber 移到 run_gui(),main() 里那 30 行是 dead code` | `src/main.rs` + `src/gui_dioxus/mod.rs` |
+| `4268369` | `fix(main): GUI 日志路径简化到 /tmp,加 stderr 兜底` | `src/main.rs` (后来发现是 dead code,被 d89a182 移走) |
+| `7a8ff43` | `fix(gui): SessionExpired 错误归类为 login 而不是 course,提示文案匹配` | `src/gui_dioxus/actions.rs` (错误前缀 🔑 + Code:2506 匹配) |
+| `b631b02` | `fix(drission): 区分 LoginStatus::SessionExpired vs NotLoggedIn,GUI 给出明确指引` | `src/drission_client.rs` (LoginStatus enum) + `src/gui_dioxus/handlers.rs` |
+| `c1b0927` | `docs(handoff): 精简至 246 行,保留代码修改/绝对路径,丢弃叙述分析` | HANDOFF.md |
 | `89b4e38` | `docs(handoff): 登记 ego-lite profile 路径修复 + 经验 #27` | HANDOFF.md |
 | `d0419e9` | `fix(drission): 修复 ego-lite profile 路径检测` | `src/drission_client.rs` (`Citro Labs/ego lite` 加首位) |
 | `700ba46` | `test(diag): 加 diag_is_logged_in_real_profile 隔离诊断` | `src/drission_client.rs` 新增 `#[ignore]` 测试 |
 | `512b679` | `fix(gui): is_logged_in 诊断增强 + 多 URL 兜底` | `src/drission_client.rs` (`check_login_at` 拆分 + `log_candidate_profiles`) |
-| `d909010` | `docs(handoff): 登记 is_logged_in 课程 URL 修复 + 经验 #26` | HANDOFF.md |
 | `494755c` | `fix(gui): 双击分析课程不再误报"需要登录"` | `src/gui_dioxus/handlers.rs` URL 传参 + `src/drission_client.rs` 诊断 tracing |
 | `d6cd948` | `feat(platform): 切换 Scrapling → Drission CDP` | `Cargo.toml` + `src/main.rs` + `src/drission_client.rs` + `src/platform/*` |
 | `832109b` | `feat(download): X 下载速度自适应` | `src/fxtwitter/` + `src/website_profile.rs` + `src/downloader/mod.rs` + `src/commands/download/strategy_*` + `src/gui_dioxus/handlers.rs` |
@@ -20,7 +27,7 @@
 | `b50d4f1` | `simplify(gui): 7 项 /simplify agent 建议修复` | OR 展平 + 4 死字段 + 1 平行 flag + 4 trivial |
 | `baa3328` | `refactor(gui): 拆分 app.rs (1177 → 651 行)` | 7 个新子组件 + `app.rs` 精简 + `mod.rs` |
 
-> 全部 commit 含 `Intent: <一句话>` (`.git/hooks/commit-msg` 强制)。`SkillOpt/` `.claude/` 是 gitbutler workspace 残留。
+> 全部 commit 含 `Intent: <一句话>` (`.git/hooks/commit-msg` 强制)。`SkillOpt/` 是 gitbutler workspace 残留。
 
 ---
 
@@ -30,7 +37,7 @@
 cargo run -- "URL"              # CLI
 cargo run -- --gui              # GUI (Dioxus 0.7.9)
 cargo test --quiet && cargo clippy --quiet --all-targets
-# GUI 日志:tail -f ~/Library/Application\ Support/com.xvd.x-video-downloader/x-video-downloader.log
+# GUI 日志: tail -f /tmp/x-video-downloader.log
 ```
 
 ---
@@ -46,7 +53,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | 解析 | `/Users/hgxszhj/x_videos-dowloads/src/platform/` (ResolverRegistry singleton) |
 | 下载命令 | `/Users/hgxszhj/x_videos-dowloads/src/commands/download/` |
 | URL 工具 | `/Users/hgxszhj/x_videos-dowloads/src/utils/url_matcher.rs` |
-| CDP 浏览器 | `/Users/hgxszhj/x_videos-dowloads/src/drission_client.rs` |
+| CDP 浏览器 + 登录检测 | `/Users/hgxszhj/x_videos-dowloads/src/drission_client.rs` |
 | 配置 | `/Users/hgxszhj/x_videos-dowloads/src/config.rs` |
 | 持久化 | `/Users/hgxszhj/x_videos-dowloads/src/history.rs` |
 
@@ -68,7 +75,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | 类型 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/types.rs` |
 | 主题 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/theme.rs` |
 | 事件 Action | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/actions.rs` |
-| macOS 桥接 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/bridge.rs` |
+| 拖放 URL bridge | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/bridge.rs` |
 
 ---
 
@@ -91,32 +98,41 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 
 ### 入口
 - GUI: `course_action.call(url)` → `fetch_course_collection_impl` (`src/gui_dioxus/handlers.rs:221`)
-- 登录窗口: `open_tuling_login(url)` (`src/gui_dioxus/handlers.rs:276`)
+- 登录窗口: `open_tuling_login(url)` (`src/gui_dioxus/handlers.rs:285`)
 
-### profile 优先级 (`src/drission_client.rs:57-82`)
+### 登录态检测 (macOS AppleScript + Drission fallback)
 ```
-1. ~/Library/Application Support/Citro Labs/ego lite/   ← ego-lite 真实路径
-2. ~/Library/Application Support/com.citrolabs.ego.lite/ ← 老路径兼容
-3. ~/Library/Application Support/Google/Chrome/          ← Chrome 兜底
-4. ~/Library/Caches/com.xvd.x-video-downloader/tulingpyton_profile/  ← 项目自建
+1. macOS + ego-lite 已开:is_logged_in_via_ego_lite()
+   → osascript 同步 XHR common.public.data.get → 读 user_info.user_id
+   → 用户在 ego-lite 已登录的会话直接复用 (Keychain 加密密钥自动一致)
+2. fallback (非 macOS / ego-lite 未开): is_logged_in()
+   → check_login_at(project_profile, url) — headless Chrome 启动 + 拦 common.public.data.get
 ```
+
+### profile 目录 (2026-08-01 第三次重构)
+```
+~/Library/Caches/com.xvd.x-video-downloader/tulingpyton_profile/   ← 唯一,仅 Drission 使用
+```
+**不再复用**系统浏览器 (ego-lite / Chrome) profile — 跨浏览器 Keychain "<ProductName> Safe Storage" 加密密钥不匹配,服务端 Code:2506。
 
 ### 关键实现 (`src/drission_client.rs`)
 | 功能 | 行/函数 |
 |------|---------|
-| `default_profile_dir()` | line 57 |
-| `is_profile_dir_in_use()` | line 85 |
-| `is_logged_in(url)` | line 101 (多 URL 兜底: course → homepage) |
-| `check_login_at(profile, url)` | line 133 (单 URL 探针) |
+| `default_profile_dir()` | 永远返回项目自建 profile (系统浏览器 profile 已被放弃) |
+| `is_profile_dir_in_use()` | SingletonLock / SingletonCookie 探测 |
+| `LoginStatus` enum | `LoggedIn` / `SessionExpired` / `NotLoggedIn` |
+| `is_logged_in(url)` | macOS 优先 AppleScript,fallback Drission headless |
+| `is_logged_in_via_ego_lite()` (macOS) | osascript 同步 XHR → user_info |
+| `check_login_at(profile, url)` | 单 URL Drission 探针 |
 | `log_candidate_profiles()` | 扫描 Application Support 诊断 |
-| `open_login_window(url)` | 弹 headed 浏览器 |
+| `open_login_window(url)` | macOS AppleScript 开 ego-lite;其他平台 Drission headed |
+| `open_login_window_via_ego_lite(url)` (macOS) | osascript open location |
 | 翻页 helper | `read_total_and_page_size`, `extract_pagination_params`, `build_pagination_js`, `merge_paginated_items` |
 
-### 登录态检测逻辑
-- **不读本地 cookie** (加密)
-- 拦截 `xe.micro_page.common.public.data.get` 响应 → 取 `data.user_info.user_id`
-- `user_info` 非 null → 已登录；null 或 code != 0 → 未登录
-- 多 URL 兜底: 课程 URL → 首页（任何一路拿到 user_info 算登录）
+### 登录态分类 (`is_logged_in_via_ego_lite` / `check_login_at`)
+- `LoggedIn`        `data.user_info.user_id` 是非空字符串
+- `SessionExpired`  msg 含 "Code:2506" / "当前用户不存在" (cookie 还在但服务端拒绝识别)
+- `NotLoggedIn`     user_info 为 null 或缺失
 
 ### `src/platform/tulingpyton.rs` 关键实现
 - `list_collection(url)` 递归展开 (`visited: HashSet` 防环)
@@ -142,6 +158,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | `read_total_and_page_size_handles_both_field_names` | `src/drission_client.rs` | 翻页 total 字段兼容 |
 | `extract_pagination_params_reads_jump_url_or_fallback` | `src/drission_client.rs` | column_id 提取 |
 | `build_pagination_js_emits_correct_fetch_calls` | `src/drission_client.rs` | 翻页 JS 模板 |
+| `test_profile_dir_returns_self_built_under_project_cache` | `src/drission_client.rs` | 验证 default_profile_dir 走项目自建 |
 | `integration_course_pool` | `tests/` | 真实 E2E 递归拉课节 |
 | `integration_diag_lesson_player` | `tests/` | 课节页深度诊断 |
 | `single_video_download_e2e` | `tests/` | A/B/C 三模式 (A=小鹅通, B=BYPASS_LOGIN, C=USE_PUBLIC_TEST) |
@@ -150,7 +167,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | `test_recommended_segments_for_size` | `src/website_profile.rs` | 文件大小 3 分桶 |
 | `test_error_display_label_*` (3) | `src/gui_dioxus/types.rs` | ErrorDisplay 标签 |
 | `test_escape_applescript_string_*` (3) | `src/gui_dioxus/bridge.rs` | AppleScript 注入防御 |
-| `diag_is_logged_in_real_profile` | `src/drission_client.rs` | 隔离诊断 `is_logged_in` (2026-08-01 加) |
+| `diag_is_logged_in_real_profile` | `src/drission_client.rs` | 隔离诊断 is_logged_in |
 
 ---
 
@@ -185,6 +202,10 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | 25 | 死代码字段清理: 14 处 L12 注解中 11 处安全删除 (KEEP 3 处: speed/speed_arc/cancel_flag) | `src/gui_dioxus/types.rs` |
 | 26 | `is_logged_in(url)` 必须用调用方传入的 URL (SPA 首页不触发 user_info API → 误判未登录) | `src/gui_dioxus/handlers.rs:234` + `src/drission_client.rs:101` |
 | 27 | macOS app profile 路径 ≠ Bundle ID: ego-lite 真实路径是 `~/Library/Application Support/Citro Labs/ego lite/` (父目录是发行公司 Citro Labs) | `src/drission_client.rs:57-82` |
+| 28 | LoginStatus 必须 3 态: LoggedIn / SessionExpired / NotLoggedIn。Code:2506 ≠ NotLoggedIn (cookie 还在但服务端不认),GUI 需分别给"重扫码"和"打开登录窗口"指引 | `src/drission_client.rs` + `src/gui_dioxus/handlers.rs` |
+| 29 | macOS Chromium cookie 加密密钥 = Keychain entry "<ProductName> Safe Storage"。ego-lite (ProductName="ego lite") 和 Drission (ProductName≠"ego lite") 互解不出对方 cookies → 服务端 Code:2506。**唯一可靠方案**: 在用户已登录的浏览器 (ego-lite) 里直接发请求 (AppleScript 注入 JS),完全不切换 profile | `src/drission_client.rs` (`default_profile_dir` + `is_logged_in_via_ego_lite`) |
+| 30 | `tracing` subscriber 必须在实际跑日志的代码路径上 init。`cli.gui → run_gui()` 早 return 时,main() 里的 init 是 dead code — GUI 日志全丢。**位置**: `src/gui_dioxus/mod.rs::run_gui()` 顶部 | `src/main.rs` + `src/gui_dioxus/mod.rs` |
+| 31 | LoginStatus 判定必须严格:`user_id` 是 **非空字符串** 才算登录。`user_id: null` (Code:2506 响应常见) 用 `is_some()` 误判 true。Code: `uid = ui.get("user_id").and_then(\|v\| v.as_str()).filter(\|s\| !s.is_empty())` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` + `check_login_at`) |
 
 ---
 
@@ -192,9 +213,9 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 
 | 检查 | 结果 |
 |------|------|
-| `cargo test` | ✅ 225 passed, 7 ignored (2026-08-01 ego-lite 修复) |
+| `cargo test` | ✅ 225 passed, 7 ignored (2026-08-01 AppleScript 登录检测) |
 | `cargo check` | ✅ 0 warnings |
-| `cargo clippy --all-targets` | ✅ 0 warnings (pre-existing main.rs:108) |
+| `cargo clippy --all-targets` | ✅ 0 warnings |
 
 ## 已知问题
 
@@ -203,10 +224,9 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | 抖音 "Fresh cookies needed" | 导出 Netscape 格式 Cookie |
 | TikTok 403/HTML | 配置 msToken |
 | tokio shutdown panic | `2>/dev/null` 抑制 stderr |
-| 小鹅通未登录 → "内容暂无法观看" | GUI 启动本地浏览器 (ego-lite → Chrome → 默认) 180s 后 AppleScript 关 tulingpyton 标签 |
-| 小鹅通登录过期 (Code:2506) | 用户重扫码后复用 profile |
-| Chrome SingletonLock 残留 | `is_profile_dir_in_use` (`src/drission_client.rs:85`) 拦截;`default_profile_dir` 不检查 SingletonLock (crash 后符号链接指向死 PID 太常见) |
-| 用户开着 Chrome → ego-lite 登录态丢失 | ego-lite 候选排序首位 + Drission 启动报 "profile locked" 让用户感知 |
+| 小鹅通未登录 → "内容暂无法观看" | GUI 启动 AppleScript 打开 ego-lite (macOS) 或 Drission headed (其他平台),让用户扫码 |
+| 小鹅通登录过期 (Code:2506) | is_logged_in 返回 SessionExpired,GUI 提示"重扫码" |
+| Chrome SingletonLock 残留 | `is_profile_dir_in_use` (`src/drission_client.rs:80`) 拦截 |
 | `cargo fmt --check` 报 ~490 处格式差异 | pre-existing, 无 rustfmt.toml |
 
 ## 调试
@@ -227,10 +247,25 @@ cargo test integration_login_and_capture -- --ignored --nocapture
 cargo test diag_is_logged_in_real_profile -- --ignored --nocapture
 
 # GUI 日志
-tail -f ~/Library/Application\ Support/com.xvd.x-video-downloader/x-video-downloader.log
+tail -f /tmp/x-video-downloader.log
 
 # ego-lite profile 路径探测
 ls ~/Library/Application\ Support/ | grep -i ego
+
+# AppleScript 手动验证 (复制粘贴到 Script Editor)
+osascript -e 'tell application "ego lite"
+    activate
+    set URL of active tab of front window to "https://vip.tulingpyton.cn"
+    delay 2
+    set jsResult to (execute javascript "
+        var xhr = new XMLHttpRequest();
+        xhr.open("'"'"'POST'"'"'", "https://vip.tulingpyton.cn/xe.micro_page.common.public.data.get/1.0.0", false);
+        xhr.setRequestHeader("'"'"'Content-Type'"'"'", "application/json");
+        xhr.send(JSON.stringify({type: "pc"}));
+        xhr.responseText;
+    ")
+    return jsResult
+end tell'
 ```
 
 ---
