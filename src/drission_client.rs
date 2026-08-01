@@ -216,19 +216,27 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         anyhow::bail!("Keychain 'ego safe storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
     }
 
-    // 3. PBKDF2-HMAC-SHA1 派生 AES-128 密钥
-    //    Chromium macOS 在不同版本用不同 iteration:Chrome 80-90 用 1003,
-    //    Chrome 91+ 部分用 1。ego-lite 实测可能是 1003 或 1。两个都试,看哪个解密成功。
+    // 3. 派生 AES-128 密钥
+    //    2026-08-01 实测: Chromium 在 macOS Keychain 存的是 base64(random_16_bytes),
+    //    base64 解码后直接当 AES-128 key 用 — 不用 PBKDF2 派生 (这是与 Chromium 文档
+    //    常见的 PBKDF2 描述不一致的地方,实测密钥是 base64 编码的随机 16 字节)。
+    //    兼容旧/新 Chromium:PBKDF2 派生也保留作 fallback (有些 fork 用)。
+    use base64::Engine;
+    let raw_key: Option<Vec<u8>> = base64::engine::general_purpose::STANDARD
+        .decode(password.as_bytes())
+        .ok()
+        .filter(|v| v.len() == 16);
+    let cipher_raw = raw_key.as_ref().map(|k| {
+        Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(k.as_slice()))
+    });
     let key_1003: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1003);
     let key_1: [u8; 16] = pbkdf2_hmac_array::<Sha1, 16>(password.as_bytes(), b"saltysalt", 1);
     let cipher_1003 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1003));
     let cipher_1 = Aes128Gcm::new(aes_gcm::Key::<Aes128Gcm>::from_slice(&key_1));
 
-    // 诊断: 打印 Keychain 密码信息
-    let pw_bytes = password.as_bytes();
-    let pw_hex: String = pw_bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect();
-    info!(target: "drission", "Keychain 密码: len={} head_hex={}... ({})",
-          pw_bytes.len(), pw_hex, if pw_bytes.len() <= 16 { "<=16B 用作 raw key" } else { ">16B 必须派生" });
+    info!(target: "drission", "Keychain 密码: len={} base64_decoded_len={:?} 用 raw_key={}",
+          password.len(), raw_key.as_ref().map(|v| v.len()),
+          if cipher_raw.is_some() { "✓" } else { "✗" });
 
     // 4. 读 SQLite cookies (只关心 vip.tulingpyton.cn 域)
     let conn = Connection::open(&cookies_db)
@@ -264,21 +272,27 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
             if total < 3 + 12 + 16 || &encrypted_value[0..3] != b"v10" {
                 continue;
             }
-            // 用独立变量持有切片,避开 borrow checker
             let nonce_slice: &[u8] = &encrypted_value[3..15];
             let nonce = Nonce::from_slice(nonce_slice);
             let ct_end = total - 16;
             let ct_slice: &[u8] = &encrypted_value[3..ct_end];
-            // 双密钥 fallback:Chrome 80-90 用 iter=1003,Chrome 91+ 用 iter=1
-            cipher_1003.decrypt(nonce, ct_slice)
-                .or_else(|_| cipher_1.decrypt(nonce, ct_slice))
-                .map(|pt| String::from_utf8_lossy(&pt).into_owned())
-                .unwrap_or_else(|_| {
+            // 4 路 fallback:raw key (实测真值) > PBKDF2 iter=1003 > iter=1
+            let result = if let Some(ref c) = cipher_raw {
+                c.decrypt(nonce, ct_slice).ok()
+            } else {
+                None
+            }
+            .or_else(|| cipher_1003.decrypt(nonce, ct_slice).ok())
+            .or_else(|| cipher_1.decrypt(nonce, ct_slice).ok());
+            match result {
+                Some(pt) => String::from_utf8_lossy(&pt).into_owned(),
+                None => {
                     if name == "userInfo" || name == "show_user_icon" {
-                        warn!(target: "drission", "认证 cookie {} 解密失败 (双密钥都试过)", name);
+                        warn!(target: "drission", "认证 cookie {} 解密失败 (raw+1003+1 三密钥都试过)", name);
                     }
                     String::new()
-                })
+                }
+            }
         } else {
             plain_value
         };
