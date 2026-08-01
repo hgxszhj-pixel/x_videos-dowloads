@@ -1,7 +1,6 @@
 //! 主应用组件（Dioxus RSX 视图）
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use dioxus::prelude::*;
@@ -11,17 +10,21 @@ use std::time::Duration;
 
 use crate::config::AppConfig;
 
-use super::handlers::{batch_download_impl, start_download_impl};
+use super::handlers::{batch_download_impl, open_tuling_login, start_download_impl};
 use super::store::{
-    add_completed_download, clear_global_history, get_history_items, reload_config,
+    add_completed_download, get_history_items, reload_config,
     send_notification,
 };
 use super::theme::AppTheme;
-use super::types::{AppState, BatchItemState, BatchState, ErrorDisplay, VideoInfoDisplay};
-use super::components::{BrowseButton, CardShadow, CloseButton, DestructivePillButton, ErrorPanel, SettingsNumberInput, SettingsTextInput, ThemeSwatch, UrlInput, WhiteCard};
+use super::types::{
+    AppState, BatchItemState, BatchState, CourseCollectionState, ErrorDisplay, VideoInfoDisplay,
+};
+use super::components::{CardShadow, DestructivePillButton, ErrorPanel, ThemeSwatch, UrlInput, WhiteCard};
 use super::poller::{use_progress_poller, PollMsg};
-use super::actions::{sync_fetch_action_to_state, use_fetch_action};
-use super::theme::{STYLE_BTN_ICON, STYLE_PROGRESS_TRACK, BG_SUBTLE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
+use super::actions::{
+    sync_course_action_to_state, sync_fetch_action_to_state, use_fetch_action, use_fetch_course_action,
+};
+use super::theme::{BG_SUBTLE, TEXT_MUTED};
 
 /// 主应用组件
 #[component]
@@ -41,9 +44,85 @@ pub(super) fn AppComponent() -> Element {
     // 进度轮询 coroutine — 替代手写 spawn(async move { loop { ... } }) 轮询循环
     let poller = use_progress_poller(state);
 
+    // config watcher shutdown flag — use_drop 必须在 render 期注册(Dioxus 0.7 hook placement),
+    // 在 use_effect 内调用会违反 Rules of Hooks 并导致 cleanup 不可靠。
+    // 实际 Arc 在下方 use_effect 里创建,通过此 signal 桥传给 use_drop。
+    let mut watcher_shutdown: Signal<Option<Arc<AtomicBool>>> = use_signal(|| None);
+    use_drop(move || {
+        if let Some(flag) = watcher_shutdown.cloned() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    });
+
+    // 课程池轮询 mount-once guard:use_effect 读 state 会随 state 变化重跑,
+    // 每次都 spawn 新 task 导致指数增长。用此 flag 锁定只启动一次,循环退出时清空。
+    let mut course_poller_active: Signal<bool> = use_signal(|| false);
+
     // fetch action — 替代手写 submit_urls 闭包（latest-wins 自动 cancel）
     let mut fetch_action = use_fetch_action();
     sync_fetch_action_to_state(state, video_info, fetch_action);
+
+    // 课程池 action — 与 fetch 互斥：URL 提交时先尝试 course，失败回退到单视频
+    let mut course_action = use_fetch_course_action();
+    sync_course_action_to_state(state, fetch_action, course_action);
+
+    // 课程池进度轮询：把每项 CourseItemSlot 原子值同步到 Store。
+    // 轮询节奏：使用 Dioxus 内置 use_future 周期不易控制；这里用 use_effect + sleep。
+    use_effect(move || {
+        // mount-once guard:已经在跑就不重复 spawn
+        if course_poller_active.cloned() {
+            return;
+        }
+        let s = state.read();
+        let has_slot = s
+            .course_collection_state
+            .items
+            .iter()
+            .any(|i| i.slot.is_some());
+        drop(s);
+        if !has_slot {
+            return;
+        }
+        course_poller_active.set(true);
+        let mut poller_flag_for_loop = course_poller_active;
+        let mut state_for_poll = state;
+        spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                let s = state_for_poll.read();
+                let any_active = s.course_collection_state.items.iter().any(|i| {
+                    i.slot.as_ref().map(|sl| {
+                        let st = sl.status.load(Ordering::Relaxed);
+                        st == 1 || st == 2
+                    }).unwrap_or(false)
+                });
+                drop(s);
+                if !any_active {
+                    break;
+                }
+                let mut s = state_for_poll.write();
+                for it in s.course_collection_state.items.iter_mut() {
+                    if let Some(sl) = it.slot.as_ref() {
+                        it.progress = sl.progress.load(Ordering::Relaxed) as f32 / 10000.0;
+                        let st = sl.status.load(Ordering::Relaxed);
+                        let new_status = match st {
+                            1 => "resolving",
+                            2 => "downloading",
+                            3 => "completed",
+                            4 => "failed",
+                            5 => "skipped",
+                            _ => "pending",
+                        };
+                        if it.status != new_status {
+                            it.status = new_status.to_string();
+                        }
+                    }
+                }
+            }
+            // 循环退出后清 flag,允许下次课程池重新触发时再启动
+            poller_flag_for_loop.set(false);
+        });
+    });
 
     // 拖放 URL bridge — 解锁 HANDOFF §明日继续 #5（macOS WKWebView 监听外部 drop）
     use_effect(move || {
@@ -62,20 +141,32 @@ pub(super) fn AppComponent() -> Element {
         if let Some(path) = config_path {
             if let Some(parent) = path.parent() {
                 let parent = parent.to_path_buf();
-                // shutdown flag：use_drop 在 AppComponent 卸载时设 true，thread 检测后干净退出
+                // shutdown flag 通过 component-scoped signal 注册,use_drop 在 AppComponent 卸载时设 true
                 let shutdown = Arc::new(AtomicBool::new(false));
-                let shutdown_thread = shutdown.clone();
+                watcher_shutdown.set(Some(shutdown.clone()));
+                let shutdown_thread = shutdown;
 
                 std::thread::spawn(move || {
                     let (tx, rx) = std::sync::mpsc::channel();
-                    let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, _>| {
-                        if res.is_ok() {
-                            let _ = tx.send(());
+                    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                        // 之前 .ok() 静默吞掉 watcher 回调错误,改成显式 warn
+                        if let Err(e) = res {
+                            tracing::warn!("config watcher 回调错误: {}", e);
+                            return;
                         }
-                    }).ok();
+                        let _ = tx.send(());
+                    }) {
+                        Ok(w) => Some(w),
+                        Err(e) => {
+                            tracing::warn!("无法创建 config watcher: {} (config 热重载将不可用)", e);
+                            None
+                        }
+                    };
 
                     if let Some(ref mut w) = watcher {
-                        let _ = w.watch(&parent, RecursiveMode::NonRecursive);
+                        if let Err(e) = w.watch(&parent, RecursiveMode::NonRecursive) {
+                            tracing::warn!("config watcher watch({:?}) 失败: {}", parent, e);
+                        }
                     }
 
                     // 500ms 超时循环 + shutdown 检查，避免 for _ in rx 永久阻塞
@@ -86,11 +177,6 @@ pub(super) fn AppComponent() -> Element {
                             Err(RecvTimeoutError::Disconnected) => break,
                         }
                     }
-                });
-
-                // AppComponent 卸载时设 shutdown flag 让 thread 退出
-                use_drop(move || {
-                    shutdown.store(true, Ordering::Relaxed);
                 });
             }
         }
@@ -118,6 +204,34 @@ pub(super) fn AppComponent() -> Element {
         state.write().error_display = None;
         state.write().has_video_info = false;
         fetch_action.call(state.read().url.clone());
+    };
+
+    // 触发课程池分析：成功后渲染下载池；失败回退到单视频
+    let mut trigger_course = move || {
+        if course_action.pending() {
+            // 已有一次分析在跑（最新一次获胜，旧任务会被 cancel）
+            // 二次点击不重复触发，避免并发 Chromium 锁 profile 失败
+            return;
+        }
+        let url = state.read().url.clone();
+        if url.is_empty() {
+            return;
+        }
+        // profile 被其他 Chrome 实例占用时直接提示，避免启动崩溃
+        let profile = crate::drission_client::default_profile_dir();
+        if crate::drission_client::is_profile_dir_in_use(&profile) {
+            state.write().error_display = Some(ErrorDisplay::new(
+                "login",
+                "浏览器 profile 被占用",
+                "请先关闭本应用专用 headed 登录窗口，或结束残留的 Chrome 进程后重试。",
+            ));
+            return;
+        }
+        state.write().is_fetching = true;
+        state.write().status_message = "分析课程中...".to_string();
+        state.write().error_display = None;
+        state.write().course_collection_state = CourseCollectionState::default();
+        course_action.call(url);
     };
 
     rsx! {
@@ -253,11 +367,58 @@ pub(super) fn AppComponent() -> Element {
                         if state.read().is_fetching { "加载中..." } else { "📥 获取信息" }
                     }
                     button {
+                        onclick: move |_| trigger_course(),
+                        disabled: (course_action.pending() || state.read().is_logging_in).then_some("disabled"),
+                        style: if course_action.pending() || state.read().is_logging_in {
+                            "padding: 0 20px; background: #4a4a6a; color: #aaa; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: not-allowed;"
+                        } else {
+                            "padding: 0 20px; background: #6f5cff; color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: all 0.3s ease;"
+                        },
+                        if course_action.pending() { "⏳ 分析中..." } else { "📚 分析课程" }
+                    }
+                    button {
+                        onclick: move |_| {
+                            let mut s = state;
+                            if s.read().is_logging_in {
+                                return;
+                            }
+                            let target_url = s.read().url.clone();
+                            s.write().is_logging_in = true;
+                            s.write().status_message = "正在打开 ego-lite(请在弹出窗口扫码,180s 自动关闭)...".to_string();
+                            spawn(async move {
+                                let result = open_tuling_login(&target_url).await;
+                                s.write().is_logging_in = false;
+                                match result {
+                                    Ok(_) => {
+                                        s.write().status_message = "登录窗口已关闭，请重新分析课程".to_string();
+                                    }
+                                    Err(e) => {
+                                        s.write().error_display = Some(ErrorDisplay::new(
+                                            "login",
+                                            format!("打开 ego-lite 失败：{e}"),
+                                            "请检查系统是否已安装 ego-lite (https://github.com/citrolabs/ego-lite) 或清理残留进程。",
+                                        ));
+                                    }
+                                }
+                            });
+                        },
+                        disabled: (state.read().is_logging_in || course_action.pending()).then_some("disabled"),
+                        style: if state.read().is_logging_in || course_action.pending() {
+                            "padding: 0 20px; background: #8a6420; color: #ccc; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: not-allowed;"
+                        } else {
+                            "padding: 0 20px; background: #ffb547; color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: all 0.3s ease;"
+                        },
+                        if state.read().is_logging_in { "⏳ 登录窗口中..." }
+                        else if course_action.pending() { "🔒 分析中..." }
+                        else { "🔑 打开登录窗口" }
+                    }
+                    button {
                         onclick: move |_| {
                             state.write().url = String::new();
                             state.write().error_display = None;
                             state.write().status_message = "Enter video URL".to_string();
                             state.write().has_video_info = false;
+                            state.write().course_collection_state = CourseCollectionState::default();
                         },
                         style: "padding: 0 20px; background: #f5f5f5; border: none; border-radius: 10px; font-size: 14px; color: #666; transition: all 0.3s ease;",
                         "🗑️ 清空"
@@ -268,267 +429,32 @@ pub(super) fn AppComponent() -> Element {
             // 错误提示 - 结构化（ErrorDisplay 类型驱动，抽到 ErrorPanel 组件）
             ErrorPanel { state }
 
-            // 设置面板
+            // 设置面板 - 拆到 app_settings.rs (Step 2)
             if state.read().show_settings {
-                WhiteCard {
-                    shadow: CardShadow::Elevated,
-                    div {
-                        style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;",
-                        div {
-                            style: "font-size: 18px; font-weight: 700; color: {TEXT_PRIMARY};",
-                            "⚙️ 设置"
-                        }
-                        CloseButton {
-                            onclick: move |_| { state.write().show_settings = false; },
-                        }
-                    }
-                    // 输出目录
-                    div { style: "margin-bottom: 14px;",
-                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "📁 输出目录" }
-                        div { style: "display: flex; gap: 6px;",
-                            SettingsTextInput {
-                                value: state.read().settings_output_dir.clone(),
-                                on_input: move |evt: dioxus::events::FormEvent| { state.write().settings_output_dir = evt.value(); },
-                            }
-                            BrowseButton {
-                                label: "浏览".to_string(),
-                                onclick: move |_| {
-                                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                        state.write().settings_output_dir = dir.to_string_lossy().to_string();
-                                    }
-                                },
-                            }
-                        }
-                    }
-                    // ms_token
-                    div { style: "margin-bottom: 14px;",
-                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "🔑 抖音/TikTok msToken" }
-                        SettingsTextInput {
-                            value: state.read().settings_ms_token.clone(),
-                            on_input: move |evt: dioxus::events::FormEvent| { state.write().settings_ms_token = evt.value(); },
-                            width: "width: 100%".to_string(),
-                        }
-                    }
-                    // Cookie 文件
-                    div { style: "margin-bottom: 14px;",
-                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "🍪 Cookie 文件（可选）" }
-                        div { style: "display: flex; gap: 6px;",
-                            SettingsTextInput {
-                                value: state.read().settings_cookie_file.clone(),
-                                on_input: move |evt: dioxus::events::FormEvent| { state.write().settings_cookie_file = evt.value(); },
-                            }
-                            BrowseButton {
-                                label: "浏览".to_string(),
-                                onclick: move |_| {
-                                    if let Some(f) = rfd::FileDialog::new().pick_file() {
-                                        state.write().settings_cookie_file = f.to_string_lossy().to_string();
-                                    }
-                                },
-                            }
-                        }
-                    }
-                    // 并发数
-                    div { style: "margin-bottom: 18px;",
-                        div { style: "font-size: 13px; color: {TEXT_SECONDARY}; margin-bottom: 4px; font-weight: 600;", "⚡ 并发下载数（1-16）" }
-                        SettingsNumberInput {
-                            value: state.read().settings_concurrent,
-                            min: 1,
-                            max: 16,
-                            on_change: move |n: u32| { state.write().settings_concurrent = n; },
-                        }
-                    }
-                    // 按钮行
-                    div { style: "display: flex; justify-content: flex-end; gap: 8px;",
-                        button {
-                            onclick: move |_| { state.write().show_settings = false; },
-                            style: "padding: 8px 16px; background: {BG_SUBTLE}; color: {TEXT_SECONDARY}; border: none; border-radius: 8px; font-size: 13px; cursor: pointer;",
-                            "取消"
-                        }
-                        button {
-                            onclick: move |_| {
-                                // 收集当前 settings_* 字段，写入 AppConfig
-                                let out_dir = state.read().settings_output_dir.clone();
-                                let ms_token = {
-                                    let v = state.read().settings_ms_token.clone();
-                                    if v.is_empty() { None } else { Some(v) }
-                                };
-                                let cookie = {
-                                    let v = state.read().settings_cookie_file.clone();
-                                    if v.is_empty() { None } else { Some(PathBuf::from(v)) }
-                                };
-                                let concurrent = state.read().settings_concurrent as usize;
-                                match AppConfig::load() {
-                                    Ok(mut cfg) => {
-                                        cfg.output_dir = PathBuf::from(out_dir);
-                                        cfg.douyin_ms_token = ms_token;
-                                        cfg.cookie_file = cookie;
-                                        cfg.concurrent_downloads = concurrent;
-                                        match cfg.save() {
-                                            Ok(_) => {
-                                                state.write().status_message = "✅ 设置已保存".to_string();
-                                                state.write().show_settings = false;
-                                            }
-                                            Err(e) => {
-                                                state.write().error_display = Some(ErrorDisplay::new(
-                                                    "download",
-                                                    format!("保存设置失败: {}", e),
-                                                    "检查配置文件权限和路径"
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        state.write().error_display = Some(ErrorDisplay::new(
-                                            "download",
-                                            format!("加载配置失败: {}", e),
-                                            "检查配置文件存在性"
-                                        ));
-                                    }
-                                }
-                            },
-                            style: "{state.read().theme.btn_solid(state.read().theme.color_success(), \"8px 16px\", \"8px\", \"13px\")}",
-                            "💾 保存"
-                        }
-                    }
-                }
+                super::app_settings::SettingsPanel { state }
             }
 
             // 视频信息
-            if state.read().has_video_info {
-                WhiteCard {
-                    shadow: CardShadow::Soft,
-                    div {
-                        style: "display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid #eee;",
-                        div { style: "font-size: 24px;", "🎬" }
-                        div {
-                            style: "font-size: 16px; font-weight: 700; color: {TEXT_PRIMARY}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                            "{video_info.read().title}"
-                        }
-                    }
-                    div {
-                        style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;",
-                        div {
-                            style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
-                            div { style: "font-size: 11px; color: {TEXT_MUTED}; margin-bottom: 6px;", "👤 上传者" }
-                            div { style: "font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{video_info.read().uploader}" }
-                        }
-                        div {
-                            style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
-                            div { style: "font-size: 11px; color: {TEXT_MUTED}; margin-bottom: 6px;", "⏱️ 时长" }
-                            div { style: "font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY};", "{video_info.read().duration}" }
-                        }
-                        div {
-                            style: "{state.read().theme.bg_card_subtle()} text-align: center; padding: 14px 8px;",
-                            div { style: "font-size: 11px; color: {TEXT_MUTED}; margin-bottom: 6px;", "📁 画质" }
-                            div {
-                                style: "font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY};",
-                                select {
-                                    style: "width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid {BORDER_DEFAULT}; background: white; font-size: 12px; cursor: pointer;",
-                                    onchange: move |evt| {
-                                        let format_id = evt.value();
-                                        if !format_id.is_empty() {
-                                            state.write().selected_format_id = Some(format_id);
-                                        }
-                                    },
-                                    option { value: "", "默认最佳" }
-                                    for format in video_info.read().formats.iter() {
-                                        option { value: "{format.format_id}", "{format.resolution} ({format.ext}) - {format.filesize}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            // 注：原条件 `if has_video_info` 会把课程池/批量视频面板也包住,
+            // 导致从空白 URL 直接分析课程时 course_collection_state.visible=true 但 has_video_info=false,
+            // 课程池面板不渲染。改为 OR 三个独立条件,各面板独立显隐。
+            if state.read().has_video_info
+                || state.read().batch_video_state.visible
+                || state.read().course_collection_state.visible
+            {
+                // 视频信息 - 拆到 app_video_card.rs (Step 3)
+                if state.read().has_video_info {
+                    super::app_video_card::VideoInfoCard { state, video_info }
                 }
 
-                // 批量视频信息显示
+                // 批量视频信息显示 - 拆到 app_batch_video.rs (Step 4)
                 if state.read().batch_video_state.visible {
-                    WhiteCard {
-                        shadow: CardShadow::Soft,
-                        div {
-                            style: "display: flex; align-items: center; gap: 10px; margin-bottom: 14px;",
-                            div { style: "font-size: 24px;", "📋" }
-                            div {
-                                style: "font-size: 16px; font-weight: 700; background: {state.read().theme.gradient()}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;",
-                                "批量视频列表 ({state.read().batch_video_state.items.len()})"
-                            }
-                        }
-                        div {
-                            style: "display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto; padding-right: 4px;",
-                            for (idx, item) in state.read().batch_video_state.items.iter().enumerate() {
-                                div {
-                                    style: "{state.read().theme.bg_card_white()} padding: 14px; transition: all 0.3s ease;",
-                                    div {
-                                        style: "display: flex; align-items: center; gap: 10px; margin-bottom: 8px;",
-                                        div {
-                                            style: "width: 26px; height: 26px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; text-align: center; line-height: 26px; font-size: 12px; color: white; font-weight: 700;",
-                                            "{idx + 1}"
-                                        }
-                                        div {
-                                            style: "font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                                            "{item.title}"
-                                        }
-                                    }
-                                    div {
-                                        style: "font-size: 11px; color: {TEXT_MUTED}; padding-left: 36px;",
-                                        "👤 {item.uploader}  |  ⏱️ {item.duration}  |  📁 {item.formats.len()} 种画质"
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    super::app_batch_video::BatchVideoPanel { state }
+                }
 
-                    // 批量下载按钮
-                    div {
-                        style: "display: flex; gap: 12px; margin-top: 16px;",
-                        button {
-                            onclick: move |_| {
-                                // 实现批量下载
-                                let items = state.read().batch_video_state.items.clone();
-                                if items.is_empty() {
-                                    return;
-                                }
-                                // 为每个下载项创建原子进度追踪 + 取消标志
-                                let urls: Vec<String> = items.iter().map(|i| i.url.clone()).collect();
-                                let progress_arcs: Vec<Option<Arc<AtomicU32>>> = items.iter().map(|_| Some(Arc::new(AtomicU32::new(0)))).collect();
-                                let speed_arcs: Vec<Option<Arc<AtomicU64>>> = items.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
-                                let cancel_flags: Vec<Option<Arc<AtomicBool>>> = items.iter().map(|_| Some(Arc::new(AtomicBool::new(false)))).collect();
-                                let initial_items: Vec<BatchItemState> = items.iter().enumerate().map(|(idx, i)| BatchItemState {
-                                    url: i.url.clone(),
-                                    title: i.title.clone(),
-                                    status: "pending".to_string(),
-                                    progress: 0.0,
-                                    speed: String::new(),
-                                    visible: true,
-                                    progress_arc: progress_arcs[idx].clone(),
-                                    speed_arc: speed_arcs[idx].clone(),
-                                    cancel_flag: cancel_flags[idx].clone(),
-                                }).collect();
-                                state.write().batch_state = BatchState {
-                                    visible: true,
-                                    progress: 0.0,
-                                    status: format!("准备下载 {} 个视频", initial_items.len()),
-                                    items: initial_items,
-                                    is_downloading: true,
-                                };
-                                state.write().batch_video_state.visible = false;
-                                let mut state = state;
-                                spawn(async move {
-                                    batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags).await;
-                                    state.write().batch_state.visible = false;
-                                    state.write().batch_state.is_downloading = false;
-                                });
-                            },
-                            style: "{state.read().theme.btn_success(\"14px\", \"12px\", \"15px\")} flex: 1;",
-                            "⬇️ 全部下载"
-                        }
-                        button {
-                            onclick: move |_| {
-                                state.write().batch_video_state.visible = false;
-                            },
-                            style: "{state.read().theme.btn_danger(\"14px\", \"12px\", \"15px\")} flex: 1;",
-                            "⏹️ 取消"
-                        }
-                    }
+                // 课程池下载面板 - 拆到 app_course_pool.rs (Step 6)
+                if state.read().course_collection_state.visible {
+                    super::app_course_pool::CoursePoolPanel { state }
                 }
 
                 // 操作按钮
@@ -625,6 +551,7 @@ pub(super) fn AppComponent() -> Element {
                                     progress: 0.0,
                                     speed: String::new(),
                                     visible: true,
+                                    selected: true,
                                     progress_arc: progress_arcs[idx].clone(),
                                     speed_arc: speed_arcs[idx].clone(),
                                     cancel_flag: cancel_flags[idx].clone(),
@@ -638,6 +565,8 @@ pub(super) fn AppComponent() -> Element {
                                 items: batch_items,
                                 is_downloading: true,
                             };
+                            // 同步 canonical flag,poller.rs:66 gate 才能正常轮询
+                            state.write().is_downloading = true;
 
                             // 克隆 arc 供轮询使用
                             let progress_arcs_for_poll: Vec<Arc<AtomicU32>> = progress_arcs.iter().filter_map(|a| a.clone()).collect();
@@ -650,9 +579,12 @@ pub(super) fn AppComponent() -> Element {
                             });
 
                             // 使用 spawn 在后台异步执行批量下载
-                            let _state = state;
+                            let mut state = state;
                             spawn(async move {
                                 batch_download_impl(url_list, progress_arcs, speed_arcs, cancel_flags).await;
+                                state.write().batch_state.visible = false;
+                                state.write().batch_state.is_downloading = false;
+                                state.write().is_downloading = false;
                             });
                         },
                         style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"12px\", \"6px\", \"14px\")} flex: 1; font-weight: 500;",
@@ -705,149 +637,14 @@ pub(super) fn AppComponent() -> Element {
                 }
             }
 
-            // 批量下载进度显示
+            // 批量下载进度显示 - 拆到 app_batch_progress.rs (Step 5)
             if state.read().batch_state.visible {
-                WhiteCard {
-                    shadow: CardShadow::Elevated,
-                    div {
-                        style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;",
-                        div {
-                            style: "font-size: 16px; font-weight: 700; background: {state.read().theme.gradient()}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;",
-                            "📚 批量下载 - {(state.read().batch_state.progress * 100.0).round() as i32}%"
-                        }
-                        button {
-                            onclick: move |_| {
-                                state.write().batch_state.visible = false;
-                                state.write().batch_state.is_downloading = false;
-                            },
-                            style: "{state.read().theme.btn_danger(\"6px 14px\", \"8px\", \"12px\")}",
-                            "⏹️ 取消"
-                        }
-                    }
-                    div {
-                        style: "height: 10px; {STYLE_PROGRESS_TRACK} margin-top: 8px;",
-                        div {
-                            style: "height: 100%; width: {state.read().batch_state.progress * 100.0}%; background: {state.read().theme.gradient()}; border-radius: 5px; transition: width 0.3s ease;",
-                        }
-                    }
-                    div {
-                        style: "font-size: 12px; color: {TEXT_MUTED}; margin-top: 6px;",
-                        "{state.read().batch_state.status}"
-                    }
-                    // 各视频进度列表
-                    div {
-                        style: "display: flex; flex-direction: column; gap: 10px; margin-top: 16px;",
-                        for (idx, item) in state.read().batch_state.items.iter().enumerate() {
-                            if item.visible {
-                                div {
-                                    style: "display: flex; align-items: center; gap: 12px; padding: 12px; background: #f8f9fa; border-radius: 10px; transition: all 0.3s ease;",
-                                    div {
-                                        style: "height: 10px; {STYLE_PROGRESS_TRACK} flex: 1;",
-                                        div {
-                                            style: "height: 100%; width: {item.progress * 100.0}%; background: {state.read().theme.gradient()}; border-radius: 5px; transition: width 0.3s ease;",
-                                        }
-                                    }
-                                    div {
-                                        style: "width: 45px; font-size: 12px; font-weight: 600; color: {state.read().theme.color_accent()}; text-align: right;",
-                                        "{(item.progress * 100.0).round() as i32}%"
-                                    }
-                                    div {
-                                        style: "font-size: 11px; color: {TEXT_MUTED};",
-                                        "{item.status}"
-                                    }
-                                    // 单项取消按钮（仅 pending/downloading 时显示）
-                                    if item.status == "pending" || item.status == "downloading" {
-                                        button {
-                                            onclick: move |_| {
-                                                let items = state.read().batch_state.items.clone();
-                                                if let Some(it) = items.get(idx) {
-                                                    if let Some(flag) = it.cancel_flag.clone() {
-                                                        flag.store(true, Ordering::Relaxed);
-                                                    }
-                                                }
-                                                // 乐观 UI 更新：立即显示 cancelled，不等后台任务结束
-                                                state.write().batch_state.items[idx].status = "cancelled".to_string();
-                                            },
-                                            style: "{STYLE_BTN_ICON} width: 24px; height: 24px; background: {state.read().theme.color_danger()}; font-size: 12px; display: flex; align-items: center; justify-content: center; padding: 0;",
-                                            "✕"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                super::app_batch_progress::BatchProgressPanel { state }
             }
 
-            // 历史记录面板
+            // 历史记录面板 - 拆到 app_history.rs (Step 1)
             if state.read().show_history {
-                WhiteCard {
-                    shadow: CardShadow::Soft,
-                    scrollable: true,
-                    div {
-                        style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;",
-                        div {
-                            style: "display: flex; align-items: center; gap: 8px;",
-                            div { style: "font-size: 24px;", "📜" }
-                            div {
-                                style: "font-size: 16px; font-weight: 700; background: {state.read().theme.gradient()}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;",
-                                "下载历史"
-                            }
-                        }
-                        div {
-                            style: "display: flex; gap: 8px;",
-                            DestructivePillButton {
-                                onclick: move |_| {
-                                    // 清空全局历史
-                                    clear_global_history();
-                                    // 清空 UI 状态中的历史
-                                    state.write().history.clear();
-                                    state.write().show_history = false;
-                                },
-                                "🗑️ 清空历史"
-                            }
-                            CloseButton {
-                                onclick: move |_| { state.write().show_history = false; },
-                            }
-                        }
-                    }
-                    if state.read().history.is_empty() {
-                        div {
-                            style: "text-align: center; padding: 40px; color: {TEXT_MUTED};",
-                            div { style: "font-size: 48px; margin-bottom: 12px;", "📭" }
-                            div { style: "font-size: 14px;", "暂无下载记录" }
-                        }
-                    } else {
-                        div {
-                            style: "display: flex; flex-direction: column; gap: 10px;",
-                            for item in state.read().history.iter().rev().cloned() {
-                                div {
-                                    onclick: move |_| {
-                                        // 点击历史记录 → 回填 URL
-                                        state.write().url = item.url.clone();
-                                        state.write().error_display = None;
-                                    },
-                                    style: "{state.read().theme.bg_card_white()} display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;",
-                                    div {
-                                        style: "{state.read().theme.bg_icon_success()} width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;",
-                                        div { style: "font-size: 18px;", "✅" }
-                                    }
-                                    div {
-                                        style: "flex: 1; min-width: 0;",
-                                        div {
-                                            style: "font-size: 13px; font-weight: 600; color: {TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                                            "{item.title}"
-                                        }
-                                        div {
-                                            style: "font-size: 11px; color: {TEXT_MUTED}; margin-top: 2px;",
-                                            "👤 {item.uploader}  |  ⏱️ {item.duration}  |  🕐 {item.completed_at}"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                super::app_history::HistoryPanel { state }
             }
         }
     }

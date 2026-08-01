@@ -9,10 +9,14 @@
 //! - [`store`]     - 全局 History / 配置热重载 / 通知
 //! - [`handlers`]  - 视频信息解析与下载实现
 
-#![allow(dead_code)]
-
 mod actions;
 mod app;
+mod app_batch_progress;
+mod app_batch_video;
+mod app_course_pool;
+mod app_history;
+mod app_settings;
+mod app_video_card;
 mod bridge;
 mod components;
 mod handlers;
