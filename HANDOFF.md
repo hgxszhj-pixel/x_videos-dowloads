@@ -1,26 +1,22 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-01（X 下载速度自适应 + GUI 14 项修复 + app.rs 拆分 (1177→651 行) + 11 处死代码字段清理, 225/225 + 6 ignored tests pass, branch `gitbutler/workspace`）
+**更新**: 2026-08-01（X 下载速度自适应 + Drission CDP 切换 + GUI 14 项修复 + app.rs 拆分 (1177→651 行) + 11 处死代码字段清理 + simplify 7 项 + 4 fixture + 测试, 225/225 + 6 ignored tests pass, branch `gitbutler/workspace`）
 
 ---
 
-## 🔥 working tree（未提交，按主题拆 commit）
+## 📜 最近 commits (2026-08-01)
 
-| 主题 | 文件路径（绝对） |
-|------|----------|
-| **CDP 切换** (`Scrapling` → `Drission`) | `/Users/hgxszhj/x_videos-dowloads/Cargo.toml`<br>`/Users/hgxszhj/x_videos-dowloads/src/main.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/drission_client.rs` *(新建)* |
-| **课程池 trait** | `/Users/hgxszhj/x_videos-dowloads/src/platform/mod.rs` |
-| **小鹅通抓课节/递归/字段别名** | `/Users/hgxszhj/x_videos-dowloads/src/platform/tulingpython.rs` |
-| **GUI 状态扩展** | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/types.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/actions.rs` |
-| **课程池 + 登录按钮 + slot 轮询** | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/handlers.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app.rs` |
-| **真实响应 fixture** | `/Users/hgxszhj/x_videos-dowloads/tests/fixtures/tuling_course_real.json`<br>`/Users/hgxszhj/x_videos-dowloads/tests/fixtures/tuling_channel_real.json`<br>`/Users/hgxszhj/x_videos-dowloads/tests/fixtures/tuling_course_nav_real.json`<br>`/Users/hgxszhj/x_videos-dowloads/tests/fixtures/tuling_column_items_real.json` |
-| **settings.json** (注册 marketplace) | `/Users/hgxszhj/x_videos-dowloads/.claude/settings.json` |
-| **X 下载速度自适应 (2026-08-01)** | `/Users/hgxszhj/x_videos-dowloads/src/fxtwitter.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/website_profile.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/downloader/mod.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/commands/download/strategy_ytdlp.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/commands/download/strategy_direct.rs`<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/handlers.rs` |
-| **GUI 修复 14 项 (2026-08-01)** | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app.rs` *(H3/H4/H5/H6/H7full/H1/H2)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/actions.rs` *(H7 文案 + fetch plumbing)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/handlers.rs` *(M11 JoinError)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/components.rs` *(M9 ErrorPanel)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/store.rs` *(M8 watcher + M10 escape + 测试)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/types.rs` *(M9 label() + 测试)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/poller.rs` *(M6 单 transaction)* |
-| **app.rs 按 feature 拆分 (2026-08-01, commit baa3328)** | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_video_card.rs` *(新建)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_batch_video.rs` *(新建)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_batch_progress.rs` *(新建)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_course_pool.rs` *(新建)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_settings.rs` *(新建)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_history.rs` *(新建)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app.rs` *(1177→651 行)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/mod.rs` *(7 个 mod 声明)* |
-| **死代码字段清理 (2026-08-01, commit 092c6b7)** | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/types.rs` *(删 11 字段)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/theme.rs` *(删 2 方法)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/handlers.rs` *(删 status_str)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/store.rs` *(删 HistoryItem.path setter)*<br>`/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app.rs`+`actions.rs` *(删字段 setter)* |
+| Commit | 主题 | 范围 |
+|---|---|---|
+| `d6cd948` | `feat(platform): 切换 Scrapling → Drission CDP` | Cargo.toml + main.rs + drission_client.rs (新建 1153 行) + platform/* |
+| `832109b` | `feat(download): X 下载速度自适应` | fxtwitter + website_profile + downloader/mod + strategy_* + handlers |
+| `50f229d` | `feat(test): 真实 TulingPython 响应 fixture + poller M6 + components M9` | 4 fixture JSON + poller.rs + components.rs |
+| `b50d4f1` | `simplify(gui): 7 项 /simplify agent 建议修复` | OR 展平 + 删 4 死字段 + 删 1 平行 flag + 4 trivial |
+| `09a0d21` | `docs(handoff): 登记 app.rs 拆分 + 死代码清理` | HANDOFF.md |
+| `092c6b7` | `refactor(gui): 清理 11 处真正死代码字段 + L12 注解去除` | types.rs + theme.rs + handlers.rs + store.rs + app.rs + actions.rs |
+| `baa3328` | `refactor(gui): 拆分 app.rs (1177 → 651 行)` | 7 个新子组件文件 + app.rs 精简 + mod.rs |
 
-> **接手必做**: 按上表主题 commit;每条 message 必须含 `Intent: <一句话>` (`.git/hooks/commit-msg` 拦截)。`SkillOpt/` `.claude/` 是 gitbutler workspace 残留,不进 git。
+> 全部 commit 含 `Intent: <一句话>` (`.git/hooks/commit-msg` 强制)。`SkillOpt/` `.claude/` 是 gitbutler workspace 残留,不进 git。
 
 ---
 
