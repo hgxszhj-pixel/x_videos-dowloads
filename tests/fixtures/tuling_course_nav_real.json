@@ -1,0 +1,63 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "list": [
+      {
+        "spu_id": "p_6a4f88e6e4b0694c5be6f46d",
+        "type": 6,
+        "title": "核心编程2630期",
+        "summary": "",
+        "img_url": "https://example.com/2630.jpg",
+        "resource_count": 5,
+        "trans_src_type": "专栏",
+        "jump_url": "https://vip.tulingpyton.cn/detail/p_6a4f88e6e4b0694c5be6f46d/6?product_id=p_6a4f88e6e4b0694c5be6f46d",
+        "src_id": "p_6a4f88e6e4b0694c5be6f46d"
+      },
+      {
+        "spu_id": "p_6a05c4dae4b0694c5bc3237e",
+        "type": 6,
+        "title": "核心编程2629期",
+        "summary": "",
+        "img_url": "https://example.com/2629.jpg",
+        "resource_count": 22,
+        "trans_src_type": "专栏",
+        "jump_url": "https://vip.tulingpyton.cn/detail/p_6a05c4dae4b0694c5bc3237e/6?product_id=p_6a05c4dae4b0694c5bc3237e",
+        "src_id": "p_6a05c4dae4b0694c5bc3237e"
+      },
+      {
+        "spu_id": "p_69b2adc8e4b0694c34e783b1",
+        "type": 6,
+        "title": "核心编程2628期",
+        "summary": "",
+        "img_url": "https://example.com/2628.jpg",
+        "resource_count": 8,
+        "trans_src_type": "专栏",
+        "jump_url": "https://vip.tulingpyton.cn/detail/p_69b2adc8e4b0694c34e783b1/6?product_id=p_69b2adc8e4b0694c34e783b1",
+        "src_id": "p_69b2adc8e4b0694c34e783b1"
+      },
+      {
+        "spu_id": "p_695b9de1e4b0694c5b6f52c4",
+        "type": 6,
+        "title": "核心编程2627期",
+        "summary": "",
+        "img_url": "https://example.com/2627.jpg",
+        "resource_count": 7,
+        "trans_src_type": "专栏",
+        "jump_url": "https://vip.tulingpyton.cn/detail/p_695b9de1e4b0694c5b6f52c4/6?product_id=p_695b9de1e4b0694c5b6f52c4",
+        "src_id": "p_695b9de1e4b0694c5b6f52c4"
+      },
+      {
+        "spu_id": "p_67cd7680e4b0694ca07551b1",
+        "type": 6,
+        "title": "陪跑计划专栏(原jack专栏)",
+        "summary": "",
+        "img_url": "https://example.com/jack.jpg",
+        "resource_count": 6,
+        "trans_src_type": "专栏",
+        "jump_url": "https://vip.tulingpyton.cn/detail/p_67cd7680e4b0694ca07551b1/8?product_id=p_67cd7680e4b0694ca07551b1",
+        "src_id": "p_67cd7680e4b0694ca07551b1"
+      }
+    ]
+  }
+}

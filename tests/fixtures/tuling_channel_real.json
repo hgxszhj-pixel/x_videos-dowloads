@@ -1,0 +1,69 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "class_type": 2,
+    "resource_type": 6,
+    "list": [
+      {
+        "id": "p_69ca1f49e4b0694c5ba49c37",
+        "name": "Python AI 爬虫逆向工程旗舰班",
+        "title": "Python AI 爬虫逆向工程旗舰班",
+        "is_member": 1,
+        "member_type": 2,
+        "resource_count": 38,
+        "resource_type": 8,
+        "jump_url": "/p/course/big_column/p_69ca1f49e4b0694c5ba49c37",
+        "is_free": 0,
+        "sell_type": 1
+      },
+      {
+        "id": "p_69ca26a5e4b0694c34f18119",
+        "name": "核心编程-2026",
+        "title": "核心编程-2026",
+        "is_member": 1,
+        "member_type": 2,
+        "resource_count": 7,
+        "resource_type": 8,
+        "jump_url": "/p/course/big_column/p_69ca26a5e4b0694c34f18119",
+        "is_free": 1,
+        "sell_type": 2
+      },
+      {
+        "id": "p_6a54dc9fe4b0694c352a48a4",
+        "name": "Python AI 爬虫逆向工程旗舰班",
+        "title": "Python AI 爬虫逆向工程旗舰班",
+        "is_member": 1,
+        "member_type": 2,
+        "resource_count": 13,
+        "resource_type": 8,
+        "jump_url": "/p/course/big_column/p_6a54dc9fe4b0694c352a48a4",
+        "is_free": 0,
+        "sell_type": 1
+      },
+      {
+        "id": "p_6a659b47e4b0694c352ffa56",
+        "name": "Python AI 爬虫逆向工程旗舰班-进阶",
+        "title": "Python AI 爬虫逆向工程旗舰班-进阶",
+        "is_member": 1,
+        "member_type": 2,
+        "resource_count": 10,
+        "resource_type": 8,
+        "jump_url": "/p/course/big_column/p_6a659b47e4b0694c352ffa56",
+        "is_free": 0,
+        "sell_type": 1
+      },
+      {
+        "id": "s_628b33a68d41c_s58oDsVL13",
+        "name": "python超级会员",
+        "title": "python超级会员",
+        "is_member": 0,
+        "resource_count": 0,
+        "resource_type": 23,
+        "jump_url": "/v1/usercenter/super_vip/index/s_628b33a68d41c_s58oDsVL13?type=15",
+        "is_free": 0
+      }
+    ]
+  },
+  "forward_url": ""
+}

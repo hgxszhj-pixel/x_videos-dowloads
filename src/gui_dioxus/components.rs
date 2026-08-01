@@ -135,7 +135,7 @@ pub(super) fn ErrorPanel(state: Store<AppState>) -> Element {
                             style: "flex: 1;",
                             div {
                                 style: "font-size: 14px; font-weight: 700; color: {danger}; margin-bottom: 4px;",
-                                "下载失败 · {err.error_type}"
+                                "{err.label()} · {err.error_type}"
                             }
                             div {
                                 style: "font-size: 13px; color: {text_danger};",

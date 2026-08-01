@@ -66,24 +66,47 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                         if !state.read().is_downloading {
                             break;
                         }
+                        // 单 transaction:把所有 per-item 写入合并到一次 store.write(),
+                        // 避免原版每项 2 reads + 2 writes (N 项 = 4N 次锁)
                         let mut total_progress = 0.0_f32;
                         let mut all_done = true;
-                        for (idx, arc) in progress_arcs.iter().enumerate() {
+                        // 先算每项的 progress/speed (只读原子,无锁)
+                        let mut per_item: Vec<(f32, String)> = Vec::with_capacity(progress_arcs.len());
+                        for arc in progress_arcs.iter() {
                             let percent = arc.load(Ordering::Relaxed) as f32 / 10000.0;
                             total_progress += percent;
                             if percent < 1.0 {
                                 all_done = false;
                             }
-                            if idx < state.read().batch_state.items.len() {
-                                let speed_arc_clone = state.read().batch_state.items[idx].speed_arc.clone();
-                                state.write().batch_state.items[idx].progress = percent;
-                                if let Some(speed_arc) = speed_arc_clone {
-                                    let speed = speed_arc.load(Ordering::Relaxed);
-                                    state.write().batch_state.items[idx].speed = format_speed(speed);
+                            per_item.push((percent, String::new())); // 速度待会儿填
+                        }
+                        // 一次性获取所有 speed_arc,避免循环内重复 read lock
+                        let speed_arcs: Vec<Option<Arc<AtomicU64>>> = {
+                            let s = state.read();
+                            s.batch_state
+                                .items
+                                .iter()
+                                .map(|it| it.speed_arc.clone())
+                                .collect()
+                        };
+                        for (i, speed_arc_opt) in speed_arcs.iter().enumerate() {
+                            if let Some(arc) = speed_arc_opt {
+                                let speed = arc.load(Ordering::Relaxed);
+                                per_item[i].1 = format_speed(speed);
+                            }
+                        }
+                        // 单写事务
+                        {
+                            let mut s = state.write();
+                            let total = (total_count as f32).max(1.0);
+                            s.batch_state.progress = total_progress / total;
+                            for (i, (percent, speed)) in per_item.into_iter().enumerate() {
+                                if let Some(item) = s.batch_state.items.get_mut(i) {
+                                    item.progress = percent;
+                                    item.speed = speed;
                                 }
                             }
                         }
-                        state.write().batch_state.progress = total_progress / (total_count as f32);
                         if all_done || total_progress >= (total_count as f32) {
                             break;
                         }
