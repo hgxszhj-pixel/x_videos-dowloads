@@ -92,11 +92,39 @@ pub fn is_profile_dir_in_use(dir: &std::path::Path) -> bool {
 /// 旧的 HTML 启发式对 SPA 页面不可靠(登录关键字在 JS bundle 里,不渲染),所以
 /// 用 API 探针 + 用户字段直查。多花 ~25s 启动 Chrome 但准确率 100%。
 pub async fn is_logged_in(url: &str) -> bool {
-    use drission::cdp::{ChromiumBrowser, ChromiumOptions};
-    use std::time::Duration;
-
     let profile = default_profile_dir();
+
+    // 诊断:列出 Application Support 下所有 candidate,看 ego-lite 实际路径
+    log_candidate_profiles();
+
     info!(target: "drission", "is_logged_in: 检测 {} (profile={:?})", url, profile);
+
+    // 多 URL 兜底: 课程 URL → 首页。任何一路拿到 user_info 都算登录。
+    // SPA 不同页触发 user_info API 时机不一致,只测一个 URL 容易假阴性。
+    let mut urls = vec![url.to_string()];
+    let homepage = "https://vip.tulingpyton.cn";
+    if !urls.iter().any(|u| u == homepage) {
+        urls.push(homepage.to_string());
+    }
+
+    for (i, probe_url) in urls.iter().enumerate() {
+        info!(target: "drission", "is_logged_in: 第 {}/{} 路探测 {}",
+              i + 1, urls.len(), probe_url);
+        if check_login_at(profile.clone(), probe_url).await {
+            return true;
+        }
+    }
+    warn!(
+        target: "drission",
+        "is_logged_in: {} 路探测全部失败 (URL={url}, profile={profile:?})\n  → 用户实际未登录 / cookies 已过期 / headless Chrome 无法读 ego-lite profile 的 cookies / SPA 未触发 user_info API",
+        urls.len()
+    );
+    false
+}
+
+/// 单 URL 探测:启动 headless Chrome → 导航 → 拦 common.public.data.get → 找 user_info
+async fn check_login_at(profile: PathBuf, url: &str) -> bool {
+    use drission::cdp::{ChromiumBrowser, ChromiumOptions};
 
     let opts = ChromiumOptions::new()
         .headless(true)
@@ -106,31 +134,28 @@ pub async fn is_logged_in(url: &str) -> bool {
     let browser = match ChromiumBrowser::launch(opts).await {
         Ok(b) => b,
         Err(e) => {
-            warn!(target: "drission", "is_logged_in: 浏览器启动失败 ({e}) — 可能 profile 被占用/锁住");
+            warn!(target: "drission", "  浏览器启动失败 ({e}) — 可能 profile 被占用/锁住");
             return false;
         }
     };
     let tab = match browser.new_tab(None).await {
         Ok(t) => t,
         Err(e) => {
-            warn!(target: "drission", "is_logged_in: new_tab 失败 ({e})");
+            warn!(target: "drission", "  new_tab 失败 ({e})");
             let _ = browser.quit().await;
             return false;
         }
     };
     let listen = tab.listen();
     if let Err(e) = listen.start(&["common.public.data.get"]).await {
-        warn!(target: "drission", "is_logged_in: 监听启动失败 ({e})");
+        warn!(target: "drission", "  监听启动失败 ({e})");
         let _ = browser.quit().await;
         return false;
     }
     if let Err(e) = tab.get(url).await {
-        warn!(target: "drission", "is_logged_in: 导航到 {url} 失败 ({e})");
+        warn!(target: "drission", "  导航到 {url} 失败 ({e})");
     }
-    let _ = tab
-        .wait()
-        .network_idle(1.0, Some(Duration::from_secs(15)))
-        .await;
+    let _ = tab.wait().network_idle(1.0, Some(Duration::from_secs(15))).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     // 关键: 等够久收 API 响应(之前 5s 太短,实际需要 ~10s 等 SPA 渲染+fetch)
     let packets = listen
@@ -140,25 +165,66 @@ pub async fn is_logged_in(url: &str) -> bool {
     let _ = listen.stop().await;
     let _ = browser.quit().await;
 
-    info!(target: "drission", "is_logged_in: 拦截到 {} 个 common.public.data.get 响应", packets.len());
+    info!(target: "drission", "  拦截到 {} 个 common.public.data.get 响应", packets.len());
 
-    for p in &packets {
+    for (idx, p) in packets.iter().enumerate() {
         if let Some(j) = p.json() {
+            // 诊断:首个 packet body 预览(看 user_info 是 null 还是缺字段)
+            if idx == 0 {
+                let body = p.response.body.as_str();
+                let preview: String = body.chars().take(400).collect();
+                info!(target: "drission", "  [packet #0 preview] {}", preview);
+            }
             if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
                 if !ui.is_null() && ui.get("user_id").and_then(|v| v.as_str()).is_some() {
-                    info!(target: "drission", "is_logged_in: 已登录 ✓ (user_id={:?})",
+                    info!(target: "drission", "  已登录 ✓ (user_id={:?})",
                           ui.get("user_id").and_then(|v| v.as_str()));
                     return true;
                 }
             }
         }
     }
-    warn!(
-        target: "drission",
-        "is_logged_in: {} 个响应里未找到 user_info.user_id\n  URL: {url}\n  profile: {profile:?}\n  → 用户实际未登录 / cookies 已过期 / 浏览器进程残留锁住 profile / SPA 未触发 user_info API",
-        packets.len()
-    );
     false
+}
+
+/// 诊断:列出 Application Support 下所有 candidate profile,帮助定位 ego-lite 实际路径
+fn log_candidate_profiles() {
+    #[cfg(target_os = "macos")]
+    {
+        use std::path::Path;
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            let app_support = home.join("Library").join("Application Support");
+            info!(target: "drission", "is_logged_in 诊断: 扫描 {:?}", app_support);
+            if let Ok(entries) = std::fs::read_dir(&app_support) {
+                let mut found = Vec::new();
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let lower = name.to_lowercase();
+                    // 过滤 Chromium-based / ego / Chrome 相关目录
+                    if lower.contains("ego")
+                        || lower.contains("chrome")
+                        || lower.contains("chromium")
+                        || lower.contains("citrolabs")
+                    {
+                        found.push(format!("{name}  ({})",
+                            if entry.path().exists() { "exists" } else { "missing" }));
+                    }
+                }
+                if found.is_empty() {
+                    info!(target: "drission", "  未找到 ego/chrome/citrolabs 相关 profile");
+                } else {
+                    for f in &found {
+                        info!(target: "drission", "  {}", f);
+                    }
+                }
+            }
+        }
+        let _ = Path::new("");
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        info!(target: "drission", "is_logged_in 诊断: 非 macOS,跳过 profile 扫描");
+    }
 }
 
 /// 启动浏览器让用户登录小鹅通;180s 后仅关闭 tulingpyton 相关标签页。
