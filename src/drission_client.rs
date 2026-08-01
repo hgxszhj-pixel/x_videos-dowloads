@@ -59,10 +59,17 @@ pub fn default_profile_dir() -> PathBuf {
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         let app_support = home.join("Library").join("Application Support");
         // 优先级:ego-lite → Chrome → 自建。
+        // ego-lite 真实路径是 `<AppSupport>/Citro Labs/ego lite` (父目录名是发行公司
+        // Citro Labs,不是 Bundle ID com.citrolabs.ego.lite)。后者是手写假设,实测
+        // 2026-08-01 用户机器上不存在,导致 fallback 到 Chrome profile。
         // 注:**不**检查 SingletonLock,因为 Chrome crash / 强制 kill 后
         // 残留符号链接指向死 PID 很常见,会让 Chrome profile 永远被跳过。
         // 真在用 Chrome 时 Drission 启动会报 "profile locked" 错误,用户能看到。
-        for candidate in ["com.citrolabs.ego.lite", "Google/Chrome"] {
+        for candidate in [
+            "Citro Labs/ego lite",      // 真实路径(2026-08-01 实测)
+            "com.citrolabs.ego.lite",   // 兼容老路径
+            "Google/Chrome",
+        ] {
             let p = app_support.join(candidate);
             if p.exists() {
                 return p;
@@ -639,16 +646,17 @@ mod tests {
 
     #[test]
     fn test_profile_dir_returns_first_available_priority() {
-        // 优先级:ego-lite → Chrome → 项目自建。
+        // 优先级:ego-lite (Citro Labs/ego lite) → Chrome → 项目自建。
         // 用户机器可能装其中 0/1/2 个,任一命中即合法。
         let dir = default_profile_dir();
         let s = dir.to_string_lossy();
-        let is_browser_profile =
-            s.contains("com.citrolabs.ego.lite") || s.contains("Google/Chrome");
+        let is_ego_lite =
+            s.contains("Citro Labs/ego lite") || s.contains("com.citrolabs.ego.lite");
+        let is_chrome = s.contains("Google/Chrome");
         let is_self_built = s.contains("tulingpyton_profile");
         assert!(
-            is_browser_profile || is_self_built,
-            "返回路径 {dir:?} 既不是已存在的浏览器 profile,也不是自建目录"
+            is_ego_lite || is_chrome || is_self_built,
+            "返回路径 {dir:?} 既不是已知的浏览器 profile,也不是自建目录"
         );
     }
 
