@@ -34,7 +34,6 @@ pub(super) fn BatchProgressPanel(state: Store<AppState>) -> Element {
                             }
                         }
                         state.write().batch_state.visible = false;
-                        state.write().batch_state.is_downloading = false;
                         // 同步 canonical flag 让 poller 退出
                         state.write().is_downloading = false;
                     },

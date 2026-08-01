@@ -24,6 +24,10 @@ use super::poller::{use_progress_poller, PollMsg};
 use super::actions::{
     sync_course_action_to_state, sync_fetch_action_to_state, use_fetch_action, use_fetch_course_action,
 };
+use super::app_batch_progress::BatchProgressPanel;
+use super::app_batch_video::BatchVideoPanel;
+use super::app_course_pool::CoursePoolPanel;
+use super::app_video_card::VideoInfoCard;
 use super::theme::{BG_SUBTLE, TEXT_MUTED};
 
 /// 主应用组件
@@ -434,30 +438,22 @@ pub(super) fn AppComponent() -> Element {
                 super::app_settings::SettingsPanel { state }
             }
 
-            // 视频信息
-            // 注：原条件 `if has_video_info` 会把课程池/批量视频面板也包住,
-            // 导致从空白 URL 直接分析课程时 course_collection_state.visible=true 但 has_video_info=false,
-            // 课程池面板不渲染。改为 OR 三个独立条件,各面板独立显隐。
-            if state.read().has_video_info
-                || state.read().batch_video_state.visible
-                || state.read().course_collection_state.visible
-            {
-                // 视频信息 - 拆到 app_video_card.rs (Step 3)
-                if state.read().has_video_info {
-                    super::app_video_card::VideoInfoCard { state, video_info }
-                }
+            // 视频信息 - 拆到 app_video_card.rs (Step 3)
+            if state.read().has_video_info {
+                VideoInfoCard { state, video_info }
+            }
 
-                // 批量视频信息显示 - 拆到 app_batch_video.rs (Step 4)
-                if state.read().batch_video_state.visible {
-                    super::app_batch_video::BatchVideoPanel { state }
-                }
+            // 批量视频信息显示 - 拆到 app_batch_video.rs (Step 4)
+            if state.read().batch_video_state.visible {
+                BatchVideoPanel { state }
+            }
 
-                // 课程池下载面板 - 拆到 app_course_pool.rs (Step 6)
-                if state.read().course_collection_state.visible {
-                    super::app_course_pool::CoursePoolPanel { state }
-                }
+            // 课程池下载面板 - 拆到 app_course_pool.rs (Step 6)
+            if state.read().course_collection_state.visible {
+                CoursePoolPanel { state }
+            }
 
-                // 操作按钮
+            // 操作按钮
                 div {
                     style: "display: flex; gap: 16px; margin-top: 12px;",
                     button {
@@ -559,7 +555,6 @@ pub(super) fn AppComponent() -> Element {
                                 progress: 0.0,
                                 status: format!("准备下载 {} 个视频", url_list.len()),
                                 items: batch_items,
-                                is_downloading: true,
                             };
                             // 同步 canonical flag,poller.rs:66 gate 才能正常轮询
                             state.write().is_downloading = true;
@@ -579,7 +574,6 @@ pub(super) fn AppComponent() -> Element {
                             spawn(async move {
                                 batch_download_impl(url_list, progress_arcs, speed_arcs, cancel_flags).await;
                                 state.write().batch_state.visible = false;
-                                state.write().batch_state.is_downloading = false;
                                 state.write().is_downloading = false;
                             });
                         },
@@ -587,7 +581,6 @@ pub(super) fn AppComponent() -> Element {
                         "Batch Download"
                     }
                 }
-            }
 
             // 进度显示
             if state.read().is_downloading && !state.read().batch_state.visible {
@@ -635,7 +628,7 @@ pub(super) fn AppComponent() -> Element {
 
             // 批量下载进度显示 - 拆到 app_batch_progress.rs (Step 5)
             if state.read().batch_state.visible {
-                super::app_batch_progress::BatchProgressPanel { state }
+                BatchProgressPanel { state }
             }
 
             // 历史记录面板 - 拆到 app_history.rs (Step 1)

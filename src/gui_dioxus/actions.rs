@@ -76,7 +76,6 @@ pub(super) fn sync_fetch_action_to_state(
                         state.write().error_display = None;
                     }
                     FetchResult::Batch(items) => {
-                        let _count = items.len();
                         state.write().batch_video_state = BatchVideoState {
                             visible: true,
                             items,

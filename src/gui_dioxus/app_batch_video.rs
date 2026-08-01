@@ -37,7 +37,7 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                         div {
                             style: "display: flex; align-items: center; gap: 10px; margin-bottom: 8px;",
                             div {
-                                style: "width: 26px; height: 26px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; text-align: center; line-height: 26px; font-size: 12px; color: white; font-weight: 700;",
+                                style: "width: 26px; height: 26px; background: {state.read().theme.gradient()}; border-radius: 50%; text-align: center; line-height: 26px; font-size: 12px; color: white; font-weight: 700;",
                                 "{idx + 1}"
                             }
                             div {
@@ -81,7 +81,6 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                         progress: 0.0,
                         status: format!("准备下载 {} 个视频", initial_items.len()),
                         items: initial_items,
-                        is_downloading: true,
                     };
                     // 同步 canonical flag,poller.rs:66 gate 才能正常轮询
                     state.write().is_downloading = true;
@@ -90,7 +89,6 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                     spawn(async move {
                         batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags).await;
                         state.write().batch_state.visible = false;
-                        state.write().batch_state.is_downloading = false;
                         state.write().is_downloading = false;
                     });
                 },

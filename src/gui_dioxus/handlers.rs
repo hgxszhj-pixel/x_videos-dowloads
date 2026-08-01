@@ -256,10 +256,6 @@ pub(super) async fn fetch_course_collection_impl(url: &str) -> Result<CourseColl
             selected: true,
             status: "pending".into(),
             progress: 0.0,
-            speed: String::new(),
-            progress_arc: None,
-            speed_arc: None,
-            cancel_flag: None,
             slot: None,
         })
         .collect();
@@ -420,7 +416,7 @@ async fn download_resolved_concurrently(
         let semaphore = semaphore.clone();
         handles.push(tokio::spawn(async move {
             let _permit = semaphore.acquire_owned().await;
-            match download_one(&id, &title, &m3u8, progress_cb).await {
+            match download_one(&title, &m3u8, progress_cb).await {
                 Ok(()) => {
                     if let Some(s) = slot_for_done.as_ref() {
                         s.progress.store(10000, Ordering::Relaxed);
@@ -457,7 +453,6 @@ async fn download_resolved_concurrently(
 
 /// 单条 HLS 下载：构造请求 + 调用 VideoDownloader，错误统一为 String。
 async fn download_one(
-    id: &str,
     title: &str,
     m3u8: &str,
     progress_cb: Arc<dyn Fn(crate::types::DownloadProgress) + Send + Sync>,
@@ -474,8 +469,6 @@ async fn download_one(
         .await
         .map_err(|e| e.to_string())?;
     if result.success {
-        // 显式引用 id 以满足 “use id when not downloaded” 的语义，但当前不需要
-        let _ = id;
         Ok(())
     } else {
         Err(result.error_message.unwrap_or_default())

@@ -2,7 +2,7 @@
 
 use super::theme::AppTheme;
 use dioxus_stores::Store;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// 下载历史记录项
@@ -214,7 +214,6 @@ pub(crate) struct BatchState {
     pub(super) progress: f32, // 总体进度
     pub(super) status: String,
     pub(super) items: Vec<BatchItemState>,
-    pub(super) is_downloading: bool,
 }
 
 /// 批量视频信息状态
@@ -237,14 +236,6 @@ pub(super) struct CourseItemDisplay {
     pub(super) selected: bool,   // 默认全选
     pub(super) status: String, // "pending" | "resolving" | "downloading" | "completed" | "failed" | "cancelled"
     pub(super) progress: f32,
-    #[allow(dead_code)] // 同 batch 端 speed,poller M6 已重构成 per-item 写入
-    pub(super) speed: String,
-    #[allow(dead_code)] // poller 已用,但 BatchItemState 内的 atomic 槽字段未来可能直接读
-    pub(super) progress_arc: Option<Arc<AtomicU32>>,
-    #[allow(dead_code)] // 同上,保留供未来 per-item 进度直读
-    pub(super) speed_arc: Option<Arc<AtomicU64>>,
-    #[allow(dead_code)] // 课程池取消由 CourseItemSlot 内部控制,字段保留供未来直接读
-    pub(super) cancel_flag: Option<Arc<AtomicBool>>,
     /// 进度槽（跨 task 共享，use_effect 轮询把原子值写回 progress/status）
     pub(super) slot: Option<Arc<super::handlers::CourseItemSlot>>,
 }
