@@ -96,7 +96,7 @@ pub enum LoginStatus {
 ///   3.0 直接读 SQLite + Keychain AES-GCM 解密 + reqwest ← 当前方案,完全不靠 AppleScript 注入
 ///
 /// Chromium 80+ cookies 加密:
-///   Keychain "ego lite Safe Storage" entry 存密码
+///   Keychain "ego safe storage" entry 存密码(2026-08-01 实测,小写)
 ///   PBKDF2-HMAC-SHA1(password, "saltysalt", 1003, 16 bytes) 派生 AES 密钥
 ///   v10 格式: "v10" (3) + nonce (12) + ciphertext + tag (16),AES-128-GCM
 #[cfg(target_os = "macos")]
@@ -175,7 +175,7 @@ async fn is_logged_in_via_ego_lite() -> LoginStatus {
 }
 
 /// 从 ego-lite 的 Default/Cookies SQLite 数据库读 tulingpyton.cn 相关 cookies,
-/// 用 Keychain "ego lite Safe Storage" 派生 AES-128-GCM 密钥解密,返回 `name=value; ...` 字符串。
+/// 用 Keychain "ego safe storage" 派生 AES-128-GCM 密钥解密,返回 `name=value; ...` 字符串。
 #[cfg(target_os = "macos")]
 fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
     use aes_gcm::aead::Aead;
@@ -198,20 +198,22 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         anyhow::bail!("ego-lite Default/Cookies 不存在: {cookies_db:?}");
     }
 
-    // 2. Keychain 密码
+    // 2. Keychain 密码 (2026-08-01 实测: ego-lite 在 Keychain 注册的 service
+    //    名是 "ego safe storage" (小写),不是 Chromium 默认的 "Chrome Safe Storage"
+    //    也不是 ProductName "ego lite" + " Safe Storage" 的拼接)。
     let kc_out = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", "ego lite Safe Storage", "-w"])
+        .args(["find-generic-password", "-s", "ego safe storage", "-w"])
         .output()
         .map_err(|e| anyhow!("security 命令失败: {e}"))?;
     if !kc_out.status.success() {
         anyhow::bail!(
-            "Keychain 读取失败 (用户需在 Keychain 允许 Terminal 访问 'ego lite Safe Storage'): {}",
+            "Keychain 'ego safe storage' 读取失败 (用户可能从未在 ego-lite 登录,或拒绝 Terminal 访问 Keychain): {}",
             String::from_utf8_lossy(&kc_out.stderr)
         );
     }
     let password = String::from_utf8_lossy(&kc_out.stdout).trim().to_string();
     if password.is_empty() {
-        anyhow::bail!("Keychain 'ego lite Safe Storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
+        anyhow::bail!("Keychain 'ego safe storage' 密码为空 (用户可能从未在 ego-lite 登录过)");
     }
 
     // 3. PBKDF2-HMAC-SHA1 派生 AES-128 密钥 (Chrome 80+ macOS 标准: salt="saltysalt", iter=1003)
