@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-01（X 下载速度自适应 + Drission CDP 切换 + GUI 14 项修复 + app.rs 拆分 (1177→651 行) + 11 处死代码字段清理 + simplify 7 项 + 4 fixture + 测试, 225/225 + 6 ignored tests pass, branch `gitbutler/workspace`）
+**更新**: 2026-08-01（X 下载速度自适应 + Drission CDP 切换 + GUI 14 项修复 + app.rs 拆分 (1177→651 行) + 11 处死代码字段清理 + simplify 7 项 + 4 fixture + 测试 + is_logged_in 课程 URL 修复, 225/225 + 6 ignored tests pass, branch `gitbutler/workspace`）
 
 ---
 
@@ -8,6 +8,7 @@
 
 | Commit | 主题 | 范围 |
 |---|---|---|
+| `494755c` | `fix(gui): 双击分析课程不再误报"需要登录"` | handlers.rs (URL 传参) + drission_client.rs (is_logged_in 加诊断 tracing) |
 | `d6cd948` | `feat(platform): 切换 Scrapling → Drission CDP` | Cargo.toml + main.rs + drission_client.rs (新建 1153 行) + platform/* |
 | `832109b` | `feat(download): X 下载速度自适应` | fxtwitter + website_profile + downloader/mod + strategy_* + handlers |
 | `50f229d` | `feat(test): 真实 TulingPython 响应 fixture + poller M6 + components M9` | 4 fixture JSON + poller.rs + components.rs |
@@ -159,6 +160,7 @@ course_download_pool_impl
 23. **dead_code 精确注解 (2026-08-01)**: `#![allow(dead_code)]` 整模块压制 → 14 处 `#[allow(dead_code)]` 逐项 + 注释说明保留原因(API 复用/迁移残留/未来直读)。`cargo check` 0 warnings
 24. **app.rs 按 feature 拆分 (2026-08-01)**: 1100+ 行单组件 → 7 个 < 200 行子组件 + app.rs 651 行 (-45%)。hooks 全留 AppComponent (跨面板共享,无法下沉)。hooks 全留顶层组件,子组件纯 RSX 渲染 + 事件回调
 25. **死代码字段清理 (2026-08-01)**: 14 处 L12 注解中 11 处真正安全删除(setter 同步删除 + UI 不读)。KEEP 3 处有真实用途(speed/speed_arc/cancel_flag)。`cargo check` 0 warnings 维持
+26. **登录态检测 URL 必须用调用方传入的 (2026-08-01)**: `is_logged_in(url: &str)` 接受 URL,但 `fetch_course_collection_impl` 硬编码了首页 `"https://vip.tulingpyton.cn"`。SPA 首页是公开营销页,**不一定触发 `xe.micro_page.common.public.data.get` API**(无需 user_info),拦不到 user_info.user_id → 误判"未登录" → 用户已用 ego-lite 登录却仍报错。修复: 传实际课程 URL,课程页一定会触发 user_info API 做权限校验。同时把所有 `let _ = ...` 静默吞错改成 `tracing::warn!` 记录原因 → 下次类似问题能直接看日志定位
 
 ---
 
