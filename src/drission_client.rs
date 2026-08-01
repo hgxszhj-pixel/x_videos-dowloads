@@ -270,17 +270,17 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
             use aes::cipher::generic_array::GenericArray;
             let cipher = aes::Aes128::new_from_slice(&raw_key)
                 .map_err(|e| anyhow!("AES key 初始化失败: {e}"))?;
-            let mut prev = iv;
+            let mut prev = iv;  // prev = 上一个 ciphertext (首块 XOR IV)
             let mut out = Vec::with_capacity(ct.len());
             for chunk in ct.chunks_exact(16) {
+                let original_ct: [u8; 16] = chunk.try_into().unwrap();  // 记住原始密文
                 let mut ga = GenericArray::clone_from_slice(chunk);
                 cipher.decrypt_block(&mut ga);
-                let block: [u8; 16] = ga.into();
-                let mut plain = block;
+                let mut plain: [u8; 16] = ga.into();
                 for (o, p) in plain.iter_mut().zip(prev.iter()) {
                     *o ^= *p;
                 }
-                prev = block;
+                prev = original_ct;  // CBC: prev 是上一步的 ciphertext,不是解密结果
                 out.extend_from_slice(&plain);
             }
             // PKCS7 unpad
