@@ -114,11 +114,13 @@ impl VideoDownloader {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        // 创建临时目录存储各分段（使用 TempDir 自动清理）
-        // 使用 spawn_blocking 避免阻塞 async runtime
-        let parent_dir = output_path.parent().context("输出路径没有有效父目录")?.to_path_buf();
-        let temp_dir = tokio::task::spawn_blocking(move || {
-            tempfile::TempDir::new_in(parent_dir)
+        // 创建临时目录存储各分段（使用 TempDir 自动清理）。
+        // 临时目录一律放 OS temp ($TMPDIR),不放 output_path.parent(),
+        // 否则在下载期间被进程 kill 时 TempDir Drop 不跑,
+        // 就会在用户输出目录 (~/Movies/) 留下 .tmpXXX/ 孤儿。
+        // 用 spawn_blocking 避免阻塞 async runtime (TempDir 创建是 syscall)。
+        let temp_dir = tokio::task::spawn_blocking(|| {
+            tempfile::TempDir::new()
         }).await??;
         let temp_dir_path = temp_dir.path().to_path_buf();
 

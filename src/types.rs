@@ -622,6 +622,10 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 /// 验证输出文件路径是否在允许的目录内
+///
+/// 当前 downloader 内部 pipeline 已不再调用(merge_segments 走 trust-boundary-sanitized output_path),
+/// 保留给外部代码 (CLI/GUI) 在 user-input 信任边界可选调用。
+#[allow(dead_code)]
 pub fn validate_output_path(output_path: &std::path::Path, allowed_dir: &std::path::Path) -> Result<(), String> {
     let canonical_output = output_path.canonicalize()
         .map_err(|_| format!("Invalid output path: {:?}", output_path))?;
