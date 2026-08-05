@@ -2,9 +2,7 @@
 
 use crate::collaboration::crypto::hashring::HashRing;
 use crate::collaboration::server::db::Database;
-use crate::collaboration::types::{
-    ClientMessage, ServerMessage, Task, TaskStatus,
-};
+use crate::collaboration::types::{ClientMessage, ServerMessage, Task, TaskStatus};
 use anyhow::Result;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -186,7 +184,8 @@ impl MessageHandler {
                 self.handle_claim_task(device_id, team_id, task_id).await;
             }
             ClientMessage::UpdateProgress { task_id, progress } => {
-                self.handle_update_progress(device_id, team_id, task_id, progress).await;
+                self.handle_update_progress(device_id, team_id, task_id, progress)
+                    .await;
             }
             ClientMessage::TaskComplete {
                 task_id,
@@ -202,8 +201,12 @@ impl MessageHandler {
             ClientMessage::LeaveTeam { .. } => {
                 self.handle_leave_team(device_id).await;
             }
-            ClientMessage::UpdatePublicAddr { public_ip, public_port } => {
-                self.handle_update_public_addr(device_id, public_ip, public_port).await;
+            ClientMessage::UpdatePublicAddr {
+                public_ip,
+                public_port,
+            } => {
+                self.handle_update_public_addr(device_id, public_ip, public_port)
+                    .await;
             }
         }
     }
@@ -216,8 +219,16 @@ impl MessageHandler {
     }
 
     /// 处理公网地址更新（通过 STUN 检测）
-    async fn handle_update_public_addr(&self, device_id: Uuid, public_ip: String, public_port: u16) {
-        if let Err(e) = self.db.update_device_public_addr(device_id, &public_ip, public_port) {
+    async fn handle_update_public_addr(
+        &self,
+        device_id: Uuid,
+        public_ip: String,
+        public_port: u16,
+    ) {
+        if let Err(e) = self
+            .db
+            .update_device_public_addr(device_id, &public_ip, public_port)
+        {
             eprintln!("更新公网地址失败: {}", e);
         } else {
             info!("设备公网地址已更新: {}:{}", public_ip, public_port);
@@ -249,20 +260,20 @@ impl MessageHandler {
             }
             drop(sessions_write);
 
-            let _ = self.send_to_device(
-                device_id,
-                ServerMessage::TeamCreated { team: team.clone() },
-            ).await;
+            let _ = self
+                .send_to_device(device_id, ServerMessage::TeamCreated { team: team.clone() })
+                .await;
         }
 
-        // 注册设备到团队
-        // 注意: public_ip 和 public_port 在设备加入时通过 STUN 检测获取
-        // 此处设为 None，后续设备 Register 时会更新
+        // 注册设备到团队（占位 record，UUID 临时为 nil）
+        // public_ip 和 public_port 由客户端 WebSocket 连接时通过 STUN 探测后
+        // 以 UpdatePublicAddr 消息异步更新（详见 src/collaboration/client/ws.rs:230
+        // —— STUN 是 tokio::spawn 非阻塞的，失败也不影响连接建立）。
         let device = crate::collaboration::types::Device {
             id: Uuid::nil(), // 临时，Register 时会更新
             team_id: team.id,
             name: name.clone(),
-            public_ip: None, // TODO: 创建团队时可选择进行 STUN 检测
+            public_ip: None,
             public_port: None,
             last_seen: chrono::Utc::now(),
             is_online: true,
@@ -302,20 +313,20 @@ impl MessageHandler {
             }
             drop(sessions_write);
 
-            let _ = self.send_to_device(
-                device_id,
-                ServerMessage::TeamJoined { team: team.clone() },
-            ).await;
+            let _ = self
+                .send_to_device(device_id, ServerMessage::TeamJoined { team: team.clone() })
+                .await;
         }
 
-        // 注册设备到团队
-        // 注意: public_ip 和 public_port 应在客户端通过 STUN 检测后更新
-        // 此处设为 None，等待客户端 Register 消息时更新
+        // 注册设备到团队（占位 record，UUID/name 临时）
+        // public_ip 和 public_port 由客户端 WebSocket 连接时通过 STUN 探测后
+        // 以 UpdatePublicAddr 消息异步更新（详见 src/collaboration/client/ws.rs:230
+        // —— STUN 是 tokio::spawn 非阻塞的，失败也不影响连接建立）。
         let device = crate::collaboration::types::Device {
             id: Uuid::nil(),
             team_id: team.id,
             name: "NewDevice".to_string(),
-            public_ip: None, // TODO: 加入团队时可选择进行 STUN 检测
+            public_ip: None,
             public_port: None,
             last_seen: chrono::Utc::now(),
             is_online: true,
@@ -329,7 +340,9 @@ impl MessageHandler {
     async fn send_error(&self, key: &str, message: String) -> Result<(), anyhow::Error> {
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(key) {
-            let _ = session.tx.send(serde_json::to_string(&ServerMessage::Error { message })?);
+            let _ = session
+                .tx
+                .send(serde_json::to_string(&ServerMessage::Error { message })?);
         }
         Ok(())
     }
@@ -349,10 +362,9 @@ impl MessageHandler {
             } else {
                 format!("Failed to create task: {}", e)
             };
-            let _ = self.send_to_device(
-                device_id,
-                ServerMessage::Error { message: error_msg },
-            ).await;
+            let _ = self
+                .send_to_device(device_id, ServerMessage::Error { message: error_msg })
+                .await;
             return;
         }
 
@@ -363,20 +375,21 @@ impl MessageHandler {
             task.claimed_at = Some(Utc::now());
             let _ = self.db.update_task(&task, team_id);
 
-            let _ = self.send_to_device(
-                owner_id,
-                ServerMessage::TaskClaimed {
-                    task_id: task.id,
-                    device_id: owner_id,
-                },
-            ).await;
+            let _ = self
+                .send_to_device(
+                    owner_id,
+                    ServerMessage::TaskClaimed {
+                        task_id: task.id,
+                        device_id: owner_id,
+                    },
+                )
+                .await;
         }
 
         // 广播任务
-        let _ = self.broadcast_to_team(
-            team_id,
-            ServerMessage::TaskAdded { task },
-        ).await;
+        let _ = self
+            .broadcast_to_team(team_id, ServerMessage::TaskAdded { task })
+            .await;
     }
 
     /// Handle claim task request
@@ -386,12 +399,14 @@ impl MessageHandler {
         if let Ok(tasks) = self.db.get_tasks_by_team(team_id) {
             if let Some(mut task) = tasks.into_iter().find(|t| t.id == task_id) {
                 if task.status != TaskStatus::Queued {
-                    let _ = self.send_to_device(
-                        device_id,
-                        ServerMessage::Error {
-                            message: "Task not available".to_string(),
-                        },
-                    ).await;
+                    let _ = self
+                        .send_to_device(
+                            device_id,
+                            ServerMessage::Error {
+                                message: "Task not available".to_string(),
+                            },
+                        )
+                        .await;
                     return;
                 }
 
@@ -405,23 +420,21 @@ impl MessageHandler {
                     return;
                 }
 
-                let _ = self.broadcast_to_team(
-                    team_id,
-                    ServerMessage::TaskClaimed {
-                        task_id,
-                        device_id,
-                    },
-                ).await;
+                let _ = self
+                    .broadcast_to_team(team_id, ServerMessage::TaskClaimed { task_id, device_id })
+                    .await;
                 return;
             }
         }
 
-        let _ = self.send_to_device(
-            device_id,
-            ServerMessage::Error {
-                message: "Task not found".to_string(),
-            },
-        ).await;
+        let _ = self
+            .send_to_device(
+                device_id,
+                ServerMessage::Error {
+                    message: "Task not found".to_string(),
+                },
+            )
+            .await;
     }
 
     /// Handle progress update from a device
@@ -448,10 +461,9 @@ impl MessageHandler {
                     return;
                 }
 
-                let _ = self.broadcast_to_team(
-                    team_id,
-                    ServerMessage::TaskUpdated { task },
-                ).await;
+                let _ = self
+                    .broadcast_to_team(team_id, ServerMessage::TaskUpdated { task })
+                    .await;
             }
         }
     }
@@ -484,10 +496,9 @@ impl MessageHandler {
                     return;
                 }
 
-                let _ = self.broadcast_to_team(
-                    team_id,
-                    ServerMessage::TaskUpdated { task },
-                ).await;
+                let _ = self
+                    .broadcast_to_team(team_id, ServerMessage::TaskUpdated { task })
+                    .await;
             }
         }
     }
@@ -509,21 +520,28 @@ impl MessageHandler {
                         ("0.0.0.0".to_string(), 0)
                     };
 
-                    let _ = self.send_to_device(
-                        device_id,
-                        ServerMessage::FileAvailable {
-                            task_id,
-                            from_device: owner_id,
-                            ip,
-                            port,
-                            filename: task
-                                .local_path
-                                .as_ref()
-                                .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
-                                .unwrap_or_default(),
-                            size: task.file_size.unwrap_or(0),
-                        },
-                    ).await;
+                    let _ = self
+                        .send_to_device(
+                            device_id,
+                            ServerMessage::FileAvailable {
+                                task_id,
+                                from_device: owner_id,
+                                ip,
+                                port,
+                                filename: task
+                                    .local_path
+                                    .as_ref()
+                                    .map(|p| {
+                                        p.file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .to_string()
+                                    })
+                                    .unwrap_or_default(),
+                                size: task.file_size.unwrap_or(0),
+                            },
+                        )
+                        .await;
                 }
             }
         }
@@ -580,16 +598,17 @@ impl MessageHandler {
                         continue;
                     }
 
-                    let _ = self.broadcast_to_team(
-                        team_id,
-                        ServerMessage::TaskReleased {
-                            task_id: task.id,
-                            reason: "timeout".to_string(),
-                        },
-                    ).await;
+                    let _ = self
+                        .broadcast_to_team(
+                            team_id,
+                            ServerMessage::TaskReleased {
+                                task_id: task.id,
+                                reason: "timeout".to_string(),
+                            },
+                        )
+                        .await;
                 }
             }
         }
     }
-
 }
