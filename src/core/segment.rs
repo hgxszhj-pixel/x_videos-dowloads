@@ -36,8 +36,22 @@ pub async fn download_segment(
 
     if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
     {
-        return Err(anyhow!("分段下载失败: HTTP {}", response.status()))
-            .context("segment download request failed");
+        let status = response.status();
+        // 429/503 通常携带 Retry-After,这里透传给上层 retry 循环使用
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_retry_after_secs);
+        return match retry_after {
+            Some(secs) => Err(anyhow!(
+                "分段下载失败: HTTP {} (retry-after: {}s)",
+                status,
+                secs
+            )),
+            None => Err(anyhow!("分段下载失败: HTTP {}", status)),
+        }
+        .context("segment download request failed");
     }
 
     let mut file = File::create(output_path).await?;
@@ -96,6 +110,8 @@ pub async fn download_segment_with_retry(
 ) -> Result<u64> {
     let segment_timeout = Duration::from_secs(SEGMENT_TIMEOUT_SECS);
     let segment_size = end - start + 1;
+    // 上轮响应的错误信息（None = 走指数退避）
+    let mut last_attempt_err: Option<anyhow::Error> = None;
 
     for attempt in 0..retry_count {
         // 检查暂停标志
@@ -106,16 +122,30 @@ pub async fn download_segment_with_retry(
         }
 
         if attempt > 0 {
-            let delay = Duration::from_secs(2u64.pow(attempt - 1).min(30));
+            // 优先采用上一轮响应的 Retry-After,否则指数退避(cap 30s)
+            let retry_after_secs = last_attempt_err
+                .as_ref()
+                .and_then(|e| extract_retry_after_from_err(&e.to_string()));
+            let delay_secs = match retry_after_secs {
+                Some(secs) => secs.min(30),
+                None => 2u64.pow(attempt - 1).min(30),
+            };
+            let reason = if retry_after_secs.is_some() {
+                "retry-after"
+            } else {
+                "exp-backoff"
+            };
             info!(
-                "分段 [{}-{}] 重试 {} / {}，等待 {}s",
+                "分段 [{}-{}] 重试 {} / {}，等待 {}s ({})",
                 start,
                 end,
                 attempt + 1,
                 retry_count,
-                delay.as_secs()
+                delay_secs,
+                reason
             );
-            tokio::time::sleep(delay).await;
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            last_attempt_err = None; // 准备本轮新值
         }
 
         match tokio::time::timeout(
@@ -149,6 +179,7 @@ pub async fn download_segment_with_retry(
             }
             Ok(Err(e)) => {
                 warn!("分段 [{}-{}] 下载错误: {:?}", start, end, e);
+                last_attempt_err = Some(e);
             }
             Err(_) => {
                 warn!(
@@ -253,6 +284,26 @@ pub fn parse_size(s: &str) -> Option<u64> {
     }
 }
 
+/// 解析 HTTP `Retry-After` 头的秒数（仅支持纯数字格式）。
+/// 返回 `None` 表示无值/格式不识别。HTTP date 格式需 chrono,避免引入重依赖。
+fn parse_retry_after_secs(value: &str) -> Option<u64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed.parse::<u64>().ok()
+}
+
+/// 从 `download_segment` 生成的错误消息中提取 Retry-After 秒数。
+/// 消息格式：`"分段下载失败: HTTP 429 (retry-after: 5s)"`。
+fn extract_retry_after_from_err(err_msg: &str) -> Option<u64> {
+    let start = err_msg.find("retry-after:")? + "retry-after:".len();
+    let rest = &err_msg[start..];
+    let end = rest.find('s').unwrap_or(rest.len());
+    let num_str = rest[..end].trim().trim_end_matches(')');
+    num_str.parse::<u64>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +342,41 @@ mod tests {
         assert_eq!(parse_size("123.45"), Some(123));
         assert_eq!(parse_size(""), None);
         assert_eq!(parse_size("abc"), None);
+    }
+
+    /// Retry-After 解析(并行下载路径)
+    #[test]
+    fn test_parse_retry_after_secs() {
+        assert_eq!(parse_retry_after_secs("120"), Some(120));
+        assert_eq!(parse_retry_after_secs("  5  "), Some(5));
+        assert_eq!(parse_retry_after_secs("0"), Some(0));
+        assert_eq!(parse_retry_after_secs(""), None);
+        assert_eq!(parse_retry_after_secs("abc"), None);
+        assert_eq!(parse_retry_after_secs("-5"), None);
+        assert_eq!(parse_retry_after_secs("1.5"), None);
+        assert_eq!(
+            parse_retry_after_secs("Wed, 21 Oct 2015 07:28:00 GMT"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_retry_after_from_err() {
+        assert_eq!(
+            extract_retry_after_from_err("分段下载失败: HTTP 429 (retry-after: 60s)"),
+            Some(60)
+        );
+        assert_eq!(
+            extract_retry_after_from_err("HTTP 503 (retry-after: 5s)"),
+            Some(5)
+        );
+        assert_eq!(
+            extract_retry_after_from_err("HTTP 500 Internal Server Error"),
+            None
+        );
+        assert_eq!(
+            extract_retry_after_from_err("HTTP 429 (retry-after: not_a_number)"),
+            None
+        );
     }
 }
