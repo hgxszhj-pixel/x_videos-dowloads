@@ -4,12 +4,12 @@
 //! - 通过 Drission (纯 Rust CDP) 拦截播放器 m3u8 URL，持久 profile 复用登录态
 //! - 课程列表页提取课程信息，拦截失败时引导用户使用 CatCatch 扩展
 
+use crate::drission_client::DrissionClient;
+use crate::history::Platform;
 use crate::platform::{CollectionEntry, PlatformResolver, ResolverError};
 use crate::types::VideoInfo;
-use crate::history::Platform;
-use crate::drission_client::DrissionClient;
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use tracing::{info, warn};
 
 /// TulingPython 小鹅通解析器
@@ -47,7 +47,11 @@ impl TulingPythonResolver {
     /// 真实接口字段命名至少 3 种:`id`/`name`、`resource_id`/`resource_title`、
     /// `spu_id`/`title`(合集页 course_nav.get 用此套);此处对三者都做识别。
     pub fn extract_video_list(course_list: &serde_json::Value) -> Vec<(String, String)> {
-        let list = match course_list.get("data").and_then(|d| d.get("list")).and_then(|l| l.as_array()) {
+        let list = match course_list
+            .get("data")
+            .and_then(|d| d.get("list"))
+            .and_then(|l| l.as_array())
+        {
             Some(arr) => arr,
             None => return vec![],
         };
@@ -85,7 +89,13 @@ impl TulingPythonResolver {
     }
 
     /// 返回 CatCatch 扩展引导（helper 方法）
-    fn guidance(&self, url: &str, course_name: Option<&str>, course_id: Option<&str>, video_list: &[(String, String)]) -> Result<VideoInfo, ResolverError> {
+    fn guidance(
+        &self,
+        url: &str,
+        course_name: Option<&str>,
+        course_id: Option<&str>,
+        video_list: &[(String, String)],
+    ) -> Result<VideoInfo, ResolverError> {
         let (name, _id, course_url) = match (course_name, course_id) {
             (Some(n), Some(i)) => (
                 n.to_string(),
@@ -94,21 +104,32 @@ impl TulingPythonResolver {
             ),
             _ => {
                 let id = Self::extract_id(url).unwrap_or_else(|| "课程ID".to_string());
-                (url.to_string(), id.clone(), format!("https://vip.tulingpyton.cn/p/course/member/{}", id))
+                (
+                    url.to_string(),
+                    id.clone(),
+                    format!("https://vip.tulingpyton.cn/p/course/member/{}", id),
+                )
             }
         };
 
         // 构建视频列表字符串
         let video_list_str = if !video_list.is_empty() {
-            let items: Vec<String> = video_list.iter().take(20).map(|(_, name)| {
-                format!("  - {}", name)
-            }).collect();
+            let items: Vec<String> = video_list
+                .iter()
+                .take(20)
+                .map(|(_, name)| format!("  - {}", name))
+                .collect();
             let more = if video_list.len() > 20 {
                 format!("\n  ... 还有 {} 个视频", video_list.len() - 20)
             } else {
                 String::new()
             };
-            format!("\n\n课程视频列表 (共 {} 个):\n{}{}", video_list.len(), items.join("\n"), more)
+            format!(
+                "\n\n课程视频列表 (共 {} 个):\n{}{}",
+                video_list.len(),
+                items.join("\n"),
+                more
+            )
         } else {
             String::new()
         };
@@ -168,12 +189,14 @@ impl PlatformResolver for TulingPythonResolver {
         let html_title = crate::scrapling_extractor::extract_title(&response.html);
 
         // 尝试从课程列表 API 获取课程信息
-        let course_name = response.course_list
+        let course_name = response
+            .course_list
             .as_ref()
             .and_then(|cl| cl.get("data")?.get("list")?.as_array()?.first())
             .and_then(|item| item.get("name")?.as_str());
 
-        let course_id = response.course_list
+        let course_id = response
+            .course_list
             .as_ref()
             .and_then(|cl| cl.get("data")?.get("list")?.as_array()?.first())
             .and_then(|item| item.get("id")?.as_str());
@@ -182,7 +205,8 @@ impl PlatformResolver for TulingPythonResolver {
         let effective_course_name = course_name.or(html_title.as_deref());
 
         // 提取所有视频列表
-        let video_list = response.course_list
+        let video_list = response
+            .course_list
             .as_ref()
             .map(Self::extract_video_list)
             .unwrap_or_default();
@@ -194,13 +218,90 @@ impl PlatformResolver for TulingPythonResolver {
         crate::types::DownloadStrategy::Hls
     }
 
-    async fn list_collection(
-        &self,
-        url: &str,
-    ) -> Result<Vec<CollectionEntry>, ResolverError> {
+    async fn list_collection(&self, url: &str) -> Result<Vec<CollectionEntry>, ResolverError> {
         let mut visited = std::collections::HashSet::new();
         list_collection_impl(self, url, &mut visited).await
     }
+}
+
+/// 频道/合集页的单层解析：l_xxx 立即可用（jump_url 改写到 live_pc 形式），
+/// p_xxx 返回待递归 URL。s_xxx / 其它（套餐、单独付费）跳过。
+///
+/// 返回 `None` 表示响应不是 channel 页（data.list 缺失或不是数组），调用方应走 leaf 路径。
+/// 抽出纯函数便于离线测试（无需 Drission + 真实浏览器）。
+fn parse_channel_items(
+    course_list: &serde_json::Value,
+    parent_url: &str,
+) -> Option<(Vec<CollectionEntry>, Vec<String>)> {
+    let top = course_list
+        .get("data")
+        .and_then(|d| d.get("list"))
+        .and_then(|l| l.as_array())?;
+    let mut concrete: Vec<CollectionEntry> = Vec::new();
+    let mut recurse: Vec<String> = Vec::new();
+
+    for item in top {
+        let id = item
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| item.get("resource_id").and_then(|v| v.as_str()))
+            .or_else(|| item.get("spu_id").and_then(|v| v.as_str()));
+        let name = item
+            .get("name")
+            .and_then(|v| v.as_str())
+            .or_else(|| item.get("resource_title").and_then(|v| v.as_str()))
+            .or_else(|| item.get("title").and_then(|v| v.as_str()));
+        let jump = item.get("jump_url").and_then(|v| v.as_str());
+        let (id, name) = match (id, name) {
+            (Some(i), Some(n)) if !i.is_empty() && !n.is_empty() && n != "null" => {
+                (i.to_string(), n.to_string())
+            }
+            _ => continue,
+        };
+        if id.starts_with("l_") {
+            // 直播回放：API 返回的 jump_url = `/v4/course/alive/l_xxx?type=2&...`
+            //   单独访问该 URL 返"暂无内容"(2026-07-31 ego-browser 实测),
+            //   需改写到真实可用的 player URL: `/p/t_pc/live_pc/pc/l_xxx?product_id=...&app_id=...`
+            //   否则下载阶段 get_video_info 拉不到 m3u8 → 走 CatCatch 兜底。
+            let app_id = item
+                .get("app_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("appssry6rs71641");
+            let pro_id = jump
+                .and_then(extract_product_id_from_url)
+                .or_else(|| extract_product_id_from_url(parent_url))
+                .unwrap_or_default();
+            let jump_url = if !pro_id.is_empty() {
+                Some(format!(
+                    "https://vip.tulingpyton.cn/p/t_pc/live_pc/pc/{}?product_id={}&app_id={}",
+                    id, pro_id, app_id
+                ))
+            } else {
+                warn!("l_xxx {} 缺少 product_id,fallback 到 API jump_url", id);
+                jump.map(|j| {
+                    if j.starts_with("http") {
+                        j.to_string()
+                    } else {
+                        format!("https://vip.tulingpyton.cn{j}")
+                    }
+                })
+            };
+            concrete.push(CollectionEntry { id, name, jump_url });
+        } else if id.starts_with("p_") {
+            // 子课程/合集：递归
+            if let Some(j) = jump {
+                let sub_url = if j.starts_with("http") {
+                    j.to_string()
+                } else {
+                    format!("https://vip.tulingpyton.cn{j}")
+                };
+                recurse.push(sub_url);
+            }
+        }
+        // s_xxx / 其它：跳过（套餐、单独付费）
+    }
+
+    Some((concrete, recurse))
 }
 
 /// 递归展开,带 visited 防环。同 URL 第二次访问直接返回空,避免系列课互相跳转时无限递归。
@@ -208,8 +309,9 @@ fn list_collection_impl<'a>(
     resolver: &'a TulingPythonResolver,
     url: &'a str,
     visited: &'a mut std::collections::HashSet<String>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<CollectionEntry>, ResolverError>> + Send + 'a>>
-{
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Vec<CollectionEntry>, ResolverError>> + Send + 'a>,
+> {
     let canonical = canonicalize_url(url);
     Box::pin(async move {
         if !visited.insert(canonical) {
@@ -218,77 +320,23 @@ fn list_collection_impl<'a>(
         if TulingPythonResolver::is_standalone_live(url) {
             return Ok(vec![]);
         }
-        let response = resolver.drission.fetch(url).await.map_err(|e| {
-            ResolverError::Network(format!("Drission 请求失败: {e}"))
-        })?;
-        // 频道/合集页：data.list 中的 p_xxx 是子课程 → 递归展开
+        let response = resolver
+            .drission
+            .fetch(url)
+            .await
+            .map_err(|e| ResolverError::Network(format!("Drission 请求失败: {e}")))?;
+        // 频道/合集页：data.list 中 p_xxx 递归 → l_xxx 改写后直出
         if let Some(cl) = response.course_list.as_ref() {
-            if let Some(top) = cl.get("data").and_then(|d| d.get("list")).and_then(|l| l.as_array()) {
-                let mut all: Vec<CollectionEntry> = Vec::new();
-                for item in top {
-                    let id = item
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .or_else(|| item.get("resource_id").and_then(|v| v.as_str()))
-                        .or_else(|| item.get("spu_id").and_then(|v| v.as_str()));
-                    let name = item
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .or_else(|| item.get("resource_title").and_then(|v| v.as_str()))
-                        .or_else(|| item.get("title").and_then(|v| v.as_str()));
-                    let jump = item.get("jump_url").and_then(|v| v.as_str());
-                    let (id, name) = match (id, name) {
-                        (Some(i), Some(n)) if !i.is_empty() && !n.is_empty() && n != "null" => (i.to_string(), n.to_string()),
-                        _ => continue,
-                    };
-                    if id.starts_with("l_") {
-                        // 直播回放：API 返回的 jump_url = `/v4/course/alive/l_xxx?type=2&...`
-                        //   单独访问该 URL 返"暂无内容"(2026-07-31 ego-browser 实测),
-                        //   需改写到真实可用的 player URL: `/p/t_pc/live_pc/pc/l_xxx?product_id=...&app_id=...`
-                        //   否则下载阶段 get_video_info 拉不到 m3u8 → 走 CatCatch 兜底。
-                        let app_id = item
-                            .get("app_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("appssry6rs71641");
-                        let pro_id = jump
-                            .and_then(extract_product_id_from_url)
-                            .or_else(|| extract_product_id_from_url(url))
-                            .unwrap_or_default();
-                        let jump_url = if !pro_id.is_empty() {
-                            Some(format!(
-                                "https://vip.tulingpyton.cn/p/t_pc/live_pc/pc/{}?product_id={}&app_id={}",
-                                id, pro_id, app_id
-                            ))
-                        } else {
-                            warn!("l_xxx {} 缺少 product_id,fallback 到 API jump_url", id);
-                            jump.map(|j| {
-                                if j.starts_with("http") {
-                                    j.to_string()
-                                } else {
-                                    format!("https://vip.tulingpyton.cn{j}")
-                                }
-                            })
-                        };
-                        all.push(CollectionEntry { id, name, jump_url });
-                    } else if id.starts_with("p_") {
-                        // 子课程/合集：递归
-                        if let Some(j) = jump {
-                            let sub_url = if j.starts_with("http") {
-                                j.to_string()
-                            } else {
-                                format!("https://vip.tulingpyton.cn{j}")
-                            };
-                            match list_collection_impl(resolver, &sub_url, visited).await {
-                                Ok(mut subs) => all.append(&mut subs),
-                                Err(e) => {
-                                    warn!("子课程 {sub_url} 展开失败：{e}");
-                                }
-                            }
+            if let Some((mut concrete, recurse)) = parse_channel_items(cl, url) {
+                for sub_url in recurse {
+                    match list_collection_impl(resolver, &sub_url, visited).await {
+                        Ok(mut subs) => concrete.append(&mut subs),
+                        Err(e) => {
+                            warn!("子课程 {sub_url} 展开失败：{e}");
                         }
                     }
-                    // s_xxx / 其它：跳过（套餐、单独付费）
                 }
-                return Ok(all);
+                return Ok(concrete);
             }
         }
         // 课程目录直拉：data.list 本身就是课节
@@ -298,10 +346,14 @@ fn list_collection_impl<'a>(
         };
         Ok(list
             .into_iter()
-            .map(|(id, name)| CollectionEntry { id, name, jump_url: None })
+            .map(|(id, name)| CollectionEntry {
+                id,
+                name,
+                jump_url: None,
+            })
             .collect())
-        })
-    }
+    })
+}
 
 /// URL 规范化(去 query/fragment),用于 list_collection 防环的 visited 集合。
 /// 系列课的 course_nav 响应里章节之间互相跳转,query 串会带 product_id 等差异;
@@ -318,9 +370,7 @@ fn extract_product_id_from_url(url: &str) -> Option<String> {
     for key in &["product_id=", "pro_id="] {
         if let Some(idx) = url.find(key) {
             let after = &url[idx + key.len()..];
-            let end = after
-                .find(['&', '#'])
-                .unwrap_or(after.len());
+            let end = after.find(['&', '#']).unwrap_or(after.len());
             let val = &after[..end];
             if val.starts_with("p_") {
                 return Some(val.to_string());
@@ -387,7 +437,10 @@ mod tests {
             { "id": "l_d", "name": "ok-2" },
         ]));
         let items = TulingPythonResolver::extract_video_list(&wrapper);
-        assert_eq!(items, vec![("l_a".into(), "ok-1".into()), ("l_d".into(), "ok-2".into())]);
+        assert_eq!(
+            items,
+            vec![("l_a".into(), "ok-1".into()), ("l_d".into(), "ok-2".into())]
+        );
     }
 
     #[test]
@@ -514,7 +567,10 @@ mod tests {
             Some("p_xxx".to_string())
         );
         // 非 p_ 开头 → 忽略
-        assert_eq!(extract_product_id_from_url("https://x.com/?product_id=l_xxx"), None);
+        assert_eq!(
+            extract_product_id_from_url("https://x.com/?product_id=l_xxx"),
+            None
+        );
         // 无 key → None
         assert_eq!(extract_product_id_from_url("https://x.com/foo"), None);
     }
@@ -549,5 +605,88 @@ mod tests {
             titles.iter().any(|t| t.contains("feapder")),
             "应包含 feapder 关键词"
         );
+    }
+
+    fn channel_fixture_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tuling_channel_real.json")
+    }
+
+    fn load_channel_fixture() -> serde_json::Value {
+        let raw = fs::read_to_string(channel_fixture_path()).expect("channel fixture should exist");
+        serde_json::from_str(&raw).expect("channel fixture must be valid JSON")
+    }
+
+    /// 离线 E2E (1/2):频道页只含 p_xxx 子课程(无 l_xxx)时,
+    /// parse_channel_items 必须把所有 p_ 项识别为待递归,跳过 s_ 套餐项。
+    /// 这条路径原先只能在 src/drission_client.rs 的 #[ignore] E2E 里覆盖。
+    #[test]
+    fn parse_channel_items_p_subcourses_are_marked_for_recursion_only() {
+        let fixture = load_channel_fixture();
+        let parent_url =
+            "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_root?product_id=p_root";
+        let (concrete, recurse) =
+            parse_channel_items(&fixture, parent_url).expect("data.list 存在 → channel 页");
+        assert!(
+            concrete.is_empty(),
+            "channel 页全 p_/s_,concrete 应为空,实有 {}",
+            concrete.len()
+        );
+        assert_eq!(recurse.len(), 4, "4 个 p_ 子课程,recurse 应有 4 条");
+        for url in &recurse {
+            assert!(url.starts_with("https://vip.tulingpyton.cn/p/course/big_column/p_"));
+        }
+    }
+
+    /// 离线 E2E (2/2):课节目录页全 l_xxx 时,jump_url 必须改写到
+    /// `/p/t_pc/live_pc/pc/l_xxx?product_id=p_xxx&app_id=appssry6rs71641`,
+    /// 否则下载阶段会拿到 API 原始 `/v4/course/alive/...`(单独访问返"暂无内容")。
+    /// 这条路径原先也只能在 #[ignore] E2E 里覆盖。
+    #[test]
+    fn parse_channel_items_live_replays_get_rewritten_jump_url() {
+        let path = column_items_fixture_path();
+        let raw = fs::read_to_string(&path).expect("column_items fixture should exist");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("column_items fixture must be valid JSON");
+        let parent_url =
+            "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_root?product_id=p_root";
+        let (concrete, recurse) =
+            parse_channel_items(&fixture, parent_url).expect("data.list 存在 → channel 页");
+        assert!(
+            concrete.len() >= 20,
+            "至少 20 个 l_ 项,实有 {}",
+            concrete.len()
+        );
+        assert!(recurse.is_empty(), "全 l_ → recurse 应为空");
+        assert!(concrete.iter().all(|e| e.id.starts_with("l_")));
+        for entry in &concrete {
+            let url = entry.jump_url.as_ref().expect("l_ 必须有改写后的 jump_url");
+            assert!(
+                url.starts_with("https://vip.tulingpyton.cn/p/t_pc/live_pc/pc/l_"),
+                "l_ jump_url 应改写到 live_pc 形式,实际: {url}"
+            );
+            assert!(
+                url.contains("product_id=p_"),
+                "改写后 jump_url 必须含 product_id=p_xxx,实际: {url}"
+            );
+            assert!(
+                url.contains("app_id=appssry6rs71641"),
+                "改写后 jump_url 必须含默认 app_id,实际: {url}"
+            );
+        }
+    }
+
+    /// 非 channel 页(无 data 或 data.list 不是数组)→ parse_channel_items 返回 None,
+    /// 调用方应走 leaf 路径(extract_video_list)。
+    #[test]
+    fn parse_channel_items_returns_none_for_non_channel_page() {
+        let no_data = serde_json::json!({});
+        assert!(parse_channel_items(&no_data, "https://x.com").is_none());
+        let data_str = serde_json::json!({ "data": "string" });
+        assert!(parse_channel_items(&data_str, "https://x.com").is_none());
+        let list_obj = serde_json::json!({ "data": { "list": {} } });
+        assert!(parse_channel_items(&list_obj, "https://x.com").is_none());
     }
 }

@@ -194,10 +194,9 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
     use rusqlite::Connection;
 
     // 1. ego-lite profile 路径
-    let home = std::env::var_os("HOME")
-        .ok_or_else(|| anyhow!("HOME not set"))?;
-    let profile = std::path::PathBuf::from(home)
-        .join("Library/Application Support/Citro Labs/ego lite");
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME not set"))?;
+    let profile =
+        std::path::PathBuf::from(home).join("Library/Application Support/Citro Labs/ego lite");
     if !profile.exists() {
         anyhow::bail!("ego-lite profile 不存在: {profile:?}");
     }
@@ -237,18 +236,18 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
           password.len(), key.iter().map(|b| format!("{:02x}", b)).collect::<String>());
 
     // 4. 读 SQLite cookies
-    let conn = Connection::open(&cookies_db)
-        .map_err(|e| anyhow!("打开 Cookies SQLite 失败: {e}"))?;
-    let mut stmt = conn.prepare(
-        "SELECT name, value, encrypted_value, host_key, expires_utc \
-         FROM cookies WHERE host_key LIKE '%tulingpyton%' OR host_key LIKE '%ego-lite%'"
-    )
-    .map_err(|e| anyhow!("SQL 准备失败: {e}"))?;
+    let conn =
+        Connection::open(&cookies_db).map_err(|e| anyhow!("打开 Cookies SQLite 失败: {e}"))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT name, value, encrypted_value, host_key, expires_utc \
+         FROM cookies WHERE host_key LIKE '%tulingpyton%' OR host_key LIKE '%ego-lite%'",
+        )
+        .map_err(|e| anyhow!("SQL 准备失败: {e}"))?;
 
     let now_unix = chrono::Utc::now().timestamp();
     let mut parts: Vec<String> = Vec::new();
-    let mut rows = stmt.query([])
-        .map_err(|e| anyhow!("SQL 查询失败: {e}"))?;
+    let mut rows = stmt.query([]).map_err(|e| anyhow!("SQL 查询失败: {e}"))?;
     while let Some(row) = rows.next().map_err(|e| anyhow!("SQL next: {e}"))? {
         let name: String = row.get(0).unwrap_or_default();
         let plain_value: String = row.get(1).unwrap_or_default();
@@ -258,7 +257,9 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
 
         if expires_utc > 0 {
             let expires_unix = expires_utc / 1_000_000 - 11_644_473_600;
-            if expires_unix < now_unix { continue; }
+            if expires_unix < now_unix {
+                continue;
+            }
         }
 
         // 解密 v10 (AES-128-CBC + PKCS7, IV 在 cookie 里)
@@ -267,12 +268,15 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
             if total < 3 + 16 + 16 || &encrypted_value[0..3] != b"v10" {
                 continue;
             }
-            let iv: [u8; 16] = encrypted_value[3..19].try_into()
+            let iv: [u8; 16] = encrypted_value[3..19]
+                .try_into()
                 .map_err(|_| anyhow!("IV 长度异常"))?;
             let ct = &encrypted_value[19..];
-            if !ct.len().is_multiple_of(16) { continue; }
-            use aes::cipher::{KeyInit, BlockDecrypt};
+            if !ct.len().is_multiple_of(16) {
+                continue;
+            }
             use aes::cipher::generic_array::GenericArray;
+            use aes::cipher::{BlockDecrypt, KeyInit};
             let cipher = aes::Aes128::new_from_slice(&key)
                 .map_err(|e| anyhow!("AES key 初始化失败: {e}"))?;
             let mut prev = iv;
@@ -293,7 +297,9 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
                 Some(&b) if (1..=16).contains(&b) => b as usize,
                 _ => continue,
             };
-            if pad > out.len() || pad + 16 > out.len() { continue; }
+            if pad > out.len() || pad + 16 > out.len() {
+                continue;
+            }
             // Chromium 在 plaintext 前面加 16 字节随机 salt(2026-08-01 Python 实测)
             // — 跳过前 16 字节,然后 unpad
             out.drain(..16);
@@ -302,7 +308,9 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         } else {
             plain_value
         };
-        if value.is_empty() { continue; }
+        if value.is_empty() {
+            continue;
+        }
 
         if !value.is_empty() && !name.is_empty() {
             parts.push(format!("{name}={value}"));
@@ -455,7 +463,10 @@ async fn check_login_at(profile: PathBuf, url: &str) -> LoginStatus {
     if let Err(e) = tab.get(url).await {
         warn!(target: "drission", "  导航到 {url} 失败 ({e})");
     }
-    let _ = tab.wait().network_idle(1.0, Some(Duration::from_secs(15))).await;
+    let _ = tab
+        .wait()
+        .network_idle(1.0, Some(Duration::from_secs(15)))
+        .await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     // 关键: 等够久收 API 响应(之前 5s 太短,实际需要 ~10s 等 SPA 渲染+fetch)
     let packets = listen
@@ -515,8 +526,14 @@ fn log_candidate_profiles() {
                         || lower.contains("chromium")
                         || lower.contains("citrolabs")
                     {
-                        found.push(format!("{name}  ({})",
-                            if entry.path().exists() { "exists" } else { "missing" }));
+                        found.push(format!(
+                            "{name}  ({})",
+                            if entry.path().exists() {
+                                "exists"
+                            } else {
+                                "missing"
+                            }
+                        ));
                     }
                 }
                 if found.is_empty() {
@@ -598,9 +615,12 @@ async fn open_login_window_via_drission(url: &str) -> Result<()> {
         .user_data_dir(profile)
         .window_size(1280, 800)
         .add_arg("--no-first-run");
-    let browser = ChromiumBrowser::launch(opts).await
+    let browser = ChromiumBrowser::launch(opts)
+        .await
         .map_err(|e| anyhow!("Drission headed 启动失败: {e}"))?;
-    let tab = browser.new_tab(Some(url)).await
+    let tab = browser
+        .new_tab(Some(url))
+        .await
         .map_err(|e| anyhow!("new_tab 失败: {e}"))?;
 
     let listen = tab.listen();
@@ -617,7 +637,10 @@ async fn open_login_window_via_drission(url: &str) -> Result<()> {
         for p in &packets {
             if let Some(j) = p.json() {
                 if let Some(ui) = j.get("data").and_then(|d| d.get("user_info")) {
-                    let uid = ui.get("user_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                    let uid = ui
+                        .get("user_id")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty());
                     if !ui.is_null() && uid.is_some() {
                         info!("检测到登录成功 (user_id={:?})", uid);
                         logged_in = true;
@@ -626,7 +649,9 @@ async fn open_login_window_via_drission(url: &str) -> Result<()> {
                 }
             }
         }
-        if logged_in { break; }
+        if logged_in {
+            break;
+        }
         if i % 6 == 5 {
             warn!("已等待 {} 秒还未检测到登录,继续等...", (i + 1) * 5);
         }
@@ -856,11 +881,7 @@ fn extract_pagination_params(
     course_list: &serde_json::Value,
     parent_url: &str,
 ) -> Option<(String, String)> {
-    let first = course_list
-        .get("data")?
-        .get("list")?
-        .as_array()?
-        .first()?;
+    let first = course_list.get("data")?.get("list")?.as_array()?.first()?;
     let jump = first.get("jump_url").and_then(|v| v.as_str()).unwrap_or("");
     let app_id = first
         .get("app_id")
@@ -877,9 +898,7 @@ fn extract_pagination_params(
 fn find_id_in_url(url: &str, key: &str) -> Option<String> {
     let idx = url.find(key)?;
     let after = &url[idx + key.len()..];
-    let end = after
-        .find(['&', '#'])
-        .unwrap_or(after.len());
+    let end = after.find(['&', '#']).unwrap_or(after.len());
     let val = &after[..end];
     if val.starts_with("p_") {
         Some(val.to_string())
@@ -890,7 +909,12 @@ fn find_id_in_url(url: &str, key: &str) -> Option<String> {
 
 /// 生成翻页 JS:在浏览器 fetch 后续页,触发 listen 捕获。
 /// `page_size` 是首条响应里 list 的长度(通常 20,API 实际接受的最大值)。
-fn build_pagination_js(column_id: &str, app_id: &str, page_size: usize, total_pages: usize) -> String {
+fn build_pagination_js(
+    column_id: &str,
+    app_id: &str,
+    page_size: usize,
+    total_pages: usize,
+) -> String {
     format!(
         r#"
         (async () => {{
@@ -950,7 +974,10 @@ fn merge_paginated_items(
         added += root_list.len() - before;
     }
     if added > 0 {
-        info!("Drission 翻页合并:新增 {added} 项,合计 {} 项", root_list.len());
+        info!(
+            "Drission 翻页合并:新增 {added} 项,合计 {} 项",
+            root_list.len()
+        );
     }
 }
 
@@ -1036,7 +1063,10 @@ mod tests {
 
         // 调清理函数
         let n = clear_stale_tulingpyton_cookies(dir.path());
-        assert_eq!(n, 3, "应删除 3 个 tulingpyton.cn 相关 cookie (含子域),实际 {n}");
+        assert_eq!(
+            n, 3,
+            "应删除 3 个 tulingpyton.cn 相关 cookie (含子域),实际 {n}"
+        );
 
         // 验证剩余行(只剩 3 个非目标域)
         let conn = Connection::open(&db_path).expect("reopen SQLite");
@@ -1094,6 +1124,11 @@ mod tests {
     /// 真实 E2E 回归:课程合集页(返回 5 个 chapter)→ 递归到每个 chapter → 聚合所有视频。
     /// 修复 COURSE_API 子串错字 + 字段别名(spu_id/title)后,应能拿到 ~23 个视频。
     ///
+    /// **离线覆盖**:解析层在 `src/platform/tulingpython.rs::tests` 有完整覆盖
+    /// (12 个 #[test],含 `parse_channel_items_p_subcourses_are_marked_for_recursion_only`
+    /// 和 `parse_channel_items_live_replays_get_rewritten_jump_url` 两个基于 fixture 的 E2E)。
+    /// 本测试只用于验证 Drission CDP 监听器能否拦截真实接口响应。
+    ///
     /// 用法:
     ///   cargo test integration_course_pool -- --ignored --nocapture
     ///   COURSE_URL=https://... cargo test integration_course_pool -- --ignored --nocapture
@@ -1110,8 +1145,8 @@ mod tests {
 
         // 走真实的 list_collection:合集页返回 chapter,递归到每个 jump_url 拉视频
         use crate::platform::PlatformResolver;
-        let resolver = crate::platform::TulingPythonResolver::new()
-            .expect("TulingPythonResolver 初始化失败");
+        let resolver =
+            crate::platform::TulingPythonResolver::new().expect("TulingPythonResolver 初始化失败");
         let entries = resolver
             .list_collection(&url)
             .await
@@ -1150,8 +1185,8 @@ mod tests {
             "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_69e86659e4b0694c5bb4b923?product_id=p_69e86659e4b0694c5bb4b923".to_string()
         });
 
-        use std::time::Duration;
         use drission::cdp::{ChromiumBrowser, ChromiumOptions};
+        use std::time::Duration;
 
         let opts = ChromiumOptions::new()
             .headless(true)
@@ -1166,7 +1201,10 @@ mod tests {
         listen.start(&["course_nav"]).await.expect("listen 失败");
 
         let _ = tab.get(&url).await;
-        let _ = tab.wait().network_idle(1.0, Some(Duration::from_secs(20))).await;
+        let _ = tab
+            .wait()
+            .network_idle(1.0, Some(Duration::from_secs(20)))
+            .await;
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         let _packets = listen
@@ -1193,8 +1231,8 @@ mod tests {
             "https://vip.tulingpyton.cn/v4/course/alive/l_6a33d37ee4b0694c351b977a?type=2&resource_type=4&resource_id=l_6a33d37ee4b0694c351b977a&app_id=appssry6rs71641&pro_id=p_6981db02e4b0694c5bb0b781&conduit_id=p_6981db02e4b0694c5bb0b781&conduit_type=live_group".to_string()
         });
 
-        use std::time::Duration;
         use drission::cdp::{ChromiumBrowser, ChromiumOptions};
+        use std::time::Duration;
 
         let opts = ChromiumOptions::new()
             .headless(true)
@@ -1206,13 +1244,29 @@ mod tests {
         let browser = ChromiumBrowser::launch(opts).await.expect("launch 失败");
         let tab = browser.new_tab(None).await.expect("new_tab 失败");
         let listen = tab.listen();
-        listen.start(&["m3u8", ".ts", ".flv", "alive", "play_url", "pull_url", "hls", "column.items", "common.public"]).await.expect("listen 失败");
+        listen
+            .start(&[
+                "m3u8",
+                ".ts",
+                ".flv",
+                "alive",
+                "play_url",
+                "pull_url",
+                "hls",
+                "column.items",
+                "common.public",
+            ])
+            .await
+            .expect("listen 失败");
 
         println!("\n========== LESSON PLAYER DIAG ==========");
         println!("URL: {url}");
 
         let _ = tab.get(&url).await;
-        let _ = tab.wait().network_idle(1.0, Some(Duration::from_secs(15))).await;
+        let _ = tab
+            .wait()
+            .network_idle(1.0, Some(Duration::from_secs(15)))
+            .await;
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         // 阶段 1: DOM 检查
@@ -1228,7 +1282,13 @@ mod tests {
             })
             "#,
         ).await;
-        println!("{}", dom_state.ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_else(|| "no result".to_string()));
+        println!(
+            "{}",
+            dom_state
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "no result".to_string())
+        );
 
         // 阶段 2: 触发 play(4 种尝试)
         println!("\n--- 阶段 2: 触发 play ---");
@@ -1258,8 +1318,13 @@ mod tests {
         let mut video_count = 0;
         for p in &packets {
             let u = p.url.to_lowercase();
-            let is_video = u.contains("m3u8") || u.contains(".ts") || u.contains(".flv") || u.contains(".mp4")
-                || u.contains("play_url") || u.contains("alive") || u.contains("pull_url");
+            let is_video = u.contains("m3u8")
+                || u.contains(".ts")
+                || u.contains(".flv")
+                || u.contains(".mp4")
+                || u.contains("play_url")
+                || u.contains("alive")
+                || u.contains("pull_url");
             if is_video {
                 video_count += 1;
                 println!(
@@ -1285,17 +1350,24 @@ mod tests {
                 "PLAYER_API"
             } else if u.contains("xe.") {
                 "XE_API"
-            } else if u.contains("vip.tulingpyton.cn") || u.contains("static") || u.contains("cos.") {
+            } else if u.contains("vip.tulingpyton.cn") || u.contains("static") || u.contains("cos.")
+            {
                 "ASSET"
             } else {
                 "OTHER"
             };
-            println!("  [{kind:12}] {p_method} {p_url}", kind = kind, p_method = p.method, p_url = p.url);
+            println!(
+                "  [{kind:12}] {p_method} {p_url}",
+                kind = kind,
+                p_method = p.method,
+                p_url = p.url
+            );
         }
 
         // 阶段 4: video 元素最终状态
-        let final_state = tab.run_js(
-            r#"
+        let final_state = tab
+            .run_js(
+                r#"
             JSON.stringify(Array.from(document.querySelectorAll('video')).map(v => ({
                 src: v.src || v.currentSrc,
                 paused: v.paused,
@@ -1305,8 +1377,15 @@ mod tests {
                 error: v.error ? v.error.message : null
             })))
             "#,
-        ).await;
-        println!("{}", final_state.ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_else(|| "no result".to_string()));
+            )
+            .await;
+        println!(
+            "{}",
+            final_state
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "no result".to_string())
+        );
 
         let _ = browser.quit().await;
         println!("\n========== END DIAG ==========");
@@ -1347,8 +1426,12 @@ mod tests {
             let status = resp.status();
             let ct = resp.headers().get("content-type").cloned();
             let bytes = resp.bytes().await.unwrap_or_default();
-            println!("\nm3u8 GET: status={} content-type={:?} bytes={}",
-                status, ct, bytes.len());
+            println!(
+                "\nm3u8 GET: status={} content-type={:?} bytes={}",
+                status,
+                ct,
+                bytes.len()
+            );
             let head = String::from_utf8_lossy(&bytes[..bytes.len().min(800)]);
             println!("m3u8 前 800 字符:\n{head}");
             std::fs::write("/tmp/single_video_test.m3u8", &bytes).ok();
@@ -1362,14 +1445,21 @@ mod tests {
             "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_6981db02e4b0694c5bb0b781?product_id=p_6981db02e4b0694c5bb0b781&resource_id=l_69de2160e4b0694c5baf5082".to_string()
         });
 
-        if !bypass_login && super::is_logged_in("https://vip.tulingpyton.cn/").await != super::LoginStatus::LoggedIn {
+        if !bypass_login
+            && super::is_logged_in("https://vip.tulingpyton.cn/").await
+                != super::LoginStatus::LoggedIn
+        {
             panic!("profile 未登录 → 请先在 GUI 里点 🔑 打开登录窗口 扫码登录\n(或设 BYPASS_LOGIN=1 跳过 login 检查)");
         }
-        println!("\n[模式 {}] login check 跳过={}", if bypass_login { "B" } else { "A" }, bypass_login);
+        println!(
+            "\n[模式 {}] login check 跳过={}",
+            if bypass_login { "B" } else { "A" },
+            bypass_login
+        );
 
         use crate::platform::PlatformResolver;
-        let resolver = crate::platform::TulingPythonResolver::new()
-            .expect("TulingPythonResolver 初始化失败");
+        let resolver =
+            crate::platform::TulingPythonResolver::new().expect("TulingPythonResolver 初始化失败");
         let info = match resolver.get_video_info(&url).await {
             Ok(i) => i,
             Err(e) => panic!("get_video_info 失败: {e:?}\n(URL 可能需要登录/真实课节页)"),
@@ -1389,9 +1479,19 @@ mod tests {
         let status = resp.status();
         let ct = resp.headers().get("content-type").cloned();
         let bytes = resp.bytes().await.unwrap_or_default();
-        let is_m3u8 = info.url.contains(".m3u8") || ct.as_ref().and_then(|v| v.to_str().ok()).unwrap_or("").contains("mpegurl");
-        println!("\nm3u8 GET: status={} content-type={:?} bytes={} is_m3u8={}",
-            status, ct, bytes.len(), is_m3u8);
+        let is_m3u8 = info.url.contains(".m3u8")
+            || ct
+                .as_ref()
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .contains("mpegurl");
+        println!(
+            "\nm3u8 GET: status={} content-type={:?} bytes={} is_m3u8={}",
+            status,
+            ct,
+            bytes.len(),
+            is_m3u8
+        );
         if !is_m3u8 {
             println!("⚠️ URL 不像 m3u8(签名 URL 通常带 ?token=xxx)");
         }
@@ -1417,8 +1517,8 @@ mod tests {
             "https://vip.tulingpyton.cn/p/t_pc/live_pc/pc/l_69eb507ae4b0694c34ff3b91".to_string()
         });
 
-        use std::time::Duration;
         use drission::cdp::{ChromiumBrowser, ChromiumOptions};
+        use std::time::Duration;
 
         let opts = ChromiumOptions::new()
             .headless(true)
@@ -1462,7 +1562,8 @@ mod tests {
                 p.url
             );
             // 打印小鹅通 API 的响应体(都很小),用于判断直播/课程状态
-            if p.url.contains("xe.") && p.response.body.len() < 6000 && !p.response.body.is_empty() {
+            if p.url.contains("xe.") && p.response.body.len() < 6000 && !p.response.body.is_empty()
+            {
                 println!("      body: {}", p.response.body);
             }
         }
@@ -1477,7 +1578,10 @@ mod tests {
         println!("html len: {}", html.len());
         println!("疑似登录页: {}", looks_login);
         let preview: String = html.chars().take(1500).collect();
-        println!("--- html preview (前 1500 字符) ---\n{}\n--- end preview ---", preview);
+        println!(
+            "--- html preview (前 1500 字符) ---\n{}\n--- end preview ---",
+            preview
+        );
         let _ = browser.quit().await;
     }
 
@@ -1492,8 +1596,8 @@ mod tests {
             "https://vip.tulingpyton.cn/p/t_pc/live_pc/pc/l_69eb507ae4b0694c34ff3b91".to_string()
         });
 
-        use std::time::Duration;
         use drission::cdp::{ChromiumBrowser, ChromiumOptions};
+        use std::time::Duration;
 
         let opts = ChromiumOptions::new()
             .headless(false)
@@ -1519,7 +1623,9 @@ mod tests {
         // 先开监听(覆盖稍后的直播页导航)
         let listen = tab.listen();
         let _ = listen
-            .start(&["m3u8", ".flv", ".mp4", "xe.alive", "pull_url", "play_url", "hls"])
+            .start(&[
+                "m3u8", ".flv", ".mp4", "xe.alive", "pull_url", "play_url", "hls",
+            ])
             .await;
 
         // 给用户 3 分钟登录
@@ -1543,7 +1649,8 @@ mod tests {
         println!("捕获 {} 个匹配请求:", packets.len());
         let mut stream_found = false;
         for p in &packets {
-            let is_stream = p.url.contains("m3u8") || p.url.contains(".flv") || p.url.contains(".mp4");
+            let is_stream =
+                p.url.contains("m3u8") || p.url.contains(".flv") || p.url.contains(".mp4");
             if is_stream {
                 stream_found = true;
             }
@@ -1604,8 +1711,9 @@ mod tests {
         });
         let (cid, app) = extract_pagination_params(
             &v2,
-            "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_xxx?product_id=p_yyy"
-        ).unwrap();
+            "https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_xxx?product_id=p_yyy",
+        )
+        .unwrap();
         assert_eq!(cid, "p_yyy");
         assert_eq!(app, "appssry6rs71641");
         // app_id 缺失 → 默认值
@@ -1623,7 +1731,10 @@ mod tests {
     #[test]
     fn find_id_in_url_handles_query_and_fragment() {
         assert_eq!(
-            find_id_in_url("/v4/course/alive/l_x?pro_id=p_abc&conduit_id=p_abc", "pro_id="),
+            find_id_in_url(
+                "/v4/course/alive/l_x?pro_id=p_abc&conduit_id=p_abc",
+                "pro_id="
+            ),
             Some("p_abc".to_string())
         );
         assert_eq!(
@@ -1631,7 +1742,10 @@ mod tests {
             Some("p_zzz".to_string())
         );
         // 非 p_ 开头忽略
-        assert_eq!(find_id_in_url("https://x.com/?product_id=l_xxx", "product_id="), None);
+        assert_eq!(
+            find_id_in_url("https://x.com/?product_id=l_xxx", "product_id="),
+            None
+        );
         assert_eq!(find_id_in_url("https://x.com/foo", "product_id="), None);
     }
 
@@ -1647,7 +1761,7 @@ mod tests {
         assert!(js.contains("content_app_id: APP"));
         assert!(js.contains("sort: 'desc'"));
         assert!(js.contains("for (let p = 2; p <= 2; p++)")); // total_pages=2 → 只 p=2
-        // 关键 endpoint
+                                                              // 关键 endpoint
         assert!(js.contains("xe.course.business_go.column.items.get/2.0.0"));
     }
 
@@ -1681,7 +1795,10 @@ mod tests {
             let cookies_path = profile.join("Default").join("Cookies");
             let cookies_sqlite = profile.join("Default").join("Cookies-journal");
             println!("Default/Cookies exists: {}", cookies_path.exists());
-            println!("Default/Cookies-journal exists: {}", cookies_sqlite.exists());
+            println!(
+                "Default/Cookies-journal exists: {}",
+                cookies_sqlite.exists()
+            );
             if cookies_path.exists() {
                 let meta = std::fs::metadata(&cookies_path);
                 println!("Default/Cookies size: {:?}", meta.map(|m| m.len()));
@@ -1731,8 +1848,14 @@ mod tests {
 
         // 测两种候选 body,用户从输出能立刻看出哪个对
         for (label, body) in &[
-            ("Modules(大写 M, 数组)", r#"{"type":"pc","Modules":["user_info"]}"#),
-            ("modules(小写 m, 数组)", r#"{"type":"pc","modules":["user_info"]}"#),
+            (
+                "Modules(大写 M, 数组)",
+                r#"{"type":"pc","Modules":["user_info"]}"#,
+            ),
+            (
+                "modules(小写 m, 数组)",
+                r#"{"type":"pc","modules":["user_info"]}"#,
+            ),
         ] {
             println!("\n========== 试 body: {label} ==========");
             println!("body: {body}");
