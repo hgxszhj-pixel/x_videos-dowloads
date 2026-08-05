@@ -142,7 +142,7 @@ impl VideoDownloader {
         // 否则在下载期间被进程 kill 时 TempDir Drop 不跑,
         // 就会在用户输出目录 (~/Movies/) 留下 .tmpXXX/ 孤儿。
         // 用 spawn_blocking 避免阻塞 async runtime (TempDir 创建是 syscall)。
-        let temp_dir = tokio::task::spawn_blocking(|| tempfile::TempDir::new()).await??;
+        let temp_dir = tokio::task::spawn_blocking(tempfile::TempDir::new).await??;
         let temp_dir_path = temp_dir.path().to_path_buf();
 
         // 预创建临时文件以避免竞争条件
