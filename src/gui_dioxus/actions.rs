@@ -23,13 +23,18 @@ pub(super) fn use_fetch_action() -> Action<(String,), FetchResult> {
             .collect();
 
         if url_list.is_empty() {
-            return Err(anyhow::anyhow!("请输入有效的 URL（提示：请输入视频链接后重试）"));
+            return Err(anyhow::anyhow!(
+                "请输入有效的 URL（提示：请输入视频链接后重试）"
+            ));
         }
 
         if url_list.len() == 1 {
             match fetch_video_info_impl(&url_list[0]).await {
                 Ok(info) => Ok(FetchResult::Single(info)),
-                Err(err) => Err(anyhow::anyhow!("URL 解析失败：{}（提示：URL 无效或平台不支持）", err)),
+                Err(err) => Err(anyhow::anyhow!(
+                    "URL 解析失败：{}（提示：URL 无效或平台不支持）",
+                    err
+                )),
             }
         } else {
             let mut results: Vec<VideoInfoDisplay> = Vec::new();
@@ -37,7 +42,10 @@ pub(super) fn use_fetch_action() -> Action<(String,), FetchResult> {
                 match fetch_video_info_impl(url).await {
                     Ok(info) => results.push(info),
                     Err(e) => {
-                        return Err(anyhow::anyhow!("批量 URL 解析失败：{}（提示：检查 URL 列表）", e));
+                        return Err(anyhow::anyhow!(
+                            "批量 URL 解析失败：{}（提示：检查 URL 列表）",
+                            e
+                        ));
                     }
                 }
             }
@@ -145,7 +153,10 @@ pub(super) fn sync_course_action_to_state(
             }
             Some(Err(captured)) => {
                 let msg = format!("{captured}");
-                let (error_type, suggestion) = if msg.starts_with("🔑") || msg.contains("Code:2506") || msg.contains("当前用户不存在") {
+                let (error_type, suggestion) = if msg.starts_with("🔑")
+                    || msg.contains("Code:2506")
+                    || msg.contains("当前用户不存在")
+                {
                     (
                         "login",
                         "请在小鹅通网站登录账号后，点击“打开登录窗口”复用登录态。",
@@ -158,8 +169,10 @@ pub(super) fn sync_course_action_to_state(
                 };
                 state.write().error_display = Some(ErrorDisplay::new(
                     error_type,
-                    msg.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '：' && c != ':')
-                        .to_string(),
+                    msg.trim_start_matches(|c: char| {
+                        !c.is_ascii_alphanumeric() && c != '：' && c != ':'
+                    })
+                    .to_string(),
                     suggestion.to_string(),
                 ));
                 state.write().status_message = "课程池分析失败".to_string();

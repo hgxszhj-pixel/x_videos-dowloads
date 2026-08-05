@@ -81,9 +81,14 @@ impl VideoDownloader {
             let mut final_size = 0u64;
             let mut buffer = vec![0u8; copy_buffer_size];
 
-            info!("开始合并 {} 个分段 (缓冲区: {}KB)...", total_segments, copy_buffer_size / 1024);
+            info!(
+                "开始合并 {} 个分段 (缓冲区: {}KB)...",
+                total_segments,
+                copy_buffer_size / 1024
+            );
 
-            for (segment_idx, (expected_offset, temp_path)) in segment_info.into_iter().enumerate() {
+            for (segment_idx, (expected_offset, temp_path)) in segment_info.into_iter().enumerate()
+            {
                 let mut input = std::fs::File::open(&temp_path)?;
 
                 // 验证分段从正确的位置开始写入
@@ -119,12 +124,21 @@ impl VideoDownloader {
                         } else {
                             chunk_size
                         } as f64;
-                        info!("合并进度: 分段 {}/{}, {:.1}%",
-                            seg_idx_u32 + 1, total_segments, segment_total as f64 / denominator * 100.0);
+                        info!(
+                            "合并进度: 分段 {}/{}, {:.1}%",
+                            seg_idx_u32 + 1,
+                            total_segments,
+                            segment_total as f64 / denominator * 100.0
+                        );
                     }
                 }
 
-                debug!("合并分段 {}/{}: {} bytes", segment_idx + 1, total_segments, segment_total);
+                debug!(
+                    "合并分段 {}/{}: {} bytes",
+                    segment_idx + 1,
+                    total_segments,
+                    segment_total
+                );
             }
 
             // 全部段合并成功,atomic rename "<output>.tmp" → "<output>"。
@@ -133,7 +147,8 @@ impl VideoDownloader {
             std::fs::rename(&tmp_output, &output_path_owned)?;
 
             Ok::<u64, std::io::Error>(final_size)
-        }).await??;
+        })
+        .await??;
 
         // 阶段3: 清理临时文件 (使用 tokio::fs，异步)
         for i in 0..segments {
@@ -186,14 +201,19 @@ mod tests {
         for i in 0..segments {
             let p = parts_dir.path().join(format!("part_{}.tmp", i));
             let byte = (i as u8) + 1;
-            std::fs::write(&p, vec![byte; chunk_size as usize])
-                .expect("write part file");
+            std::fs::write(&p, vec![byte; chunk_size as usize]).expect("write part file");
         }
 
         // 调 merge_segments
         let downloader = VideoDownloader::new().expect("create VideoDownloader");
         let merged_size = downloader
-            .merge_segments(&output_path, parts_dir.path(), segments, total_size, chunk_size)
+            .merge_segments(
+                &output_path,
+                parts_dir.path(),
+                segments,
+                total_size,
+                chunk_size,
+            )
             .await
             .expect("merge should succeed");
 

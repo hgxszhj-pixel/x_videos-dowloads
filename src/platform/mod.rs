@@ -1,37 +1,37 @@
 //! 平台解析器模块
 //!
 //! 提供统一接口 `PlatformResolver`，各平台实现自己的解析逻辑
-mod token_manager;
-mod tiktok;
-mod douyin;
 mod bilibili;
-mod xbogus;
-mod douyin_api;
-mod cookie_utils;
 mod cookie_pool;
-mod zhixueyun;
-mod youtube;
+mod cookie_utils;
+mod douyin;
+mod douyin_api;
 mod nnyy;
+mod tiktok;
+mod token_manager;
 mod tulingpython;
+mod xbogus;
+mod youtube;
+mod zhixueyun;
 // Re-export 以保持 `use crate::platform::url_matcher` 调用方零改动。
 // 真正定义已迁到 `crate::utils::url_matcher`（避免 platform ↔ history 循环依赖）。
 pub use crate::utils::url_matcher;
-pub use token_manager::TokenManager;
-pub use tiktok::TikTokResolver;
-pub use douyin::DouYinResolver;
 pub use bilibili::BilibiliResolver;
-pub use douyin_api::{DouYinApiClient, extract_modal_id};
-pub use cookie_utils::CookieFileManager;
 pub use cookie_pool::CookiePool;
-pub use zhixueyun::ZhiXueYunResolver;
-pub use youtube::YouTubeResolver;
+pub use cookie_utils::CookieFileManager;
+pub use douyin::DouYinResolver;
+pub use douyin_api::{extract_modal_id, DouYinApiClient};
 pub use nnyy::NnyyResolver;
+pub use tiktok::TikTokResolver;
+pub use token_manager::TokenManager;
 pub use tulingpython::TulingPythonResolver;
+pub use youtube::YouTubeResolver;
+pub use zhixueyun::ZhiXueYunResolver;
 pub mod zhixueyun_token;
-use crate::types::VideoInfo;
 use crate::history::Platform;
+use crate::types::VideoInfo;
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 /// 解析器错误类型
 #[derive(Debug, Clone)]
 pub enum ResolverError {
@@ -63,9 +63,15 @@ impl ResolverError {
         if let Ok(mut parsed) = url::Url::parse(url) {
             // 移除可能包含 token/session 的参数
             let sensitive_params = ["token", "session", "auth", "msToken", "csrf", "sig"];
-            let query_pairs: Vec<(String, String)> = parsed.query_pairs().to_owned()
+            let query_pairs: Vec<(String, String)> = parsed
+                .query_pairs()
+                .to_owned()
                 .into_iter()
-                .filter(|(key, _)| !sensitive_params.iter().any(|s| key.to_lowercase().contains(s)))
+                .filter(|(key, _)| {
+                    !sensitive_params
+                        .iter()
+                        .any(|s| key.to_lowercase().contains(s))
+                })
                 .map(|(k, v)| (k.into_owned(), v.into_owned()))
                 .collect();
 
@@ -73,7 +79,11 @@ impl ResolverError {
             if query_pairs.is_empty() {
                 parsed.set_query(None);
             } else {
-                let query_string = query_pairs.into_iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
+                let query_string = query_pairs
+                    .into_iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("&");
                 parsed.set_query(Some(&query_string));
             }
 
@@ -95,7 +105,11 @@ impl ResolverError {
             ResolverError::ContentUnavailable(msg) => (msg, platform),
             ResolverError::Network(msg) => (msg, platform),
             ResolverError::ParseFailed(msg) => (msg, platform),
-            ResolverError::Detailed { message, platform: p, .. } => (message, p),
+            ResolverError::Detailed {
+                message,
+                platform: p,
+                ..
+            } => (message, p),
         };
         ResolverError::Detailed {
             platform: existing_platform,
@@ -131,7 +145,11 @@ impl ResolverError {
                 Some("视频格式可能不支持，尝试使用 yt-dlp fallback".to_string())
             }
             ResolverError::Detailed { action, .. } => {
-                if action.is_empty() { None } else { Some(action.clone()) }
+                if action.is_empty() {
+                    None
+                } else {
+                    Some(action.clone())
+                }
             }
         }
     }
@@ -143,7 +161,9 @@ impl ResolverError {
             ResolverError::ContentUnavailable(msg) => format!("内容不可用: {}", msg),
             ResolverError::Network(msg) => format!("网络错误: {}", msg),
             ResolverError::ParseFailed(msg) => format!("解析失败: {}", msg),
-            ResolverError::Detailed { platform, message, .. } => {
+            ResolverError::Detailed {
+                platform, message, ..
+            } => {
                 format!("[{}] {}", platform.display_name(), message)
             }
         }
@@ -157,9 +177,20 @@ impl std::fmt::Display for ResolverError {
             ResolverError::ContentUnavailable(msg) => write!(f, "内容不可用: {}", msg),
             ResolverError::Network(msg) => write!(f, "网络错误: {}", msg),
             ResolverError::ParseFailed(msg) => write!(f, "解析失败: {}", msg),
-            ResolverError::Detailed { platform, url, message, action } => {
+            ResolverError::Detailed {
+                platform,
+                url,
+                message,
+                action,
+            } => {
                 let sanitized_url = Self::sanitize_url_for_display(url);
-                write!(f, "[{}] {}\n提示: {}", platform.display_name(), message, action)?;
+                write!(
+                    f,
+                    "[{}] {}\n提示: {}",
+                    platform.display_name(),
+                    message,
+                    action
+                )?;
                 if !sanitized_url.is_empty() && sanitized_url != *url {
                     write!(f, "\nURL: {}", sanitized_url)?;
                 }
@@ -172,8 +203,12 @@ impl std::error::Error for ResolverError {}
 impl From<crate::types::DownloadError> for ResolverError {
     fn from(e: crate::types::DownloadError) -> Self {
         match e.error_type {
-            crate::types::DownloadErrorType::Authentication => ResolverError::AuthenticationRequired,
-            crate::types::DownloadErrorType::ContentUnavailable => ResolverError::ContentUnavailable(e.message),
+            crate::types::DownloadErrorType::Authentication => {
+                ResolverError::AuthenticationRequired
+            }
+            crate::types::DownloadErrorType::ContentUnavailable => {
+                ResolverError::ContentUnavailable(e.message)
+            }
             crate::types::DownloadErrorType::RateLimited => ResolverError::Network(e.message),
             _ => ResolverError::Network(e.to_string()),
         }
@@ -226,10 +261,7 @@ pub trait PlatformResolver: Send + Sync {
     }
     /// 可选：列出 URL 对应的课程/合集条目（如小鹅通课程目录）。
     /// 默认返回空 → 沿用单视频流程。
-    async fn list_collection(
-        &self,
-        _url: &str,
-    ) -> Result<Vec<CollectionEntry>, ResolverError> {
+    async fn list_collection(&self, _url: &str) -> Result<Vec<CollectionEntry>, ResolverError> {
         Ok(vec![])
     }
 }
@@ -404,7 +436,10 @@ impl ResolverRegistry {
             }
         }
 
-        Err(ResolverError::ParseFailed(format!("所有解析器均失败 for URL: {}", url)))
+        Err(ResolverError::ParseFailed(format!(
+            "所有解析器均失败 for URL: {}",
+            url
+        )))
     }
 }
 impl Default for ResolverRegistry {
@@ -482,8 +517,12 @@ mod tests {
         struct TestResolver;
         #[async_trait]
         impl PlatformResolver for TestResolver {
-            fn platform(&self) -> Platform { Platform::Other }
-            fn supported_url_patterns(&self) -> Vec<&'static str> { vec![] }
+            fn platform(&self) -> Platform {
+                Platform::Other
+            }
+            fn supported_url_patterns(&self) -> Vec<&'static str> {
+                vec![]
+            }
             async fn get_video_info(&self, _url: &str) -> Result<VideoInfo, ResolverError> {
                 unreachable!()
             }
@@ -498,8 +537,12 @@ mod tests {
         struct TestResolver;
         #[async_trait]
         impl PlatformResolver for TestResolver {
-            fn platform(&self) -> Platform { Platform::Other }
-            fn supported_url_patterns(&self) -> Vec<&'static str> { vec![] }
+            fn platform(&self) -> Platform {
+                Platform::Other
+            }
+            fn supported_url_patterns(&self) -> Vec<&'static str> {
+                vec![]
+            }
             async fn get_video_info(&self, _url: &str) -> Result<VideoInfo, ResolverError> {
                 unreachable!()
             }
@@ -518,7 +561,8 @@ mod tests {
 
     #[test]
     fn test_ytdlp_resolver_with_cookie() {
-        let resolver = YtDlpResolver::new().with_cookie_file(std::path::PathBuf::from("/tmp/cookies.txt"));
+        let resolver =
+            YtDlpResolver::new().with_cookie_file(std::path::PathBuf::from("/tmp/cookies.txt"));
         assert!(resolver.requires_auth());
     }
 
@@ -533,7 +577,10 @@ mod tests {
             action: None,
         };
         let resolver_err: ResolverError = download_err.into();
-        assert!(matches!(resolver_err, ResolverError::AuthenticationRequired));
+        assert!(matches!(
+            resolver_err,
+            ResolverError::AuthenticationRequired
+        ));
 
         // Content unavailable error
         let download_err = DownloadError {
@@ -542,7 +589,9 @@ mod tests {
             action: None,
         };
         let resolver_err: ResolverError = download_err.into();
-        assert!(matches!(resolver_err, ResolverError::ContentUnavailable(msg) if msg == "video not found"));
+        assert!(
+            matches!(resolver_err, ResolverError::ContentUnavailable(msg) if msg == "video not found")
+        );
 
         // Rate limited error
         let download_err = DownloadError {
@@ -572,10 +621,22 @@ mod tests {
 
     #[test]
     fn test_resolver_error_display_all_variants() {
-        assert_eq!(format!("{}", ResolverError::AuthenticationRequired), "需要登录认证");
-        assert_eq!(format!("{}", ResolverError::ContentUnavailable("test".to_string())), "内容不可用: test");
-        assert_eq!(format!("{}", ResolverError::Network("net error".to_string())), "网络错误: net error");
-        assert_eq!(format!("{}", ResolverError::ParseFailed("parse error".to_string())), "解析失败: parse error");
+        assert_eq!(
+            format!("{}", ResolverError::AuthenticationRequired),
+            "需要登录认证"
+        );
+        assert_eq!(
+            format!("{}", ResolverError::ContentUnavailable("test".to_string())),
+            "内容不可用: test"
+        );
+        assert_eq!(
+            format!("{}", ResolverError::Network("net error".to_string())),
+            "网络错误: net error"
+        );
+        assert_eq!(
+            format!("{}", ResolverError::ParseFailed("parse error".to_string())),
+            "解析失败: parse error"
+        );
     }
 
     #[test]

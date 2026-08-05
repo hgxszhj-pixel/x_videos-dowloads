@@ -2,19 +2,19 @@
 //!
 //! 支持并行分段下载、重试机制和暂停功能
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
-use crate::types::DownloadProgress;
 use super::constants::*;
+use crate::types::DownloadProgress;
 
 /// 下载单个分段（用于并行下载）
 #[allow(clippy::too_many_arguments)]
@@ -34,7 +34,8 @@ pub async fn download_segment(
         .send()
         .await?;
 
-    if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+    if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
+    {
         return Err(anyhow!("分段下载失败: HTTP {}", response.status()))
             .context("segment download request failed");
     }
@@ -106,17 +107,41 @@ pub async fn download_segment_with_retry(
 
         if attempt > 0 {
             let delay = Duration::from_secs(2u64.pow(attempt - 1).min(30));
-            info!("分段 [{}-{}] 重试 {} / {}，等待 {}s", start, end, attempt + 1, retry_count, delay.as_secs());
+            info!(
+                "分段 [{}-{}] 重试 {} / {}，等待 {}s",
+                start,
+                end,
+                attempt + 1,
+                retry_count,
+                delay.as_secs()
+            );
             tokio::time::sleep(delay).await;
         }
 
-        match tokio::time::timeout(segment_timeout, download_segment(client, url, output_path, start, end, segment_size, progress_callback.clone(), total_downloaded.clone())).await {
+        match tokio::time::timeout(
+            segment_timeout,
+            download_segment(
+                client,
+                url,
+                output_path,
+                start,
+                end,
+                segment_size,
+                progress_callback.clone(),
+                total_downloaded.clone(),
+            ),
+        )
+        .await
+        {
             Ok(Ok(size)) => {
                 // 验证下载大小是否合理
                 if size >= expected_size * SEGMENT_VALIDATION_RATIO / 100 {
                     return Ok(size);
                 } else {
-                    warn!("分段 [{}-{}] 大小异常: {} (期望 {})", start, end, size, expected_size);
+                    warn!(
+                        "分段 [{}-{}] 大小异常: {} (期望 {})",
+                        start, end, size, expected_size
+                    );
                     if attempt < retry_count - 1 {
                         continue;
                     }
@@ -126,19 +151,29 @@ pub async fn download_segment_with_retry(
                 warn!("分段 [{}-{}] 下载错误: {:?}", start, end, e);
             }
             Err(_) => {
-                warn!("分段 [{}-{}] 超时 ({}s)", start, end, segment_timeout.as_secs());
+                warn!(
+                    "分段 [{}-{}] 超时 ({}s)",
+                    start,
+                    end,
+                    segment_timeout.as_secs()
+                );
             }
         }
     }
 
-    Err(anyhow!("分段 [{}-{}] 下载失败，已重试 {} 次", start, end, retry_count))
-        .context("segment download failed after all retry attempts")
+    Err(anyhow!(
+        "分段 [{}-{}] 下载失败，已重试 {} 次",
+        start,
+        end,
+        retry_count
+    ))
+    .context("segment download failed after all retry attempts")
 }
 
 /// 解析 yt-dlp 进度输出
 pub fn parse_ytdlp_progress(line: &str) -> Option<DownloadProgress> {
     use crate::types::DownloadStatus;
-    
+
     // 格式: [download]  45.2% of 100.00MiB at  2.50MiB/s ETA 00:15
     if !line.contains("[download]") || !line.contains('%') {
         return None;
@@ -181,7 +216,10 @@ pub fn parse_ytdlp_progress(line: &str) -> Option<DownloadProgress> {
 /// 解析速度字符串 (如 "2.50MiB")
 pub fn parse_speed(s: &str) -> Option<f64> {
     // 提取数字部分
-    let numeric: String = s.chars().take_while(|c| c.is_numeric() || *c == '.').collect();
+    let numeric: String = s
+        .chars()
+        .take_while(|c| c.is_numeric() || *c == '.')
+        .collect();
     let value: f64 = numeric.parse().ok()?;
 
     if s.contains("KiB") {
@@ -198,7 +236,10 @@ pub fn parse_speed(s: &str) -> Option<f64> {
 /// 解析大小字符串 (如 "100.00MiB")
 pub fn parse_size(s: &str) -> Option<u64> {
     // 提取数字部分
-    let numeric: String = s.chars().take_while(|c| c.is_numeric() || *c == '.').collect();
+    let numeric: String = s
+        .chars()
+        .take_while(|c| c.is_numeric() || *c == '.')
+        .collect();
     let value: f64 = numeric.parse().ok()?;
 
     if s.contains("KiB") {
@@ -224,7 +265,10 @@ mod tests {
 
     #[test]
     fn test_parse_size() {
-        assert_eq!(parse_size("100.00MiB"), Some((100.0 * 1024.0 * 1024.0) as u64));
+        assert_eq!(
+            parse_size("100.00MiB"),
+            Some((100.0 * 1024.0 * 1024.0) as u64)
+        );
     }
 
     #[test]

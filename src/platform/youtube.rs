@@ -3,9 +3,9 @@
 //! 使用 yt-dlp 作为主要方式，支持 Cookie 认证
 //! 用于处理 age-restricted 或需要登录的视频
 
-use crate::platform::{PlatformResolver, ResolverError, url_matcher};
-use crate::types::VideoInfo;
 use crate::history::Platform;
+use crate::platform::{url_matcher, PlatformResolver, ResolverError};
+use crate::types::VideoInfo;
 use async_trait::async_trait;
 
 /// YouTube 解析器
@@ -17,9 +17,7 @@ pub struct YouTubeResolver {
 impl YouTubeResolver {
     /// 创建新的 YouTubeResolver
     pub fn new() -> Self {
-        Self {
-            cookie_path: None,
-        }
+        Self { cookie_path: None }
     }
 
     /// 从 cookie 文件创建解析器
@@ -72,7 +70,10 @@ impl PlatformResolver for YouTubeResolver {
             }
             Err(e) => {
                 tracing::warn!("YouTube yt-dlp failed: {}", e);
-                Err(ResolverError::ParseFailed(format!("YouTube 解析失败: {}", e)))
+                Err(ResolverError::ParseFailed(format!(
+                    "YouTube 解析失败: {}",
+                    e
+                )))
             }
         }
     }

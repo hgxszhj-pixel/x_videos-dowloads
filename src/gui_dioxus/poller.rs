@@ -35,7 +35,11 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
     use_coroutine(move |mut rx: UnboundedReceiver<PollMsg>| async move {
         while let Some(msg) = rx.next().await {
             match msg {
-                PollMsg::Single { progress_arc, speed_arc, total_bytes_arc } => {
+                PollMsg::Single {
+                    progress_arc,
+                    speed_arc,
+                    total_bytes_arc,
+                } => {
                     let mut last_progress = 0.0_f32;
                     let mut last_size: u64 = 0;
                     loop {
@@ -60,7 +64,10 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                         }
                     }
                 }
-                PollMsg::Batch { progress_arcs, total_count } => {
+                PollMsg::Batch {
+                    progress_arcs,
+                    total_count,
+                } => {
                     loop {
                         tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
                         if !state.read().is_downloading {
@@ -71,7 +78,8 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                         let mut total_progress = 0.0_f32;
                         let mut all_done = true;
                         // 先算每项的 progress/speed (只读原子,无锁)
-                        let mut per_item: Vec<(f32, String)> = Vec::with_capacity(progress_arcs.len());
+                        let mut per_item: Vec<(f32, String)> =
+                            Vec::with_capacity(progress_arcs.len());
                         for arc in progress_arcs.iter() {
                             let percent = arc.load(Ordering::Relaxed) as f32 / 10000.0;
                             total_progress += percent;

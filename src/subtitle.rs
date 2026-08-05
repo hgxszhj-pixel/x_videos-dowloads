@@ -82,7 +82,11 @@ pub fn vtt_to_srt(vtt_content: &str) -> String {
         let line = line.trim();
 
         // 跳过空行和 WEBVTT 头
-        if line.is_empty() || line == "WEBVTT" || line.starts_with("NOTE") || line.starts_with("STYLE") {
+        if line.is_empty()
+            || line == "WEBVTT"
+            || line.starts_with("NOTE")
+            || line.starts_with("STYLE")
+        {
             continue;
         }
 
@@ -126,7 +130,8 @@ fn parse_vtt_time(time: &str) -> f64 {
 
 /// 格式化 SRT 时间
 fn format_srt_time(start: f64, end: f64) -> String {
-    format!("{} --> {}",
+    format!(
+        "{} --> {}",
         format_srt_timestamp(start),
         format_srt_timestamp(end)
     )

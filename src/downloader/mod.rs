@@ -94,8 +94,14 @@ impl VideoDownloader {
             self.config.parallel_segments
         };
 
-        info!("应用网站特征: adaptive={}, threads=[{}-{}], threshold={:.1}KB/s, parallel_segments={}",
-            adaptive, min_threads, max_threads, threshold as f64 / 1024.0, self.config.parallel_segments);
+        info!(
+            "应用网站特征: adaptive={}, threads=[{}-{}], threshold={:.1}KB/s, parallel_segments={}",
+            adaptive,
+            min_threads,
+            max_threads,
+            threshold as f64 / 1024.0,
+            self.config.parallel_segments
+        );
 
         self
     }
@@ -119,21 +125,28 @@ impl VideoDownloader {
                 .retry_count(self.config.retry_count);
 
             let output_path = request.output_path.clone();
-            match downloader.download(&request.url, &output_path, progress_callback).await {
-                Ok(size) => return Ok(DownloadResult {
-                    success: true,
-                    output_path,
-                    file_size: size,
-                    duration_secs: 0.0,
-                    error_message: None,
-                }),
-                Err(e) => return Ok(DownloadResult {
-                    success: false,
-                    output_path,
-                    file_size: 0,
-                    duration_secs: 0.0,
-                    error_message: Some(e.to_string()),
-                }),
+            match downloader
+                .download(&request.url, &output_path, progress_callback)
+                .await
+            {
+                Ok(size) => {
+                    return Ok(DownloadResult {
+                        success: true,
+                        output_path,
+                        file_size: size,
+                        duration_secs: 0.0,
+                        error_message: None,
+                    })
+                }
+                Err(e) => {
+                    return Ok(DownloadResult {
+                        success: false,
+                        output_path,
+                        file_size: 0,
+                        duration_secs: 0.0,
+                        error_message: Some(e.to_string()),
+                    })
+                }
             }
         }
 
@@ -143,7 +156,8 @@ impl VideoDownloader {
         for attempt in 0..self.config.retry_count {
             if attempt > 0 {
                 // 计算差异化退避时间
-                let delay = Self::calculate_backoff(&last_error, attempt, self.config.retry_max_delay);
+                let delay =
+                    Self::calculate_backoff(&last_error, attempt, self.config.retry_max_delay);
                 // 安全日志: 不暴露延迟时间，防止信息泄露
                 info!("重试 {} / {}...", attempt + 1, self.config.retry_count);
                 tokio::time::sleep(delay).await;
@@ -157,8 +171,10 @@ impl VideoDownloader {
                 if let Some(profile) = profile_for_url(&request.url) {
                     let size_based = profile.recommended_segments_for_size(size);
                     if size_based != self.config.parallel_segments {
-                        info!("按文件大小调整分段: {} bytes -> {} 段 (was {})",
-                            size, size_based, self.config.parallel_segments);
+                        info!(
+                            "按文件大小调整分段: {} bytes -> {} 段 (was {})",
+                            size, size_based, self.config.parallel_segments
+                        );
                         self.config.parallel_segments = size_based;
                     }
                 }
@@ -167,7 +183,10 @@ impl VideoDownloader {
             // 大于10MB且启用了分段下载时使用并行下载
             if let Some(size) = total_size {
                 if self.config.parallel_segments > 0 && size > SEGMENT_SIZE_THRESHOLD {
-                    match self.parallel_download(request, size, progress_callback.clone()).await {
+                    match self
+                        .parallel_download(request, size, progress_callback.clone())
+                        .await
+                    {
                         Ok(result) => return Ok(result),
                         Err(e) => {
                             // 分段下载失败（可能是合并失败），不要再回退到普通下载
@@ -194,7 +213,11 @@ impl VideoDownloader {
     }
 
     /// 根据错误类型计算差异化退避时间
-    fn calculate_backoff(last_error: &Option<anyhow::Error>, attempt: u32, max_delay: u64) -> Duration {
+    fn calculate_backoff(
+        last_error: &Option<anyhow::Error>,
+        attempt: u32,
+        max_delay: u64,
+    ) -> Duration {
         if let Some(err) = last_error {
             let msg = err.to_string();
 
@@ -205,7 +228,11 @@ impl VideoDownloader {
             }
 
             // 5xx 服务器错误 - 短等待 (2-8s)
-            if msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("服务器异常") {
+            if msg.contains("500")
+                || msg.contains("502")
+                || msg.contains("503")
+                || msg.contains("服务器异常")
+            {
                 let backoff = 2u64.pow(attempt.min(3)).min(8);
                 return Duration::from_secs(backoff);
             }
@@ -277,7 +304,12 @@ impl VideoDownloader {
 
         while let Some(chunk_result) = stream.next().await {
             // 检查取消信号（每 chunk 检查一次）
-            if request.cancel_flag.as_ref().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false) {
+            if request
+                .cancel_flag
+                .as_ref()
+                .map(|f| f.load(Ordering::Relaxed))
+                .unwrap_or(false)
+            {
                 return Err(DownloadError::cancelled().into());
             }
             let chunk: bytes::Bytes = chunk_result?;
@@ -304,8 +336,8 @@ impl VideoDownloader {
                 0.0
             };
             let elapsed_since_last = last_callback_time.elapsed().as_millis() as u64;
-            let should_report = (current_percent - last_reported_percent).abs() >= 1.0
-                || elapsed_since_last >= 100;
+            let should_report =
+                (current_percent - last_reported_percent).abs() >= 1.0 || elapsed_since_last >= 100;
 
             if should_report {
                 last_reported_percent = current_percent;
@@ -346,7 +378,11 @@ impl VideoDownloader {
             speed / (1024.0 * 1024.0)
         );
 
-        Ok(DownloadResult::success(output_path.clone(), downloaded, elapsed))
+        Ok(DownloadResult::success(
+            output_path.clone(),
+            downloaded,
+            elapsed,
+        ))
     }
 
     /// 获取内容长度 (带缓存)
@@ -402,7 +438,9 @@ impl VideoDownloader {
 
         let response = request.send().await?;
 
-        if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        if !response.status().is_success()
+            && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
+        {
             return Err(anyhow!("下载失败: HTTP {}", response.status()))
                 .context("HTTP download request failed");
         }
@@ -423,7 +461,11 @@ impl VideoDownloader {
 
         while let Some(chunk_result) = stream.next().await {
             // 检查取消信号（每 chunk 检查一次）
-            if cancel_flag.as_ref().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false) {
+            if cancel_flag
+                .as_ref()
+                .map(|f| f.load(Ordering::Relaxed))
+                .unwrap_or(false)
+            {
                 return Err(DownloadError::cancelled().into());
             }
             let chunk: bytes::Bytes = chunk_result?;
@@ -467,7 +509,11 @@ impl VideoDownloader {
         let start_time = Instant::now();
         let output_path = &request.output_path;
 
-        info!("使用 yt-dlp 下载: {} -> {}", request.url, output_path.display());
+        info!(
+            "使用 yt-dlp 下载: {} -> {}",
+            request.url,
+            output_path.display()
+        );
 
         // 确保输出目录存在
         if let Some(parent) = output_path.parent() {
@@ -490,8 +536,8 @@ impl VideoDownloader {
         info!("执行 yt-dlp 命令...");
 
         // 发送初始进度
-        let initial_progress = DownloadProgress::new("ytdlp".to_string())
-            .with_status(DownloadStatus::Downloading);
+        let initial_progress =
+            DownloadProgress::new("ytdlp".to_string()).with_status(DownloadStatus::Downloading);
         if let Some(ref cb) = progress_callback {
             cb(initial_progress);
         }
@@ -577,7 +623,10 @@ mod tests {
 
     #[test]
     fn test_parse_size() {
-        assert_eq!(parse_size("100.00MiB"), Some((100.0 * 1024.0 * 1024.0) as u64));
+        assert_eq!(
+            parse_size("100.00MiB"),
+            Some((100.0 * 1024.0 * 1024.0) as u64)
+        );
     }
 
     #[test]
@@ -611,7 +660,10 @@ mod tests {
         // MiB 边界测试
         assert_eq!(parse_size("0.00MiB"), Some(0));
         assert_eq!(parse_size("1.00MiB"), Some(1024 * 1024));
-        assert_eq!(parse_size("100.00MiB"), Some((100.0 * 1024.0 * 1024.0) as u64));
+        assert_eq!(
+            parse_size("100.00MiB"),
+            Some((100.0 * 1024.0 * 1024.0) as u64)
+        );
 
         // GiB 边界测试
         assert_eq!(parse_size("1.00GiB"), Some(1024 * 1024 * 1024));

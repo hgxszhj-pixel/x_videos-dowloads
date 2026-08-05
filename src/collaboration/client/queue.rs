@@ -189,7 +189,9 @@ mod tests {
         let mut queue = LocalQueue::new(device_id, team_id, temp_dir.path()).unwrap();
 
         let task = queue.add_task("https://example.com/video").unwrap();
-        queue.mark_complete(task.id, PathBuf::from("/path/to/file.mp4"), 1024).unwrap();
+        queue
+            .mark_complete(task.id, PathBuf::from("/path/to/file.mp4"), 1024)
+            .unwrap();
 
         // 完成任务不能再被认领
         let result = queue.claim_task(task.id);
@@ -218,7 +220,9 @@ mod tests {
         let mut queue = LocalQueue::new(device_id, team_id, temp_dir.path()).unwrap();
 
         let task = queue.add_task("https://example.com/video").unwrap();
-        queue.mark_complete(task.id, PathBuf::from("/path/to/file.mp4"), 1024).unwrap();
+        queue
+            .mark_complete(task.id, PathBuf::from("/path/to/file.mp4"), 1024)
+            .unwrap();
 
         let completed = queue.get_task(task.id).unwrap();
         assert_eq!(completed.status, TaskStatus::Complete);

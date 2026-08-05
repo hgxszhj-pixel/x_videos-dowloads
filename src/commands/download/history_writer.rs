@@ -33,10 +33,7 @@ pub fn record(history: &mut History, ctx: HistoryCtx<'_>, status: DownloadStatus
     } else {
         None
     };
-    let duration_secs = ctx
-        .video_info
-        .and_then(|v| v.duration)
-        .map(|d| d as f64);
+    let duration_secs = ctx.video_info.and_then(|v| v.duration).map(|d| d as f64);
 
     history.add_entry_with_all(
         ctx.url.to_string(),

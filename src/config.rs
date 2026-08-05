@@ -174,8 +174,7 @@ impl AppConfig {
     /// 保存配置到文件
     #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
-        let path = Self::config_path()
-            .ok_or_else(|| anyhow::anyhow!("无法确定配置文件路径"))?;
+        let path = Self::config_path().ok_or_else(|| anyhow::anyhow!("无法确定配置文件路径"))?;
 
         // 确保目录存在
         if let Some(parent) = path.parent() {

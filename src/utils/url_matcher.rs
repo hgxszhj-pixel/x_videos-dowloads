@@ -111,7 +111,7 @@ fn extract_hostname(url: &str) -> Option<String> {
     if let Some(host_start) = url.find("://") {
         let after_scheme = &url[host_start + 3..];
         if let Some(host_end) = after_scheme.find(['/', '?', '#']) {
-            return Some(after_scheme[..host_end].to_string())
+            return Some(after_scheme[..host_end].to_string());
         } else {
             return Some(after_scheme.to_string());
         }
@@ -178,80 +178,143 @@ mod tests {
 
     #[test]
     fn test_detect_x() {
-        assert_eq!(detect_platform("https://x.com/user/status/123"), Platform::X);
-        assert_eq!(detect_platform("https://twitter.com/user/status/123"), Platform::X);
+        assert_eq!(
+            detect_platform("https://x.com/user/status/123"),
+            Platform::X
+        );
+        assert_eq!(
+            detect_platform("https://twitter.com/user/status/123"),
+            Platform::X
+        );
         assert_eq!(detect_platform("https://www.x.com/video"), Platform::X);
     }
 
     #[test]
     fn test_detect_youtube() {
-        assert_eq!(detect_platform("https://youtube.com/watch?v=abc"), Platform::YouTube);
+        assert_eq!(
+            detect_platform("https://youtube.com/watch?v=abc"),
+            Platform::YouTube
+        );
         assert_eq!(detect_platform("https://youtu.be/xyz"), Platform::YouTube);
     }
 
     #[test]
     fn test_detect_tiktok() {
-        assert_eq!(detect_platform("https://www.tiktok.com/@user/video/123"), Platform::TikTok);
-        assert_eq!(detect_platform("https://vm.tiktok.com/abc"), Platform::TikTok);
-        assert_eq!(detect_platform("https://tiktok.com/video/456"), Platform::TikTok);
+        assert_eq!(
+            detect_platform("https://www.tiktok.com/@user/video/123"),
+            Platform::TikTok
+        );
+        assert_eq!(
+            detect_platform("https://vm.tiktok.com/abc"),
+            Platform::TikTok
+        );
+        assert_eq!(
+            detect_platform("https://tiktok.com/video/456"),
+            Platform::TikTok
+        );
     }
 
     #[test]
     fn test_detect_douyin() {
-        assert_eq!(detect_platform("https://www.douyin.com/video/7231679494828376333"), Platform::DouYin);
-        assert_eq!(detect_platform("https://v.douyin.com/xxxx"), Platform::DouYin);
+        assert_eq!(
+            detect_platform("https://www.douyin.com/video/7231679494828376333"),
+            Platform::DouYin
+        );
+        assert_eq!(
+            detect_platform("https://v.douyin.com/xxxx"),
+            Platform::DouYin
+        );
     }
 
     #[test]
     fn test_detect_bilibili() {
-        assert_eq!(detect_platform("https://www.bilibili.com/video/BV1xx411c7XD"), Platform::Bilibili);
+        assert_eq!(
+            detect_platform("https://www.bilibili.com/video/BV1xx411c7XD"),
+            Platform::Bilibili
+        );
         assert_eq!(detect_platform("https://b23.tv/abc"), Platform::Bilibili);
-        assert_eq!(detect_platform("https://www.bilivideo.com/video/bvid"), Platform::Bilibili);
+        assert_eq!(
+            detect_platform("https://www.bilivideo.com/video/bvid"),
+            Platform::Bilibili
+        );
     }
 
     #[test]
     fn test_detect_instagram() {
-        assert_eq!(detect_platform("https://www.instagram.com/p/abc"), Platform::Instagram);
+        assert_eq!(
+            detect_platform("https://www.instagram.com/p/abc"),
+            Platform::Instagram
+        );
     }
 
     #[test]
     fn test_detect_facebook() {
-        assert_eq!(detect_platform("https://www.facebook.com/video/123"), Platform::Facebook);
-        assert_eq!(detect_platform("https://fb.com/video/456"), Platform::Facebook);
+        assert_eq!(
+            detect_platform("https://www.facebook.com/video/123"),
+            Platform::Facebook
+        );
+        assert_eq!(
+            detect_platform("https://fb.com/video/456"),
+            Platform::Facebook
+        );
     }
 
     #[test]
     fn test_detect_weibo() {
-        assert_eq!(detect_platform("https://weibo.com/user/status/123"), Platform::Weibo);
+        assert_eq!(
+            detect_platform("https://weibo.com/user/status/123"),
+            Platform::Weibo
+        );
     }
 
     #[test]
     fn test_detect_zhixueyun() {
-        assert_eq!(detect_platform("https://kc.zhixueyun.com/course/study"), Platform::ZhiXueYun);
+        assert_eq!(
+            detect_platform("https://kc.zhixueyun.com/course/study"),
+            Platform::ZhiXueYun
+        );
     }
 
     #[test]
     fn test_detect_tulingpython() {
         assert_eq!(detect_platform("https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_6981db02e4b0694c34d6c8dc"), Platform::TulingPython);
-        assert_eq!(detect_platform("https://tulingpyton.cn/p/course/member/p_628ef20ee4b0cedf38b6e660"), Platform::TulingPython);
+        assert_eq!(
+            detect_platform("https://tulingpyton.cn/p/course/member/p_628ef20ee4b0cedf38b6e660"),
+            Platform::TulingPython
+        );
     }
 
     #[test]
     fn test_detect_other() {
-        assert_eq!(detect_platform("https://example.com/video"), Platform::Other);
+        assert_eq!(
+            detect_platform("https://example.com/video"),
+            Platform::Other
+        );
         assert_eq!(detect_platform("https://unknown.site.com"), Platform::Other);
     }
 
     #[test]
     fn test_url_matches_platform() {
-        assert!(url_matches_platform("https://tiktok.com/video/123", Platform::TikTok));
-        assert!(!url_matches_platform("https://tiktok.com/video/123", Platform::DouYin));
+        assert!(url_matches_platform(
+            "https://tiktok.com/video/123",
+            Platform::TikTok
+        ));
+        assert!(!url_matches_platform(
+            "https://tiktok.com/video/123",
+            Platform::DouYin
+        ));
     }
 
     #[test]
     fn test_get_platform_patterns() {
-        assert_eq!(get_platform_patterns(Platform::TikTok), &["tiktok.com", "vm.tiktok.com"]);
-        assert_eq!(get_platform_patterns(Platform::DouYin), &["douyin.com", "v.douyin.com"]);
+        assert_eq!(
+            get_platform_patterns(Platform::TikTok),
+            &["tiktok.com", "vm.tiktok.com"]
+        );
+        assert_eq!(
+            get_platform_patterns(Platform::DouYin),
+            &["douyin.com", "v.douyin.com"]
+        );
         assert!(get_platform_patterns(Platform::Other).is_empty());
     }
 }

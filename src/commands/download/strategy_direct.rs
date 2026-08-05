@@ -57,20 +57,26 @@ pub async fn download(url: &str, cli: &Cli, _start_time: Instant) -> Result<Down
 
     let output_path = generate_unique_filename(&output_dir, &base_filename, "mp4");
 
-    let request = DownloadRequest::new(url, &output_path)
-        .with_user_agent(cli.user_agent.clone().unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()));
+    let request = DownloadRequest::new(url, &output_path).with_user_agent(
+        cli.user_agent
+            .clone()
+            .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
+    );
 
     // 进度回调
-    let progress_callback: Arc<dyn Fn(DownloadProgress) + Send + Sync> = Arc::new(|progress: DownloadProgress| {
-        print!(
-            "\r下载进度: {:.1}% | 速度: {} | 已下载: {}",
-            progress.percent * 100.0,
-            format_bytes(progress.speed as u64),
-            format_bytes(progress.bytes_downloaded)
-        );
-    });
+    let progress_callback: Arc<dyn Fn(DownloadProgress) + Send + Sync> =
+        Arc::new(|progress: DownloadProgress| {
+            print!(
+                "\r下载进度: {:.1}% | 速度: {} | 已下载: {}",
+                progress.percent * 100.0,
+                format_bytes(progress.speed as u64),
+                format_bytes(progress.bytes_downloaded)
+            );
+        });
 
-    let result = downloader.download(&request, Some(progress_callback)).await?;
+    let result = downloader
+        .download(&request, Some(progress_callback))
+        .await?;
 
     if result.success {
         println!("\n下载完成: {}", result.output_path.display());
@@ -93,9 +99,7 @@ async fn download_hls(
 ) -> Result<DownloadResult> {
     println!("检测到 m3u8 URL，使用原生 HLS 下载器");
     let client = (*http_client::shared()).clone();
-    let mut hls_downloader = HlsDownloader::new(client)
-        .max_concurrent(4)
-        .retry_count(3);
+    let mut hls_downloader = HlsDownloader::new(client).max_concurrent(4).retry_count(3);
     if let Some(ref referer) = cli.referer {
         hls_downloader = hls_downloader.referer(referer);
         println!("使用自定义 Referer: {}", referer);
@@ -103,11 +107,7 @@ async fn download_hls(
     let output_path = generate_unique_filename(output_dir, base_filename, "mp4");
     match hls_downloader.download(url, &output_path, None).await {
         Ok(size) => {
-            info!(
-                "HLS 下载完成: {} ({} bytes)",
-                output_path.display(),
-                size
-            );
+            info!("HLS 下载完成: {} ({} bytes)", output_path.display(), size);
             println!("\n下载完成: {} ({} bytes)", output_path.display(), size);
             Ok(DownloadResult {
                 success: true,

@@ -202,7 +202,7 @@ pub(super) struct BatchItemState {
     pub(super) progress: f32,  // 0.0 - 1.0
     pub(super) speed: String,
     pub(super) visible: bool,
-    pub(super) speed_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,    // 字节/秒
+    pub(super) speed_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>, // 字节/秒
     // 单项取消标志（点击行末 ✕ 触发 store(true)）
     pub(super) cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
@@ -233,7 +233,7 @@ pub(super) struct CourseItemDisplay {
     /// 课节真实直接访问 URL(从 list_collection 的 jump_url 透传)
     /// 优先用这个而非 page_url+resource_id (会触发登录跳转)
     pub(super) jump_url: Option<String>,
-    pub(super) selected: bool,   // 默认全选
+    pub(super) selected: bool, // 默认全选
     pub(super) status: String, // "pending" | "resolving" | "downloading" | "completed" | "failed" | "cancelled"
     pub(super) progress: f32,
     /// 进度槽（跨 task 共享，use_effect 轮询把原子值写回 progress/status）
@@ -276,7 +276,10 @@ mod tests {
     #[test]
     fn test_error_display_label_falls_back_for_unknown_type() {
         // 未来新增 error_type 不会被 panic;icon() 同样回退 ⚠️,label 同样回退 "发生错误"。
-        assert_eq!(ErrorDisplay::new("future_thing", "", "").label(), "发生错误");
+        assert_eq!(
+            ErrorDisplay::new("future_thing", "", "").label(),
+            "发生错误"
+        );
         assert_eq!(ErrorDisplay::new("", "", "").label(), "发生错误");
     }
 
@@ -286,8 +289,16 @@ mod tests {
         let cases = ["network", "auth", "login", "course", "parse", "download"];
         for t in cases {
             let e = ErrorDisplay::new(t, "", "");
-            assert_ne!(e.icon(), "⚠️", "{t} should have a specific icon, not fallback");
-            assert_ne!(e.label(), "发生错误", "{t} should have a specific label, not fallback");
+            assert_ne!(
+                e.icon(),
+                "⚠️",
+                "{t} should have a specific icon, not fallback"
+            );
+            assert_ne!(
+                e.label(),
+                "发生错误",
+                "{t} should have a specific label, not fallback"
+            );
         }
     }
 }

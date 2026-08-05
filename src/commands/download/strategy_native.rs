@@ -69,11 +69,7 @@ pub async fn download(info: &VideoInfo, cli: &Cli, _start_time: Instant) -> Resu
     tokio::fs::write(&output_path, &bytes).await?;
     let file_size = bytes.len() as u64;
 
-    info!(
-        "下载完成: {} ({} bytes)",
-        output_path.display(),
-        file_size
-    );
+    info!("下载完成: {} ({} bytes)", output_path.display(), file_size);
     println!(
         "\n下载完成: {} ({} bytes)",
         output_path.display(),

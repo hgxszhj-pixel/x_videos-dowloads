@@ -11,7 +11,11 @@ pub enum DownloadPath {
     /// 智学云/原生 (reqwest + Authorization header)
     Native { url: String, title: String },
     /// yt-dlp 子进程
-    YtDlp { url: String, title: String, strategy: DownloadStrategy },
+    YtDlp {
+        url: String,
+        title: String,
+        strategy: DownloadStrategy,
+    },
     /// 直接 reqwest (含 m3u8 自动检测)
     Direct { url: String },
     /// HLS (从 .m3u8 URL 自动检测)
@@ -88,13 +92,23 @@ mod tests {
     #[test]
     fn direct_mode_with_m3u8_returns_hls_path() {
         let path = decide_path(true, None, Some("https://example.com/video.m3u8")).unwrap();
-        assert_eq!(path, DownloadPath::Hls { url: "https://example.com/video.m3u8".to_string() });
+        assert_eq!(
+            path,
+            DownloadPath::Hls {
+                url: "https://example.com/video.m3u8".to_string()
+            }
+        );
     }
 
     #[test]
     fn direct_mode_with_plain_url_returns_direct_path() {
         let path = decide_path(true, None, Some("https://example.com/video.mp4")).unwrap();
-        assert_eq!(path, DownloadPath::Direct { url: "https://example.com/video.mp4".to_string() });
+        assert_eq!(
+            path,
+            DownloadPath::Direct {
+                url: "https://example.com/video.mp4".to_string()
+            }
+        );
     }
 
     #[test]
@@ -106,15 +120,22 @@ mod tests {
     fn normal_mode_native_strategy_returns_native_path() {
         let info = make_info(DownloadStrategy::Native, "https://x.com/v/1", "title");
         let path = decide_path(false, Some(&info), None).unwrap();
-        assert_eq!(path, DownloadPath::Native {
-            url: "https://x.com/v/1".to_string(),
-            title: "title".to_string(),
-        });
+        assert_eq!(
+            path,
+            DownloadPath::Native {
+                url: "https://x.com/v/1".to_string(),
+                title: "title".to_string(),
+            }
+        );
     }
 
     #[test]
     fn normal_mode_hls_strategy_returns_hls_path() {
-        let info = make_info(DownloadStrategy::Hls, "https://example.com/stream.m3u8", "title");
+        let info = make_info(
+            DownloadStrategy::Hls,
+            "https://example.com/stream.m3u8",
+            "title",
+        );
         let path = decide_path(false, Some(&info), None).unwrap();
         assert!(matches!(path, DownloadPath::Hls { .. }));
     }

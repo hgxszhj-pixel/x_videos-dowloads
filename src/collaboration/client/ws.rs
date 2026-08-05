@@ -11,8 +11,8 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::tungstenite::Message;
+use tracing::{error, info, warn};
 use uuid::Uuid;
-use tracing::{warn, info, error};
 
 /// 连接状态
 #[derive(Debug, Clone, PartialEq)]
@@ -153,7 +153,10 @@ impl CollaborationClient {
     }
 
     /// 初始化 WebSocket 连接（供 connect 和重连使用）
-    async fn init_ws_connection_with_receiver(&self, write_rx: mpsc::Receiver<String>) -> Result<()> {
+    async fn init_ws_connection_with_receiver(
+        &self,
+        write_rx: mpsc::Receiver<String>,
+    ) -> Result<()> {
         let (ws_stream, _) = tokio_tungstenite::connect_async(&self.server_url).await?;
         let (mut write, read) = ws_stream.split();
 
@@ -229,7 +232,10 @@ impl CollaborationClient {
         tokio::spawn(async move {
             match get_public_ip_port().await {
                 Ok((public_ip, public_port)) => {
-                    let msg = ClientMessage::UpdatePublicAddr { public_ip: public_ip.clone(), public_port };
+                    let msg = ClientMessage::UpdatePublicAddr {
+                        public_ip: public_ip.clone(),
+                        public_port,
+                    };
                     if let Ok(json) = serde_json::to_string(&msg) {
                         let _ = write_tx_clone.send(json).await;
                         info!("已发送公网地址: {}:{}", public_ip, public_port);
@@ -252,7 +258,7 @@ impl CollaborationClient {
             if attempt > MAX_RECONNECT_ATTEMPTS {
                 error!("达到最大重连次数 ({}), 放弃重连", MAX_RECONNECT_ATTEMPTS);
                 self.state.store(3, Ordering::SeqCst); // Failed
-                // 触发失败回调
+                                                       // 触发失败回调
                 if let Ok(guard) = self.on_failure.lock() {
                     if let Some(callback) = guard.as_ref() {
                         callback();
@@ -451,15 +457,16 @@ impl CollaborationClientWithFileHandler {
         download_dir: PathBuf,
         file_server_port: u16,
     ) -> Result<Self> {
-        let client = CollaborationClient::connect(server_url, team_id, device_id, device_name).await?;
+        let client =
+            CollaborationClient::connect(server_url, team_id, device_id, device_name).await?;
 
         let downloader = Arc::new(
-            crate::collaboration::transfer::downloader::ChunkedDownloader::new(1024 * 1024) // 1MB chunk
+            crate::collaboration::transfer::downloader::ChunkedDownloader::new(1024 * 1024), // 1MB chunk
         );
 
         // 创建并启动文件服务器
         let file_server = Arc::new(
-            crate::collaboration::transfer::http_server::FileServer::new(file_server_port)
+            crate::collaboration::transfer::http_server::FileServer::new(file_server_port),
         );
         let file_server_clone = file_server.clone();
         tokio::spawn(async move {
@@ -495,10 +502,11 @@ impl CollaborationClientWithFileHandler {
         download_dir: PathBuf,
         file_server: Arc<crate::collaboration::transfer::http_server::FileServer>,
     ) -> Result<Self> {
-        let client = CollaborationClient::connect(server_url, team_id, device_id, device_name).await?;
+        let client =
+            CollaborationClient::connect(server_url, team_id, device_id, device_name).await?;
 
         let downloader = Arc::new(
-            crate::collaboration::transfer::downloader::ChunkedDownloader::new(1024 * 1024)
+            crate::collaboration::transfer::downloader::ChunkedDownloader::new(1024 * 1024),
         );
 
         Ok(Self {
@@ -538,20 +546,42 @@ impl CollaborationClientWithFileHandler {
         tokio::spawn(async move {
             while let Ok(msg) = rx.recv().await {
                 match msg {
-                    ServerMessage::FileAvailable { task_id, from_device: _, ip, port, filename, size } => {
-                        println!("收到文件可用通知: task_id={}, from={}:{}, filename={}, size={}",
-                            task_id, ip, port, filename, size);
+                    ServerMessage::FileAvailable {
+                        task_id,
+                        from_device: _,
+                        ip,
+                        port,
+                        filename,
+                        size,
+                    } => {
+                        println!(
+                            "收到文件可用通知: task_id={}, from={}:{}, filename={}, size={}",
+                            task_id, ip, port, filename, size
+                        );
 
                         // 确定输出路径
                         let output_path = download_dir.join(&filename);
 
                         // 发起下载（使用默认进度回调）
                         let progress_cb = |downloaded: u64, total: u64| {
-                            let pct = if total > 0 { (downloaded as f64 / total as f64) * 100.0 } else { 0.0 };
+                            let pct = if total > 0 {
+                                (downloaded as f64 / total as f64) * 100.0
+                            } else {
+                                0.0
+                            };
                             println!("下载进度: {}/{} ({:.1}%)", downloaded, total, pct);
                         };
 
-                        match downloader.download_from_peer(&ip, port, &task_id.to_string(), &output_path, progress_cb).await {
+                        match downloader
+                            .download_from_peer(
+                                &ip,
+                                port,
+                                &task_id.to_string(),
+                                &output_path,
+                                progress_cb,
+                            )
+                            .await
+                        {
                             Ok(downloaded) => {
                                 println!("文件下载完成: {} bytes", downloaded);
                             }
@@ -593,7 +623,9 @@ impl CollaborationClientWithFileHandler {
     }
 
     /// Get the [FileServer] instance if available
-    pub fn file_server(&self) -> Option<&Arc<crate::collaboration::transfer::http_server::FileServer>> {
+    pub fn file_server(
+        &self,
+    ) -> Option<&Arc<crate::collaboration::transfer::http_server::FileServer>> {
         self.file_server.as_ref()
     }
 }

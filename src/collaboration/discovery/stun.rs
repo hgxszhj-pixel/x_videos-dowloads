@@ -6,9 +6,9 @@
 
 use std::net::SocketAddr;
 
-use tokio::net::UdpSocket;
-use bytes::{BytesMut, BufMut};
+use bytes::{BufMut, BytesMut};
 use rand::Rng;
+use tokio::net::UdpSocket;
 
 /// STUN 服务器地址
 const STUN_SERVER: &str = "stun.l.google.com:19302";
@@ -61,10 +61,7 @@ pub async fn get_public_ip_port() -> std::io::Result<(String, u16)> {
 /// 对称型 NAT 会为不同的目标地址分配不同的端口
 pub async fn is_nat_symmetric() -> bool {
     // 使用两个不同的 STUN 服务器进行测试
-    let servers = [
-        ("stun.l.google.com", 19302),
-        ("stun1.l.google.com", 19302),
-    ];
+    let servers = [("stun.l.google.com", 19302), ("stun1.l.google.com", 19302)];
 
     let mut mapped_addrs: Vec<(String, u16)> = Vec::new();
 
@@ -136,7 +133,10 @@ fn parse_xor_mapped_address(data: &[u8]) -> std::io::Result<(String, u16)> {
     if msg_type != STUN_METHOD_BINDING_RESPONSE {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Expected Binding Response (0x{:04x}), got 0x{:04x}", STUN_METHOD_BINDING_RESPONSE, msg_type),
+            format!(
+                "Expected Binding Response (0x{:04x}), got 0x{:04x}",
+                STUN_METHOD_BINDING_RESPONSE, msg_type
+            ),
         ));
     }
 
@@ -170,7 +170,11 @@ fn parse_xor_mapped_address(data: &[u8]) -> std::io::Result<(String, u16)> {
 }
 
 /// 解析 XOR 编码的地址
-fn parse_xor_address(data: &[u8], length: usize, magic_cookie: u32) -> std::io::Result<(String, u16)> {
+fn parse_xor_address(
+    data: &[u8],
+    length: usize,
+    magic_cookie: u32,
+) -> std::io::Result<(String, u16)> {
     if length < 4 || data.len() < length {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -199,7 +203,10 @@ fn parse_xor_address(data: &[u8], length: usize, magic_cookie: u32) -> std::io::
         data[7] ^ xor_bytes[3],
     ];
 
-    let ip = format!("{}.{}.{}.{}", ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
+    let ip = format!(
+        "{}.{}.{}.{}",
+        ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]
+    );
 
     Ok((ip, port))
 }

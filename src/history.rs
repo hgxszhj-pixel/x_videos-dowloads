@@ -92,7 +92,9 @@ impl HistoryEntryBuilder {
 
     pub fn build(self) -> Result<HistoryEntry> {
         let url = self.url.ok_or_else(|| anyhow::anyhow!("url is required"))?;
-        let status = self.status.ok_or_else(|| anyhow::anyhow!("status is required"))?;
+        let status = self
+            .status
+            .ok_or_else(|| anyhow::anyhow!("status is required"))?;
         let platform = url_matcher::detect_platform(&url);
 
         Ok(HistoryEntry {
@@ -150,11 +152,12 @@ impl History {
         let start = Instant::now();
         let history_count = if self.history_file.exists() {
             let content = std::fs::read_to_string(&self.history_file)?;
-            let count = if let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
-                entries.len()
-            } else {
-                0
-            };
+            let count =
+                if let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+                    entries.len()
+                } else {
+                    0
+                };
             self.entries = serde_json::from_str(&content).unwrap_or_default();
             count
         } else {
@@ -164,7 +167,11 @@ impl History {
             let content = std::fs::read_to_string(&self.bookmark_file)?;
             self.bookmarks = serde_json::from_str(&content).unwrap_or_default();
         }
-        info!("History loaded: {} entries in {:?}", history_count, start.elapsed());
+        info!(
+            "History loaded: {} entries in {:?}",
+            history_count,
+            start.elapsed()
+        );
         Ok(())
     }
 
@@ -173,8 +180,14 @@ impl History {
         if let Some(parent) = self.history_file.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.history_file, serde_json::to_string_pretty(&self.entries)?)?;
-        std::fs::write(&self.bookmark_file, serde_json::to_string_pretty(&self.bookmarks)?)?;
+        std::fs::write(
+            &self.history_file,
+            serde_json::to_string_pretty(&self.entries)?,
+        )?;
+        std::fs::write(
+            &self.bookmark_file,
+            serde_json::to_string_pretty(&self.bookmarks)?,
+        )?;
         Ok(())
     }
 
@@ -227,7 +240,11 @@ impl History {
     }
 
     /// 添加历史条目（自动清理超过限制的旧记录）
-    pub fn add_entry_with_auto_cleanup(&mut self, entry: HistoryEntry, max_entries: usize) -> Result<()> {
+    pub fn add_entry_with_auto_cleanup(
+        &mut self,
+        entry: HistoryEntry,
+        max_entries: usize,
+    ) -> Result<()> {
         self.entries.insert(0, entry);
         // 如果超过限制，删除最旧的条目
         if self.entries.len() > max_entries {
@@ -248,7 +265,13 @@ impl History {
         let query_lower = query.to_lowercase();
         self.entries
             .iter()
-            .filter(|e| e.url.to_lowercase().contains(&query_lower) || e.title.as_ref().map(|t| t.to_lowercase().contains(&query_lower)).unwrap_or(false))
+            .filter(|e| {
+                e.url.to_lowercase().contains(&query_lower)
+                    || e.title
+                        .as_ref()
+                        .map(|t| t.to_lowercase().contains(&query_lower))
+                        .unwrap_or(false)
+            })
             .collect()
     }
 
@@ -259,7 +282,12 @@ impl History {
     }
 
     /// 添加书签
-    pub fn add_bookmark(&mut self, url: String, title: Option<String>, note: Option<String>) -> Result<()> {
+    pub fn add_bookmark(
+        &mut self,
+        url: String,
+        title: Option<String>,
+        note: Option<String>,
+    ) -> Result<()> {
         // 检查是否已存在
         if self.bookmarks.iter().any(|b| b.url == url) {
             anyhow::bail!("URL 已存在");
@@ -328,15 +356,17 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut history = History::new(temp_dir.path()).unwrap();
 
-        history.add_entry_with_all(
-            "https://example.com/video1".to_string(),
-            Some("Video 1".to_string()),
-            Some(PathBuf::from("/path/video1.mp4")),
-            Some(1024),
-            None,
-            DownloadStatus::Completed,
-            None,
-        ).unwrap();
+        history
+            .add_entry_with_all(
+                "https://example.com/video1".to_string(),
+                Some("Video 1".to_string()),
+                Some(PathBuf::from("/path/video1.mp4")),
+                Some(1024),
+                None,
+                DownloadStatus::Completed,
+                None,
+            )
+            .unwrap();
 
         assert_eq!(history.history_count(), 1);
         assert_eq!(history.get_recent(10).len(), 1);
@@ -353,11 +383,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut history = History::new(temp_dir.path()).unwrap();
 
-        history.add_bookmark(
-            "https://example.com/video".to_string(),
-            Some("Bookmark Title".to_string()),
-            None,
-        ).unwrap();
+        history
+            .add_bookmark(
+                "https://example.com/video".to_string(),
+                Some("Bookmark Title".to_string()),
+                None,
+            )
+            .unwrap();
 
         assert_eq!(history.bookmark_count(), 1);
 
@@ -370,11 +402,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut history = History::new(temp_dir.path()).unwrap();
 
-        history.add_bookmark(
-            "https://example.com/video".to_string(),
-            None,
-            None,
-        ).unwrap();
+        history
+            .add_bookmark("https://example.com/video".to_string(), None, None)
+            .unwrap();
 
         let bookmark = history.get_bookmarks()[0].clone();
         assert!(history.remove_bookmark(bookmark.id));

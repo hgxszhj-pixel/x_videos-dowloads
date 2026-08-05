@@ -70,7 +70,8 @@ impl ChunkedDownloader {
             .await?;
 
         // 从断点开始下载
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Range", format!("bytes={}-", existing_size))
             .send()
@@ -90,7 +91,14 @@ impl ChunkedDownloader {
     }
 
     /// 下载单个分块（使用共享client）
-    async fn download_chunk_with_client<F>(client: &reqwest::Client, url: &str, path: &Path, start: u64, end: u64, progress_callback: F) -> Result<u64>
+    async fn download_chunk_with_client<F>(
+        client: &reqwest::Client,
+        url: &str,
+        path: &Path,
+        start: u64,
+        end: u64,
+        progress_callback: F,
+    ) -> Result<u64>
     where
         F: Fn(u64, u64) + Send + Sync,
     {
@@ -116,7 +124,14 @@ impl ChunkedDownloader {
     }
 
     /// 下载单个分块（Arc回调版本，使用共享client）
-    async fn download_chunk_arc_with_client<F>(client: &reqwest::Client, url: &str, path: &Path, start: u64, end: u64, progress_callback: Arc<F>) -> Result<u64>
+    async fn download_chunk_arc_with_client<F>(
+        client: &reqwest::Client,
+        url: &str,
+        path: &Path,
+        start: u64,
+        end: u64,
+        progress_callback: Arc<F>,
+    ) -> Result<u64>
     where
         F: Fn(u64, u64) + Send + Sync + 'static,
     {
@@ -152,7 +167,8 @@ impl ChunkedDownloader {
     where
         F: Fn(u64, u64),
     {
-        let response = self.client
+        let response = self
+            .client
             .get(url)
             .header("Range", format!("bytes={}-", from_byte))
             .send()

@@ -2,9 +2,9 @@
 //!
 //! 使用 yt-dlp 作为主要方式，支持 cookies 认证
 
-use crate::platform::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
-use crate::types::VideoInfo;
 use crate::history::Platform;
+use crate::platform::{url_matcher, CookieFileManager, PlatformResolver, ResolverError};
+use crate::types::VideoInfo;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -33,7 +33,8 @@ impl BilibiliResolver {
 
     /// 获取 cookie 文件路径
     fn get_cookie_file(&self) -> Option<std::path::PathBuf> {
-        self.cookie_manager.get_cookie_file(&self.cookies, "bilibili")
+        self.cookie_manager
+            .get_cookie_file(&self.cookies, "bilibili")
     }
 }
 
@@ -94,5 +95,4 @@ mod tests {
         assert!(resolver.supports_url("https://b23.tv/abc"));
         assert!(!resolver.supports_url("https://youtube.com/watch"));
     }
-
 }

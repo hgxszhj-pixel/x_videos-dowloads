@@ -1,7 +1,7 @@
 //! 业务逻辑：视频信息解析、单/批量下载实现
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use tracing::info;
@@ -9,11 +9,11 @@ use tracing::info;
 use crate::config::AppConfig;
 use crate::downloader::VideoDownloader;
 use crate::fxtwitter::FxTwitterResolver;
-use crate::types::sanitize_filename;
 use crate::platform::{
     BilibiliResolver, DouYinResolver, NnyyResolver, PlatformResolver, ResolverRegistry,
     TikTokResolver, TulingPythonResolver, YouTubeResolver,
 };
+use crate::types::sanitize_filename;
 use crate::types::{DownloadProgress, DownloadRequest};
 
 use super::types::{
@@ -34,7 +34,8 @@ pub(super) async fn start_download_impl(
     format_id: Option<String>,
     strategy: crate::types::DownloadStrategy,
 ) -> Result<(), ErrorDisplay> {
-    let config = AppConfig::load().map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查配置文件权限"))?;
+    let config = AppConfig::load()
+        .map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查配置文件权限"))?;
     let output_dir = if config.output_dir.to_string_lossy().is_empty() {
         directories::UserDirs::new()
             .and_then(|dirs| dirs.video_dir().map(|p| p.to_path_buf()))
@@ -45,7 +46,10 @@ pub(super) async fn start_download_impl(
 
     // 生成文件名：默认使用 mp4 扩展名（大多数视频格式）
     let ext = "mp4";
-    let safe_title = title.chars().filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_').collect::<String>();
+    let safe_title = title
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
+        .collect::<String>();
     let filename = if safe_title.is_empty() {
         format!("video.{}", ext)
     } else {
@@ -86,16 +90,16 @@ pub(super) async fn start_download_impl(
         }) as ProgressCallback
     });
 
-    let mut downloader = VideoDownloader::new().map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查下载器初始化"))?;
-    downloader.download(&request, callback).await
-        .map_err(|e| {
-            // 尝试 downcast 到结构化 DownloadError，否则 fallback
-            if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
-                ErrorDisplay::from(de.clone())
-            } else {
-                ErrorDisplay::new("download", e.to_string(), "")
-            }
-        })?;
+    let mut downloader = VideoDownloader::new()
+        .map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查下载器初始化"))?;
+    downloader.download(&request, callback).await.map_err(|e| {
+        // 尝试 downcast 到结构化 DownloadError，否则 fallback
+        if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
+            ErrorDisplay::from(de.clone())
+        } else {
+            ErrorDisplay::new("download", e.to_string(), "")
+        }
+    })?;
     Ok(())
 }
 
@@ -110,26 +114,42 @@ pub(super) async fn batch_download_impl(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
 
     // 并发下载所有 URL
-    let handles: Vec<_> = urls.into_iter().enumerate().map(|(idx, url)| {
-        let semaphore = semaphore.clone();
-        let progress_arc = progress_arcs.get(idx).cloned().flatten();
-        let speed_arc = speed_arcs.get(idx).cloned().flatten();
-        let cancel_flag = cancel_flags.get(idx).cloned().flatten();
-        tokio::spawn(async move {
-            let _permit = semaphore.acquire_owned().await;
-            // 获取视频信息
-            match fetch_video_info_impl(&url).await {
-                Ok(info) => {
-                    // 下载视频
-                    match start_download_impl(&info.url, info.original_url, &info.title, progress_arc, speed_arc, None, cancel_flag, None, info.download_strategy).await {
-                        Ok(_) => (url, true, "completed".to_string(), 1.0),
-                        Err(e) => (url, false, format!("failed: {}", e.message), 0.0),
+    let handles: Vec<_> = urls
+        .into_iter()
+        .enumerate()
+        .map(|(idx, url)| {
+            let semaphore = semaphore.clone();
+            let progress_arc = progress_arcs.get(idx).cloned().flatten();
+            let speed_arc = speed_arcs.get(idx).cloned().flatten();
+            let cancel_flag = cancel_flags.get(idx).cloned().flatten();
+            tokio::spawn(async move {
+                let _permit = semaphore.acquire_owned().await;
+                // 获取视频信息
+                match fetch_video_info_impl(&url).await {
+                    Ok(info) => {
+                        // 下载视频
+                        match start_download_impl(
+                            &info.url,
+                            info.original_url,
+                            &info.title,
+                            progress_arc,
+                            speed_arc,
+                            None,
+                            cancel_flag,
+                            None,
+                            info.download_strategy,
+                        )
+                        .await
+                        {
+                            Ok(_) => (url, true, "completed".to_string(), 1.0),
+                            Err(e) => (url, false, format!("failed: {}", e.message), 0.0),
+                        }
                     }
+                    Err(e) => (url, false, format!("解析失败: {}", e), 0.0),
                 }
-                Err(e) => (url, false, format!("解析失败: {}", e), 0.0),
-            }
+            })
         })
-    }).collect();
+        .collect();
 
     // 等待所有下载完成
     let mut completed = 0;
@@ -141,7 +161,10 @@ pub(super) async fn batch_download_impl(
                 completed += 1;
                 let (url, _success, status, _progress) = result;
                 // 更新状态（这里简化处理，实际需要通过状态管理）
-                info!("批量下载进度: {}/{} - {} - {}", completed, total, url, status);
+                info!(
+                    "批量下载进度: {}/{} - {} - {}",
+                    completed, total, url, status
+                );
             }
             Err(join_err) => {
                 // spawn task panic/cancel 不再静默:记 warning,completed 计入但状态标 failed
@@ -190,7 +213,10 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
     // 使用 try_resolve_all 尝试所有解析器
     match registry.try_resolve_all(url).await {
         Ok(info) => {
-            let duration = info.duration.map(|d| format!("{}:{:02}", d / 60, d % 60)).unwrap_or_default();
+            let duration = info
+                .duration
+                .map(|d| format!("{}:{:02}", d / 60, d % 60))
+                .unwrap_or_default();
             // 如果 url 和输入 url 不同，说明 url 被修改了，保存原始 url
             let original_url = if info.url != url {
                 Some(url.to_string())
@@ -203,12 +229,16 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
                 title: info.title,
                 uploader: info.uploader.unwrap_or_default(),
                 duration,
-                formats: info.formats.iter().map(|f| VideoFormatDisplay {
-                    format_id: f.format_id.clone(),
-                    resolution: f.resolution.clone().unwrap_or_default(),
-                    ext: f.ext.clone(),
-                    filesize: f.filesize.map(format_file_size).unwrap_or_default(),
-                }).collect(),
+                formats: info
+                    .formats
+                    .iter()
+                    .map(|f| VideoFormatDisplay {
+                        format_id: f.format_id.clone(),
+                        resolution: f.resolution.clone().unwrap_or_default(),
+                        ext: f.ext.clone(),
+                        filesize: f.filesize.map(format_file_size).unwrap_or_default(),
+                    })
+                    .collect(),
                 download_strategy: info.download_strategy,
             })
         }
@@ -218,7 +248,9 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
 
 /// 从课程页 URL 拉取课程目录。仅供具备 list_collection 的解析器使用
 /// （目前只有 `TulingPythonResolver`），其他平台返回 `Err` 让上层走单视频流程。
-pub(super) async fn fetch_course_collection_impl(url: &str) -> Result<CourseCollectionState, String> {
+pub(super) async fn fetch_course_collection_impl(
+    url: &str,
+) -> Result<CourseCollectionState, String> {
     use crate::platform::ResolverError;
     let mut registry = ResolverRegistry::new();
     if let Ok(tp) = TulingPythonResolver::new() {
@@ -237,21 +269,21 @@ pub(super) async fn fetch_course_collection_impl(url: &str) -> Result<CourseColl
         crate::drission_client::LoginStatus::LoggedIn => {}
         crate::drission_client::LoginStatus::SessionExpired => {
             // 前缀 🔑 让 actions.rs 的错误分类识别为 login 类型,而不是 course
-            return Err("🔑 登录已过期 (Code:2506 当前用户不存在): 请点击\"打开登录窗口\"扫码重新登录".to_string());
+            return Err(
+                "🔑 登录已过期 (Code:2506 当前用户不存在): 请点击\"打开登录窗口\"扫码重新登录"
+                    .to_string(),
+            );
         }
         crate::drission_client::LoginStatus::NotLoggedIn => {
             return Err(ResolverError::AuthenticationRequired.to_string());
         }
     }
-    let entries = resolver
-        .list_collection(url)
-        .await
-        .map_err(|e| match e {
-            ResolverError::AuthenticationRequired => {
-                "需要登录：请点击“打开登录窗口”扫码/账号登录".to_string()
-            }
-            other => format!("课程目录解析失败：{other}"),
-        })?;
+    let entries = resolver.list_collection(url).await.map_err(|e| match e {
+        ResolverError::AuthenticationRequired => {
+            "需要登录：请点击“打开登录窗口”扫码/账号登录".to_string()
+        }
+        other => format!("课程目录解析失败：{other}"),
+    })?;
     if entries.is_empty() {
         return Err("未识别到课程条目，已回退到单视频流程".into());
     }
@@ -345,10 +377,14 @@ async fn resolve_items_serially(
         let slot = slots.get(i).cloned();
         if !item.selected {
             results.push((item.id.clone(), "skipped".into()));
-            if let Some(s) = slot { s.set_status("skipped"); }
+            if let Some(s) = slot {
+                s.set_status("skipped");
+            }
             continue;
         }
-        if let Some(s) = slot.as_ref() { s.set_status("resolving"); }
+        if let Some(s) = slot.as_ref() {
+            s.set_status("resolving");
+        }
         // 登录态已在 fetch_course_collection_impl 入口预检；每条课节复用同一 session。
         // 单条课节页若 m3u8 未拦截到（CatCatch 提示），由 translate_resolve_error 归类为“需要登录”。
         // 优先用 item.jump_url(从 list_collection 透传),否则 fallback 到 page_url+resource_id
@@ -361,19 +397,25 @@ async fn resolve_items_serially(
             Err(e) => {
                 let msg = format!("failed: TulingPythonResolver 初始化失败 ({e})");
                 results.push((item.id.clone(), msg));
-                if let Some(s) = slot.as_ref() { s.set_status("failed"); }
+                if let Some(s) = slot.as_ref() {
+                    s.set_status("failed");
+                }
                 continue;
             }
         };
         match resolver.get_video_info(&session_url).await {
             Ok(info) => {
                 resolved[i] = Some(info.url);
-                if let Some(s) = slot.as_ref() { s.set_status("downloading"); }
+                if let Some(s) = slot.as_ref() {
+                    s.set_status("downloading");
+                }
             }
             Err(e) => {
                 let norm = translate_resolve_error(&e);
                 results.push((item.id.clone(), norm));
-                if let Some(s) = slot.as_ref() { s.set_status("failed"); }
+                if let Some(s) = slot.as_ref() {
+                    s.set_status("failed");
+                }
             }
         }
     }
@@ -412,7 +454,9 @@ async fn download_resolved_concurrently(
     let mut handles = Vec::with_capacity(state.items.len());
 
     for (i, item) in state.items.iter().enumerate() {
-        let Some(m3u8) = resolved[i].clone() else { continue };
+        let Some(m3u8) = resolved[i].clone() else {
+            continue;
+        };
         let title = item.title.clone();
         let id = item.id.clone();
         let slot = slots.get(i).cloned();
@@ -472,8 +516,8 @@ async fn download_one(
         .map(|c| c.output_dir)
         .unwrap_or_else(|_| PathBuf::from("./Downloads"));
     let output_path = build_output_path(&output_dir, title);
-    let req = DownloadRequest::new(m3u8, output_path)
-        .with_strategy(crate::types::DownloadStrategy::Hls);
+    let req =
+        DownloadRequest::new(m3u8, output_path).with_strategy(crate::types::DownloadStrategy::Hls);
     let mut dl = VideoDownloader::new().map_err(|e| format!("VideoDownloader 初始化失败：{e}"))?;
     let result = dl
         .download(&req, Some(progress_cb))

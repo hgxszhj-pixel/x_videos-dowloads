@@ -2,11 +2,11 @@
 //!
 //! 通过 Python subprocess 调用 scrapling StealthyFetcher 来获取被 Cloudflare 保护的页面
 
-use crate::types::{VideoInfo, DownloadStrategy};
+use crate::types::{DownloadStrategy, VideoInfo};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader as StdBufReader};
 use std::path::PathBuf;
-use std::io::{BufReader as StdBufReader, BufRead};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::OnceLock;
 
@@ -75,7 +75,10 @@ impl ScraplingClient {
             return Err(anyhow!("Python 解释器不存在: {}", python_path.display()));
         }
 
-        Ok(Self { config, python_path })
+        Ok(Self {
+            config,
+            python_path,
+        })
     }
 
     /// 获取页面（绕过 Cloudflare）
@@ -96,7 +99,10 @@ impl ScraplingClient {
                 .spawn()
                 .context("Failed to spawn Python subprocess")?;
 
-            let stdout = child.stdout.take().ok_or_else(|| anyhow!("Missing stdout"))?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("Missing stdout"))?;
             let mut reader = StdBufReader::new(stdout);
             let mut line = String::new();
 
@@ -246,25 +252,30 @@ print(json.dumps(result))
 static PYTHON_INTERPRETER: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 fn find_python_interpreter() -> Result<PathBuf> {
-    PYTHON_INTERPRETER.get_or_init(|| {
-        let candidates = [
-            "python3",
-            "python",
-            "/Users/hgxszhj/.pyenv/shims/python3",
-            "/Users/hgxszhj/anaconda3/bin/python3",
-        ];
+    PYTHON_INTERPRETER
+        .get_or_init(|| {
+            let candidates = [
+                "python3",
+                "python",
+                "/Users/hgxszhj/.pyenv/shims/python3",
+                "/Users/hgxszhj/anaconda3/bin/python3",
+            ];
 
-        for candidate in &candidates {
-            if let Ok(path) = which::which(candidate) {
-                return Some(path);
+            for candidate in &candidates {
+                if let Ok(path) = which::which(candidate) {
+                    return Some(path);
+                }
             }
-        }
 
-        None
-    }).clone().ok_or_else(|| anyhow!(
-        "找不到 Python 解释器。请确保 python3 在 PATH 中或安装 scrapling:\n\
+            None
+        })
+        .clone()
+        .ok_or_else(|| {
+            anyhow!(
+                "找不到 Python 解释器。请确保 python3 在 PATH 中或安装 scrapling:\n\
          pip install scrapling curl_cffi patchright browserforge"
-    ))
+            )
+        })
 }
 
 /// 检查 URL 是否需要 Cloudflare 绕过
@@ -286,7 +297,9 @@ mod tests {
     #[test]
     fn test_needs_cloudflare_bypass() {
         assert!(needs_cloudflare_bypass("https://x.com/user/status/123"));
-        assert!(needs_cloudflare_bypass("https://twitter.com/user/status/123"));
+        assert!(needs_cloudflare_bypass(
+            "https://twitter.com/user/status/123"
+        ));
         assert!(!needs_cloudflare_bypass("https://youtube.com/watch?v=abc"));
     }
 }

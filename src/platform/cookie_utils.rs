@@ -14,14 +14,18 @@ impl CookieFileManager {
         }
     }
 
-    pub fn get_cookie_file(&self, cookies: &HashMap<String, String>, platform: &str) -> Option<PathBuf> {
+    pub fn get_cookie_file(
+        &self,
+        cookies: &HashMap<String, String>,
+        platform: &str,
+    ) -> Option<PathBuf> {
         if cookies.is_empty() {
             return None;
         }
 
-        let temp_dir = self.temp_dir.get_or_init(|| {
-            tempfile::TempDir::new().expect("Failed to create temp dir")
-        });
+        let temp_dir = self
+            .temp_dir
+            .get_or_init(|| tempfile::TempDir::new().expect("Failed to create temp dir"));
 
         let cookie_file = temp_dir.path().join(format!("{}_cookies.txt", platform));
 

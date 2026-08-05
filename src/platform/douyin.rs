@@ -3,9 +3,12 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持信息流 URL (jingxuan/sports) 和 modal_id 解析
 
-use crate::platform::{PlatformResolver, ResolverError, DouYinApiClient, extract_modal_id, CookieFileManager, url_matcher};
-use crate::types::{VideoInfo, VideoFormat};
 use crate::history::Platform;
+use crate::platform::{
+    extract_modal_id, url_matcher, CookieFileManager, DouYinApiClient, PlatformResolver,
+    ResolverError,
+};
+use crate::types::{VideoFormat, VideoInfo};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -67,7 +70,8 @@ impl PlatformResolver for DouYinResolver {
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         // 检查是否是 feed URL (jingxuan/sports 等) 或包含 modal_id
         let modal_id = extract_modal_id(url);
-        let is_feed_url = url.contains("jingxuan") || url.contains("sports") || url.contains("recommend");
+        let is_feed_url =
+            url.contains("jingxuan") || url.contains("sports") || url.contains("recommend");
 
         // 对于 feed URL 和包含 modal_id 的 URL，优先使用 API
         if modal_id.is_some() || is_feed_url {
@@ -89,16 +93,21 @@ impl PlatformResolver for DouYinResolver {
                     // DouYinApiClient 内部使用 reqwest::Client (Sync)，可以直接调用 async fn
                     let rt = tokio::runtime::Runtime::new()?;
                     rt.block_on(client.get_video_by_modal_id(&modal_id_clone))
-                }).await;
+                })
+                .await;
 
                 match api_result {
                     Ok(Ok(resp)) => {
-                        if let Some(video) = resp.aweme_list.and_then(|list| list.into_iter().next()) {
+                        if let Some(video) =
+                            resp.aweme_list.and_then(|list| list.into_iter().next())
+                        {
                             let title = video.get_title();
                             let video_id = video.get_video_id().unwrap_or(modal_id).to_string();
                             let uploader = video.get_author_name();
                             let duration = video.get_duration();
-                            let thumbnail = video.video.as_ref()
+                            let thumbnail = video
+                                .video
+                                .as_ref()
                                 .and_then(|v| v.cover.as_ref())
                                 .and_then(|c| c.url_list.as_ref())
                                 .and_then(|urls| urls.first())
@@ -107,7 +116,11 @@ impl PlatformResolver for DouYinResolver {
                             tracing::info!("DouYin API success: {} by {}", title, uploader);
 
                             return Ok(VideoInfo {
-                                title: if title.is_empty() { format!("DouYin Video {}", video_id) } else { title },
+                                title: if title.is_empty() {
+                                    format!("DouYin Video {}", video_id)
+                                } else {
+                                    title
+                                },
                                 description: None,
                                 uploader: Some(uploader),
                                 duration: Some(duration),
@@ -116,17 +129,27 @@ impl PlatformResolver for DouYinResolver {
                                 formats: vec![VideoFormat {
                                     format_id: video_id.clone(),
                                     ext: "mp4".to_string(),
-                                    resolution: Some(video.video.as_ref().map(|v| {
-                                        let w = v.width.unwrap_or(0);
-                                        let h = v.height.unwrap_or(0);
-                                        if w > 0 && h > 0 {
-                                            format!("{}x{}", w, h)
-                                        } else {
-                                            "1080p".to_string()
-                                        }
-                                    }).unwrap_or_else(|| "1080p".to_string())),
+                                    resolution: Some(
+                                        video
+                                            .video
+                                            .as_ref()
+                                            .map(|v| {
+                                                let w = v.width.unwrap_or(0);
+                                                let h = v.height.unwrap_or(0);
+                                                if w > 0 && h > 0 {
+                                                    format!("{}x{}", w, h)
+                                                } else {
+                                                    "1080p".to_string()
+                                                }
+                                            })
+                                            .unwrap_or_else(|| "1080p".to_string()),
+                                    ),
                                     filesize: None,
-                                    bitrate: video.video.as_ref().and_then(|v| v.bitrate).map(|b| b as u64),
+                                    bitrate: video
+                                        .video
+                                        .as_ref()
+                                        .and_then(|v| v.bitrate)
+                                        .map(|b| b as u64),
                                     codec: None,
                                     audio_only: false,
                                     format_note: Some("DouYin API".to_string()),
@@ -226,5 +249,4 @@ mod tests {
         assert!(resolver.supports_url("https://v.douyin.com/xxxx"));
         assert!(!resolver.supports_url("https://tiktok.com/video"));
     }
-
 }

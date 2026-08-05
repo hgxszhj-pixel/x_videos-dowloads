@@ -101,10 +101,13 @@ impl YtDlp {
         ];
 
         // 使用线程安全随机数生成器
-        use rand::thread_rng;
         use rand::seq::SliceRandom;
+        use rand::thread_rng;
         let mut rng = thread_rng();
-        user_agents.choose(&mut rng).unwrap_or(&user_agents[0]).to_string()
+        user_agents
+            .choose(&mut rng)
+            .unwrap_or(&user_agents[0])
+            .to_string()
     }
 
     /// 获取视频信息
@@ -158,7 +161,8 @@ impl YtDlp {
         }
 
         // Log only non-sensitive parts (args may contain cookie file paths and proxy URLs)
-        let safe_args: Vec<String> = args.iter()
+        let safe_args: Vec<String> = args
+            .iter()
             .filter(|a| !a.contains("cookie") && !a.contains("proxy"))
             .cloned()
             .collect();
@@ -166,13 +170,10 @@ impl YtDlp {
 
         // Wrap blocking subprocess in spawn_blocking so we don't stall the tokio runtime worker.
         let executable = self.executable.clone();
-        let output_result = tokio::task::spawn_blocking(move || {
-            Command::new(&executable)
-                .args(&args)
-                .output()
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("yt-dlp spawn_blocking join failed: {}", e))?;
+        let output_result =
+            tokio::task::spawn_blocking(move || Command::new(&executable).args(&args).output())
+                .await
+                .map_err(|e| anyhow::anyhow!("yt-dlp spawn_blocking join failed: {}", e))?;
         let output = output_result?;
 
         if !output.status.success() {
@@ -186,7 +187,10 @@ impl YtDlp {
                 return Err(DownloadError::content_unavailable("视频不存在或已被删除").into());
             }
 
-            if stderr.contains("login") || stderr.contains("authenticate") || stderr.contains("Sign in") {
+            if stderr.contains("login")
+                || stderr.contains("authenticate")
+                || stderr.contains("Sign in")
+            {
                 return Err(DownloadError::authentication().into());
             }
 
@@ -210,10 +214,7 @@ impl YtDlp {
         // 解析 JSON
         let json: serde_json::Value = serde_json::from_str(&json_str)?;
 
-        let title = json["title"]
-            .as_str()
-            .unwrap_or("未知标题")
-            .to_string();
+        let title = json["title"].as_str().unwrap_or("未知标题").to_string();
 
         let description = json["description"].as_str().map(|s| s.to_string());
 
@@ -221,9 +222,7 @@ impl YtDlp {
 
         let duration = json["duration"].as_u64();
 
-        let thumbnail = json["thumbnail"]
-            .as_str()
-            .map(|s| s.to_string());
+        let thumbnail = json["thumbnail"].as_str().map(|s| s.to_string());
 
         let mut video_info = VideoInfo::new(title, url.to_string(), None);
         video_info.description = description;
@@ -397,14 +396,16 @@ impl YtDlp {
     /// 获取 yt-dlp 版本（带缓存）
     pub fn version(&self) -> Option<String> {
         static CACHED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-        CACHED.get_or_init(|| {
-            Command::new(&self.executable)
-                .arg("--version")
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        }).clone()
+        CACHED
+            .get_or_init(|| {
+                Command::new(&self.executable)
+                    .arg("--version")
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            })
+            .clone()
     }
 }
 
@@ -427,8 +428,7 @@ mod tests {
 
     #[test]
     fn test_ytdlp_builder() {
-        let yt = YtDlp::new()
-            .with_user_agent("test-agent".to_string());
+        let yt = YtDlp::new().with_user_agent("test-agent".to_string());
 
         assert_eq!(yt.anti_bot.user_agent, Some("test-agent".to_string()));
     }

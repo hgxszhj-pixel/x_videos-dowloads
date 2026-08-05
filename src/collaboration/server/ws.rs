@@ -4,7 +4,7 @@ use crate::collaboration::crypto::auth::AuthToken;
 use crate::collaboration::server::handler::MessageHandler;
 use crate::collaboration::types::ClientMessage;
 use anyhow::Result;
-use futures_util::{StreamExt, SinkExt};
+use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -104,31 +104,36 @@ impl WsServer {
         };
 
         let (team_id, device_id) = match auth_result {
-            Ok(token) => {
-                match token.verify() {
-                    Ok(()) => {
-                        println!("认证成功: team_id={}, device_id={}", token.team_id, token.device_id);
-                        (token.team_id, token.device_id)
-                    }
-                    Err(e) => {
-                        eprintln!("Token 验证失败: {:?}", e);
-                        let _ = write.send(Message::Text(serde_json::to_string(&
-                            crate::collaboration::types::ServerMessage::Error {
-                                message: format!("认证失败: {:?}", e)
-                            }
-                        )?)).await;
-                        let _ = write.send(Message::Close(None)).await;
-                        return Ok(());
-                    }
+            Ok(token) => match token.verify() {
+                Ok(()) => {
+                    println!(
+                        "认证成功: team_id={}, device_id={}",
+                        token.team_id, token.device_id
+                    );
+                    (token.team_id, token.device_id)
                 }
-            }
+                Err(e) => {
+                    eprintln!("Token 验证失败: {:?}", e);
+                    let _ = write
+                        .send(Message::Text(serde_json::to_string(
+                            &crate::collaboration::types::ServerMessage::Error {
+                                message: format!("认证失败: {:?}", e),
+                            },
+                        )?))
+                        .await;
+                    let _ = write.send(Message::Close(None)).await;
+                    return Ok(());
+                }
+            },
             Err(()) => {
                 eprintln!("Token 解析失败: {}", first_msg);
-                let _ = write.send(Message::Text(serde_json::to_string(&
-                    crate::collaboration::types::ServerMessage::Error {
-                        message: "无效的认证格式".to_string()
-                    }
-                )?)).await;
+                let _ = write
+                    .send(Message::Text(serde_json::to_string(
+                        &crate::collaboration::types::ServerMessage::Error {
+                            message: "无效的认证格式".to_string(),
+                        },
+                    )?))
+                    .await;
                 let _ = write.send(Message::Close(None)).await;
                 return Ok(());
             }
@@ -142,12 +147,7 @@ impl WsServer {
 
         // 注册客户端（带 device_id/team_id）
         handler
-            .register_client(
-                session_key.clone(),
-                device_id,
-                team_id,
-                tx.clone(),
-            )
+            .register_client(session_key.clone(), device_id, team_id, tx.clone())
             .await;
 
         // 读取消息任务
@@ -161,9 +161,7 @@ impl WsServer {
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                             // 如果是 Register 消息，先更新 session 的设备信息
                             if let ClientMessage::Register {
-                                device_id,
-                                team_id,
-                                ..
+                                device_id, team_id, ..
                             } = &client_msg
                             {
                                 handler_read

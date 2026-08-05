@@ -180,7 +180,10 @@ impl TokenManager {
 
         let response = client
             .post(url)
-            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            )
             .header("Content-Type", "application/json")
             .json(&serde_json::json!({
                 "magic": "8a6f7e3b9c4d2e1f0a5b8c7d6e9f3a2b",
@@ -224,8 +227,12 @@ impl TokenManager {
     fn generate_fallback_ms_token(&mut self) {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".chars().collect();
-        let mut token: String = (0..182).map(|_| chars[rng.gen_range(0..chars.len())]).collect();
+        let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+            .chars()
+            .collect();
+        let mut token: String = (0..182)
+            .map(|_| chars[rng.gen_range(0..chars.len())])
+            .collect();
         token.push_str("==");
         let len = token.len();
         self.tokens.tiktok_ms_token = Some(token);
@@ -234,16 +241,16 @@ impl TokenManager {
 
     /// 生成 TikTok ttwid (参考 F2 TokenManager.gen_ttwid)
     pub async fn generate_ttwid(&mut self) -> anyhow::Result<()> {
-        
-        
-
         let client = crate::http_client::shared();
 
         let url = "https://www.tiktok.com/api/register/wtv/";
 
         let response = client
             .post(url)
-            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            )
             .header("Content-Type", "application/json")
             .send()
             .await;
@@ -256,11 +263,17 @@ impl TokenManager {
                     return self.save().map_err(|e| anyhow::anyhow!("{}", e));
                 }
                 tracing::warn!("Failed to get real ttwid, using fallback");
-                self.tokens.tiktok_ttwid = Some("1%7C00000000000000000000000000000000000000000000000000000000000000000".to_string());
+                self.tokens.tiktok_ttwid = Some(
+                    "1%7C00000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                );
             }
             Err(e) => {
                 tracing::warn!("Failed to request ttwid endpoint: {}, using fallback", e);
-                self.tokens.tiktok_ttwid = Some("1%7C00000000000000000000000000000000000000000000000000000000000000000".to_string());
+                self.tokens.tiktok_ttwid = Some(
+                    "1%7C00000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                );
             }
         }
 
@@ -269,16 +282,16 @@ impl TokenManager {
 
     /// 生成 TikTok webid (参考 F2 TokenManager.gen_webid)
     pub async fn generate_webid(&mut self) -> anyhow::Result<()> {
-        
-        
-
         let client = crate::http_client::shared();
 
         let url = "https://www.tiktok.com/api/webid/generate/";
 
         let response = client
             .post(url)
-            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            )
             .header("Content-Type", "application/json")
             .json(&serde_json::json!({
                 "app_id": 1233,

@@ -50,7 +50,10 @@ impl DouYinApiClient {
     }
 
     /// 从 modal_id 获取视频详情
-    pub async fn get_video_by_modal_id(&self, modal_id: &str) -> anyhow::Result<VideoDetailResponse> {
+    pub async fn get_video_by_modal_id(
+        &self,
+        modal_id: &str,
+    ) -> anyhow::Result<VideoDetailResponse> {
         // 抖音视频详情 API - 参考 F2 实现
         // 使用更多参数提高成功率
         let url = format!(
@@ -65,12 +68,18 @@ impl DouYinApiClient {
 
         request = request
             .header("User-Agent", &self.user_agent)
-            .header("Referer", "https://www.douyin.com/video/".to_string() + modal_id)
+            .header(
+                "Referer",
+                "https://www.douyin.com/video/".to_string() + modal_id,
+            )
             .header("Accept", "application/json, text/plain, */*")
             .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
             .header("Accept-Encoding", "gzip, deflate, br")
             .header("Connection", "keep-alive")
-            .header("sec-ch-ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\"")
+            .header(
+                "sec-ch-ua",
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\"",
+            )
             .header("sec-ch-ua-mobile", "?0")
             .header("sec-ch-ua-platform", "\"macOS\"")
             .header("sec-fetch-dest", "empty")
@@ -109,8 +118,13 @@ impl DouYinApiClient {
             anyhow::bail!("API returned HTML, likely need full login cookies");
         }
 
-        let json: VideoDetailResponse = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("Failed to parse response: {} - body: {}", e, &text.chars().take(200).collect::<String>()))?;
+        let json: VideoDetailResponse = serde_json::from_str(&text).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to parse response: {} - body: {}",
+                e,
+                &text.chars().take(200).collect::<String>()
+            )
+        })?;
 
         Ok(json)
     }
@@ -163,16 +177,15 @@ impl AwemeItem {
 
     /// 获取作者昵称
     pub fn get_author_name(&self) -> String {
-        self.author.as_ref()
+        self.author
+            .as_ref()
             .and_then(|a| a.nickname.clone())
             .unwrap_or_default()
     }
 
     /// 获取视频时长(秒)
     pub fn get_duration(&self) -> u64 {
-        self.video.as_ref()
-            .and_then(|v| v.duration)
-            .unwrap_or(0) as u64 / 1000
+        self.video.as_ref().and_then(|v| v.duration).unwrap_or(0) as u64 / 1000
     }
 }
 

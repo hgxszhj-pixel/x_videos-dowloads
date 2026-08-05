@@ -64,7 +64,10 @@ impl LanguagePack {
     fn default_english_texts() -> HashMap<String, String> {
         let mut texts = HashMap::new();
         texts.insert("app.title".to_string(), "X Video Downloader".to_string());
-        texts.insert("status.enter_url".to_string(), "Enter video URL".to_string());
+        texts.insert(
+            "status.enter_url".to_string(),
+            "Enter video URL".to_string(),
+        );
         texts.insert("btn.fetch".to_string(), "Fetch Info".to_string());
         texts.insert("btn.download".to_string(), "Download".to_string());
         texts.insert("btn.save".to_string(), "Save".to_string());
@@ -72,11 +75,23 @@ impl LanguagePack {
         texts.insert("btn.cancel".to_string(), "Cancel".to_string());
         texts.insert("btn.browse".to_string(), "Browse".to_string());
         texts.insert("label.video_url".to_string(), "Video URL".to_string());
-        texts.insert("label.output_dir".to_string(), "Output Directory".to_string());
-        texts.insert("label.cookie_file".to_string(), "Cookie File (optional)".to_string());
-        texts.insert("label.video_info".to_string(), "Video Information".to_string());
+        texts.insert(
+            "label.output_dir".to_string(),
+            "Output Directory".to_string(),
+        );
+        texts.insert(
+            "label.cookie_file".to_string(),
+            "Cookie File (optional)".to_string(),
+        );
+        texts.insert(
+            "label.video_info".to_string(),
+            "Video Information".to_string(),
+        );
         texts.insert("label.settings".to_string(), "Settings".to_string());
-        texts.insert("label.downloading".to_string(), "Downloading...".to_string());
+        texts.insert(
+            "label.downloading".to_string(),
+            "Downloading...".to_string(),
+        );
         texts.insert("label.speed".to_string(), "Speed".to_string());
         texts.insert("label.eta".to_string(), "ETA".to_string());
         texts.insert("label.threads".to_string(), "Threads".to_string());
@@ -96,7 +111,10 @@ impl LanguagePack {
         texts.insert("btn.browse".to_string(), "浏览".to_string());
         texts.insert("label.video_url".to_string(), "视频链接".to_string());
         texts.insert("label.output_dir".to_string(), "输出目录".to_string());
-        texts.insert("label.cookie_file".to_string(), "Cookie 文件（可选）".to_string());
+        texts.insert(
+            "label.cookie_file".to_string(),
+            "Cookie 文件（可选）".to_string(),
+        );
         texts.insert("label.video_info".to_string(), "视频信息".to_string());
         texts.insert("label.settings".to_string(), "设置".to_string());
         texts.insert("label.downloading".to_string(), "下载中...".to_string());
@@ -114,7 +132,11 @@ impl LanguagePack {
                 display_name: "简体中文".to_string(),
                 fonts: FontConfig {
                     primary: "PingFang SC".to_string(),
-                    fallback: vec!["Microsoft YaHei".to_string(), "SimHei".to_string(), "Arial".to_string()],
+                    fallback: vec![
+                        "Microsoft YaHei".to_string(),
+                        "SimHei".to_string(),
+                        "Arial".to_string(),
+                    ],
                     enable_fallback: true,
                 },
                 texts: Self::default_chinese_texts(),
@@ -128,7 +150,11 @@ impl LanguagePack {
 #[allow(dead_code)]
 pub fn tr(key: &str) -> String {
     CURRENT_LANG.with(|c| {
-        c.borrow().texts.get(key).cloned().unwrap_or_else(|| key.to_string())
+        c.borrow()
+            .texts
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.to_string())
     })
 }
 
@@ -161,7 +187,10 @@ pub fn init() {
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
-        if let Ok(output) = Command::new("defaults").args(["read", "-g", "AppleLanguages"]).output() {
+        if let Ok(output) = Command::new("defaults")
+            .args(["read", "-g", "AppleLanguages"])
+            .output()
+        {
             let output_str = String::from_utf8_lossy(&output.stdout);
             if output_str.contains("zh") {
                 set_language("zh-CN");

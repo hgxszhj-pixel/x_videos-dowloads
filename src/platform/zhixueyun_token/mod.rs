@@ -16,10 +16,18 @@ static COOKIE_CACHE: OnceLock<Option<CookieCache>> = OnceLock::new();
 /// 自动检测并加载智学云 cookies（带缓存）
 pub fn load_zhixueyun_cookies() -> Option<String> {
     let paths = &[
-        dirs::home_dir()?.join(".cookies").join("zhixueyun_cookies.txt"),
-        dirs::home_dir()?.join(".config").join("x-video-downloader").join("cookies").join("zhixueyun_cookies.txt"),
+        dirs::home_dir()?
+            .join(".cookies")
+            .join("zhixueyun_cookies.txt"),
+        dirs::home_dir()?
+            .join(".config")
+            .join("x-video-downloader")
+            .join("cookies")
+            .join("zhixueyun_cookies.txt"),
         dirs::home_dir()?.join("Downloads").join("wddownload.txt"),
-        dirs::home_dir()?.join("Downloads").join("15fbd615-fe0f-4235-aed8-469b7a170163.txt"),
+        dirs::home_dir()?
+            .join("Downloads")
+            .join("15fbd615-fe0f-4235-aed8-469b7a170163.txt"),
     ];
 
     // 尝试返回缓存（如果文件未修改则直接返回）
@@ -84,4 +92,3 @@ pub fn extract_authorization_token(content: &str) -> Option<String> {
     }
     None
 }
-

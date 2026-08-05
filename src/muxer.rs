@@ -79,8 +79,10 @@ pub async fn check_ffmpeg(path: &str) -> Result<String> {
 pub async fn get_media_info(path: &Path, config: &MuxerConfig) -> Result<MediaInfo> {
     let output = Command::new(&config.ffprobe_path)
         .args([
-            "-v", "quiet",
-            "-print_format", "json",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
             path.to_str().unwrap_or(""),
@@ -94,8 +96,8 @@ pub async fn get_media_info(path: &Path, config: &MuxerConfig) -> Result<MediaIn
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str)
-        .context("failed to parse ffprobe output")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&json_str).context("failed to parse ffprobe output")?;
 
     // 解析 duration
     let duration = json["format"]["duration"]
@@ -107,11 +109,18 @@ pub async fn get_media_info(path: &Path, config: &MuxerConfig) -> Result<MediaIn
     let mut streams = Vec::new();
     if let Some(arr) = json["streams"].as_array() {
         for stream in arr {
-            let stream_type = stream["codec_type"].as_str().unwrap_or("unknown").to_string();
-            let codec = stream["codec_name"].as_str().unwrap_or("unknown").to_string();
+            let stream_type = stream["codec_type"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+            let codec = stream["codec_name"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
             let bitrate = stream["bit_rate"].as_str().map(|s| s.to_string());
             let resolution = if stream_type == "video" {
-                Some(format!("{}x{}",
+                Some(format!(
+                    "{}x{}",
                     stream["width"].as_i64().unwrap_or(0),
                     stream["height"].as_i64().unwrap_or(0)
                 ))
@@ -144,27 +153,30 @@ pub async fn mux(
     output_path: &Path,
     config: &MuxerConfig,
 ) -> Result<()> {
-    info!("Starting mux: {:?} + {:?} -> {:?}", video_path, audio_path, output_path);
+    info!(
+        "Starting mux: {:?} + {:?} -> {:?}",
+        video_path, audio_path, output_path
+    );
 
     let mut cmd = Command::new(&config.ffmpeg_path);
     cmd.args([
-        "-y",           // 覆盖输出文件
-        "-i",           // 输入文件
+        "-y", // 覆盖输出文件
+        "-i", // 输入文件
         video_path.to_str().unwrap_or(""),
-        "-i",           // 第二个输入
+        "-i", // 第二个输入
         audio_path.to_str().unwrap_or(""),
-        "-c:v", "copy", // 复制视频流
-        "-c:a", "aac", // 编码音频为 AAC
-        "-strict", "-2", // 允许实验性格式
+        "-c:v",
+        "copy", // 复制视频流
+        "-c:a",
+        "aac", // 编码音频为 AAC
+        "-strict",
+        "-2", // 允许实验性格式
     ])
     .arg(output_path.to_str().unwrap_or(""));
 
     debug!("Running: {:?}", cmd);
 
-    let output = cmd
-        .output()
-        .await
-        .context("failed to run ffmpeg")?;
+    let output = cmd.output().await.context("failed to run ffmpeg")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -187,14 +199,21 @@ pub async fn mux_with_quality(
     bitrate: Option<&str>,
     config: &MuxerConfig,
 ) -> Result<()> {
-    info!("Starting quality mux: {:?} + {:?} -> {:?}", video_path, audio_path, output_path);
+    info!(
+        "Starting quality mux: {:?} + {:?} -> {:?}",
+        video_path, audio_path, output_path
+    );
 
     let mut cmd_args = vec![
         "-y".to_string(),
-        "-i".to_string(), video_path.to_string_lossy().into_owned(),
-        "-i".to_string(), audio_path.to_string_lossy().into_owned(),
-        "-c:v".to_string(), video_codec.to_string(),
-        "-c:a".to_string(), audio_codec.to_string(),
+        "-i".to_string(),
+        video_path.to_string_lossy().into_owned(),
+        "-i".to_string(),
+        audio_path.to_string_lossy().into_owned(),
+        "-c:v".to_string(),
+        video_codec.to_string(),
+        "-c:a".to_string(),
+        audio_codec.to_string(),
     ];
 
     if let Some(crf_val) = crf {
@@ -234,19 +253,11 @@ pub async fn download_and_mux(
 
     let mut cmd = Command::new(&config.ffmpeg_path);
     cmd.args([
-        "-y",
-        "-i", video_url,
-        "-i", audio_url,
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-strict", "-2",
+        "-y", "-i", video_url, "-i", audio_url, "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
     ])
     .arg(output_path.to_str().unwrap_or(""));
 
-    let output = cmd
-        .output()
-        .await
-        .context("failed to run ffmpeg")?;
+    let output = cmd.output().await.context("failed to run ffmpeg")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

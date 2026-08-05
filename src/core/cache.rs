@@ -10,7 +10,8 @@ use tokio::sync::Mutex;
 pub type HeadCache = LruCache<String, u64>;
 
 /// 全局 HEAD 缓存实例 - 100 条目，LRU 自动管理
-pub static HEAD_CACHE: LazyLock<Mutex<HeadCache>, fn() -> Mutex<HeadCache>> =
-    LazyLock::new(|| Mutex::new(lru::LruCache::new(
-        std::num::NonZeroUsize::new(100).unwrap()
-    )));
+pub static HEAD_CACHE: LazyLock<Mutex<HeadCache>, fn() -> Mutex<HeadCache>> = LazyLock::new(|| {
+    Mutex::new(lru::LruCache::new(
+        std::num::NonZeroUsize::new(100).unwrap(),
+    ))
+});

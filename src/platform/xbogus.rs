@@ -6,7 +6,8 @@
 use ::md5;
 
 /// X-Bogus 使用的 Base64 字符表 (64字符)
-const X_BOGUS_BASE64_CHARS: &str = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";
+const X_BOGUS_BASE64_CHARS: &str =
+    "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";
 
 /// X-Bogus 签名生成器
 pub struct XBogus {
@@ -42,12 +43,7 @@ impl XBogus {
         // constant (64), multiplier (0.00390625), 1, 12,
         // URL hash bytes [14,15], UA hash bytes [14,15],
         // timestamp bytes, constant (536919696)
-        let mut new_array = vec![
-            64.0f64,
-            0.00390625f64,
-            1.0f64,
-            12.0f64,
-        ];
+        let mut new_array = vec![64.0f64, 0.00390625f64, 1.0f64, 12.0f64];
 
         // Add URL hash bytes [14,15] (as floats divided by 255)
         new_array.push(url_hash[14] as f64 / 255.0);

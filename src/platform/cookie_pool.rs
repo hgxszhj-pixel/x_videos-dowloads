@@ -138,7 +138,7 @@ impl CookiePool {
                     (Some(ot), Some(oc)) => {
                         entry.last_used < ot || (entry.last_used == ot && entry.created_at > oc)
                     }
-                    (None, None) => oldest_idx.is_none(),  // Only dominate if we haven't selected yet
+                    (None, None) => oldest_idx.is_none(), // Only dominate if we haven't selected yet
                     _ => false,
                 };
                 if dominated {
@@ -234,7 +234,10 @@ impl CookiePool {
             index.clear();
             if let Ok(entries) = self.entries.read() {
                 for (i, entry) in entries.iter().enumerate() {
-                    index.entry(entry.account.clone()).or_insert_with(Vec::new).push(i);
+                    index
+                        .entry(entry.account.clone())
+                        .or_insert_with(Vec::new)
+                        .push(i);
                 }
             }
         }
@@ -434,7 +437,11 @@ mod tests {
 
         // After cleanup, invalid entries should be removed
         let len_after = pool.len();
-        assert_eq!(len_after, 0, "after cleanup len should be 0, got {}", len_after);
+        assert_eq!(
+            len_after, 0,
+            "after cleanup len should be 0, got {}",
+            len_after
+        );
     }
 
     #[test]

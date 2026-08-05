@@ -2,7 +2,7 @@
 
 use crate::collaboration::types::Device;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher, DefaultHasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;

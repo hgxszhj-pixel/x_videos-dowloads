@@ -8,8 +8,7 @@ use dioxus::events::{FormEvent, KeyboardEvent};
 use dioxus::prelude::*;
 
 use super::theme::{
-    AppTheme, ALERT_RED, BORDER_DEFAULT, BG_SUBTLE, STYLE_BTN_BASE, STYLE_INPUT_BARE,
-    TEXT_MUTED,
+    AppTheme, ALERT_RED, BG_SUBTLE, BORDER_DEFAULT, STYLE_BTN_BASE, STYLE_INPUT_BARE, TEXT_MUTED,
 };
 use super::types::AppState;
 
@@ -171,10 +170,7 @@ pub(super) fn ErrorPanel(state: Store<AppState>) -> Element {
 /// 设置面板里"浏览..."按钮（输出目录 / Cookie 文件 2 处共享 `btn_solid(color_primary, ...)` 样式）
 /// 主题通过 `use_context::<Signal<AppTheme>>()` 读取（AppComponent 提供）
 #[component]
-pub(super) fn BrowseButton(
-    label: String,
-    onclick: EventHandler<MouseEvent>,
-) -> Element {
+pub(super) fn BrowseButton(label: String, onclick: EventHandler<MouseEvent>) -> Element {
     let theme = use_context::<Signal<AppTheme>>();
     let t = theme.read();
     let style = t.btn_solid(t.color_primary(), "6px 12px", "6px", "12px");

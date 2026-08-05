@@ -30,7 +30,8 @@ impl VideoDownloader {
         // 速度过低，增加线程
         if current_speed < threshold && current_threads < max {
             let new_threads = (current_threads + 1).min(max);
-            info!("速度过低 ({:.1} KB/s < {:.1} KB/s)，增加线程: {} -> {}",
+            info!(
+                "速度过低 ({:.1} KB/s < {:.1} KB/s)，增加线程: {} -> {}",
                 current_speed as f64 / 1024.0,
                 threshold as f64 / 1024.0,
                 current_threads,
@@ -42,7 +43,8 @@ impl VideoDownloader {
         // 速度很好，尝试减少线程（更省资源）
         if current_speed > threshold * 3 && current_threads > min {
             let new_threads = (current_threads - 1).max(min);
-            info!("速度良好 ({:.1} KB/s)，减少线程: {} -> {}",
+            info!(
+                "速度良好 ({:.1} KB/s)，减少线程: {} -> {}",
                 current_speed as f64 / 1024.0,
                 current_threads,
                 new_threads
@@ -54,7 +56,12 @@ impl VideoDownloader {
     }
 
     /// 计算分段范围
-    pub(super) fn calculate_segment_ranges(&self, segments: u32, total_size: u64, chunk_size: u64) -> Vec<(u64, u64)> {
+    pub(super) fn calculate_segment_ranges(
+        &self,
+        segments: u32,
+        total_size: u64,
+        chunk_size: u64,
+    ) -> Vec<(u64, u64)> {
         (0..segments)
             .map(|i| {
                 let start = i as u64 * chunk_size;
@@ -69,26 +76,42 @@ impl VideoDownloader {
     }
 
     /// 设置进度跟踪（用于轮询模式）
-    fn setup_progress_tracking(&self, total_size: u64, task_id: &str) -> (Arc<AtomicU64>, Arc<AtomicBool>, Arc<Mutex<DownloadProgress>>) {
+    fn setup_progress_tracking(
+        &self,
+        total_size: u64,
+        task_id: &str,
+    ) -> (
+        Arc<AtomicU64>,
+        Arc<AtomicBool>,
+        Arc<Mutex<DownloadProgress>>,
+    ) {
         let total_downloaded = Arc::new(AtomicU64::new(0));
         let download_active = Arc::new(AtomicBool::new(true));
         let progress = Arc::new(Mutex::new(
             DownloadProgress::new(task_id.to_string())
                 .with_total_bytes(total_size)
-                .with_status(DownloadStatus::Downloading)
+                .with_status(DownloadStatus::Downloading),
         ));
         (total_downloaded, download_active, progress)
     }
 
     /// 设置进度跟踪（用于 channel 推送模式）
     /// 返回: (进度发送端, 下载状态, 当前进度)
-    fn setup_channel_progress_tracking(&self, total_size: u64, task_id: &str) -> (tokio::sync::mpsc::Sender<u64>, Arc<AtomicBool>, Arc<Mutex<DownloadProgress>>) {
+    fn setup_channel_progress_tracking(
+        &self,
+        total_size: u64,
+        task_id: &str,
+    ) -> (
+        tokio::sync::mpsc::Sender<u64>,
+        Arc<AtomicBool>,
+        Arc<Mutex<DownloadProgress>>,
+    ) {
         let (tx, _rx) = tokio::sync::mpsc::channel::<u64>(100);
         let download_active = Arc::new(AtomicBool::new(true));
         let progress = Arc::new(Mutex::new(
             DownloadProgress::new(task_id.to_string())
                 .with_total_bytes(total_size)
-                .with_status(DownloadStatus::Downloading)
+                .with_status(DownloadStatus::Downloading),
         ));
         (tx, download_active, progress)
     }
@@ -119,9 +142,7 @@ impl VideoDownloader {
         // 否则在下载期间被进程 kill 时 TempDir Drop 不跑,
         // 就会在用户输出目录 (~/Movies/) 留下 .tmpXXX/ 孤儿。
         // 用 spawn_blocking 避免阻塞 async runtime (TempDir 创建是 syscall)。
-        let temp_dir = tokio::task::spawn_blocking(|| {
-            tempfile::TempDir::new()
-        }).await??;
+        let temp_dir = tokio::task::spawn_blocking(|| tempfile::TempDir::new()).await??;
         let temp_dir_path = temp_dir.path().to_path_buf();
 
         // 预创建临时文件以避免竞争条件
@@ -222,7 +243,19 @@ impl VideoDownloader {
             let cb = progress_callback.clone();
 
             let handle = tokio::spawn(async move {
-                download_segment_with_retry(&client, &url, &temp_path, start, end, segment_size, retry_count, Some(td), cb, None).await
+                download_segment_with_retry(
+                    &client,
+                    &url,
+                    &temp_path,
+                    start,
+                    end,
+                    segment_size,
+                    retry_count,
+                    Some(td),
+                    cb,
+                    None,
+                )
+                .await
             });
             handles.push(handle);
         }
@@ -254,20 +287,34 @@ impl VideoDownloader {
         // 所有分段都失败则报错
         if success_count == 0 {
             return Err(anyhow!("所有分段下载都失败了"))
-            .context("all parallel segments failed to download")
+                .context("all parallel segments failed to download");
         }
 
         // 部分成功时，检查是否应该回退到单线程断点续传
         if success_count < segments && success_count > 0 {
-            warn!("部分分段下载失败 ({}/{} 成功)，尝试断点续传...", success_count, segments);
+            warn!(
+                "部分分段下载失败 ({}/{} 成功)，尝试断点续传...",
+                success_count, segments
+            );
 
             // 计算已下载的总大小
             let downloaded_size: u64 = segment_sizes.iter().sum();
-            let expected_min = total_size * success_count as u64 / segments as u64 * RESUME_MIN_DOWNLOAD_RATIO / 100;
+            let expected_min = total_size * success_count as u64 / segments as u64
+                * RESUME_MIN_DOWNLOAD_RATIO
+                / 100;
 
             if downloaded_size >= expected_min {
                 info!("已下载 {} bytes，尝试断点续传下载剩余部分", downloaded_size);
-                match self.resume_download(&url, &output_path, downloaded_size, progress_callback.clone(), None).await {
+                match self
+                    .resume_download(
+                        &url,
+                        &output_path,
+                        downloaded_size,
+                        progress_callback.clone(),
+                        None,
+                    )
+                    .await
+                {
                     Ok(result) => return Ok(result),
                     Err(e) => warn!("断点续传失败: {:?}，尝试合并已有分段", e),
                 }
@@ -275,12 +322,22 @@ impl VideoDownloader {
         }
 
         // 合并分段文件
-        self.merge_segments(&output_path, &temp_dir_path, segments, total_size, chunk_size).await?;
+        self.merge_segments(
+            &output_path,
+            &temp_dir_path,
+            segments,
+            total_size,
+            chunk_size,
+        )
+        .await?;
 
         // 验证最终文件大小
         if let Ok(final_metadata) = tokio::fs::metadata(&output_path).await {
             let final_size = final_metadata.len();
-            info!("合并完成: {} bytes (期望: {} bytes)", final_size, total_size);
+            info!(
+                "合并完成: {} bytes (期望: {} bytes)",
+                final_size, total_size
+            );
 
             if final_size < total_size * FILE_SIZE_VALIDATION_RATIO / 100 {
                 warn!("最终文件大小异常: {} < {}", final_size, total_size);

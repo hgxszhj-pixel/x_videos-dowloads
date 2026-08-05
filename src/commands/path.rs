@@ -46,10 +46,7 @@ pub fn extract_filename_from_url(url: &str) -> Option<String> {
     }
 
     // 获取路径最后一段，去除扩展名
-    let filename = std::path::Path::new(path)
-        .file_stem()?
-        .to_str()?
-        .trim();
+    let filename = std::path::Path::new(path).file_stem()?.to_str()?.trim();
 
     // 过滤掉无意义的名称
     if filename.is_empty()
@@ -64,7 +61,13 @@ pub fn extract_filename_from_url(url: &str) -> Option<String> {
     // 清理特殊字符
     let cleaned: String = filename
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
 
     if cleaned.len() < 3 {

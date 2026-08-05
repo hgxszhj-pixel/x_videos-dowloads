@@ -130,11 +130,12 @@ impl FxTwitterResolver {
     /// 使用指定代理创建解析器
     pub fn with_proxy(proxy_url: &str) -> Result<Self> {
         // 确保代理 URL 有协议前缀
-        let proxy_with_scheme = if proxy_url.starts_with("http://") || proxy_url.starts_with("https://") {
-            proxy_url.to_string()
-        } else {
-            format!("http://{}", proxy_url)
-        };
+        let proxy_with_scheme =
+            if proxy_url.starts_with("http://") || proxy_url.starts_with("https://") {
+                proxy_url.to_string()
+            } else {
+                format!("http://{}", proxy_url)
+            };
 
         // 创建带有代理的新客户端，基于共享客户端配置
         let client = reqwest::Client::builder()
@@ -147,7 +148,9 @@ impl FxTwitterResolver {
             .build()
             .map_err(|e| anyhow!("Failed to create client with proxy: {}", e))?;
 
-        Ok(Self { client: Arc::new(client) })
+        Ok(Self {
+            client: Arc::new(client),
+        })
     }
 
     /// 获取视频信息
@@ -158,10 +161,13 @@ impl FxTwitterResolver {
         // 调用 FxTwitter API
         let api_url = format!("https://api.fxtwitter.com/status/{}", tweet_id);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&api_url)
             .header("Accept", "application/json")
-            .send().await.map_err(|e: reqwest::Error| -> anyhow::Error {
+            .send()
+            .await
+            .map_err(|e: reqwest::Error| -> anyhow::Error {
                 if e.is_timeout() || e.is_connect() {
                     anyhow!("FxTwitter connection failed: {}", e)
                 } else {
@@ -169,19 +175,24 @@ impl FxTwitterResolver {
                 }
             })?;
 
-
         if !response.status().is_success() {
-            return Err(anyhow!("FxTwitter API 请求失败: HTTP {}", response.status()));
+            return Err(anyhow!(
+                "FxTwitter API 请求失败: HTTP {}",
+                response.status()
+            ));
         }
 
         let fx_response: FxTwitterResponse = response.json().await?;
 
         if fx_response.code != 200 {
-            return Err(anyhow!("FxTwitter API 错误: {} - {}", fx_response.code, fx_response.message));
+            return Err(anyhow!(
+                "FxTwitter API 错误: {} - {}",
+                fx_response.code,
+                fx_response.message
+            ));
         }
 
-        let tweet = fx_response.tweet
-            .ok_or_else(|| anyhow!("推文数据为空"))?;
+        let tweet = fx_response.tweet.ok_or_else(|| anyhow!("推文数据为空"))?;
 
         // 解析推文中的链接，找到真正的视频源
         let video_url = self.find_video_url(&tweet)?;
@@ -216,10 +227,19 @@ impl FxTwitterResolver {
                                     let resolution = Self::extract_resolution_from_url(fmt_url);
 
                                     // 优先使用 container 字段，否则从 URL 推断或默认 mp4
-                                    let ext = fmt.container.clone()
+                                    let ext = fmt
+                                        .container
+                                        .clone()
                                         .or_else(|| {
-                                            fmt_url.split('?').next()
-                                                .and_then(|s| s.rsplit('/').next_back()?.split('.').next_back())
+                                            fmt_url
+                                                .split('?')
+                                                .next()
+                                                .and_then(|s| {
+                                                    s.rsplit('/')
+                                                        .next_back()?
+                                                        .split('.')
+                                                        .next_back()
+                                                })
                                                 .map(|e| e.to_string())
                                                 .filter(|e| !e.is_empty() && e.len() <= 5)
                                         })
@@ -238,7 +258,10 @@ impl FxTwitterResolver {
                                         bitrate: fmt.bitrate,
                                         codec: fmt.codec.clone(),
                                         audio_only: false,
-                                        format_note: Some(format!("{} kbps", fmt.bitrate.unwrap_or(0) / 1000)),
+                                        format_note: Some(format!(
+                                            "{} kbps",
+                                            fmt.bitrate.unwrap_or(0) / 1000
+                                        )),
                                     });
                                 }
                             }
@@ -274,7 +297,11 @@ impl FxTwitterResolver {
                     // 优先检查 media_type === "video"
                     // 但也要处理 media_type 为 undefined 但有 variants 的情况
                     let has_video_type = item.media_type.as_deref() == Some("video");
-                    let has_variants = item.variants.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+                    let has_variants = item
+                        .variants
+                        .as_ref()
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false);
 
                     if has_video_type || has_variants {
                         // 优先从 variants 获取最高质量的视频 URL
@@ -378,7 +405,9 @@ impl PlatformResolver for FxTwitterResolver {
     }
 
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
-        Self::get_video_info(self, url).await.map_err(ResolverError::from)
+        Self::get_video_info(self, url)
+            .await
+            .map_err(ResolverError::from)
     }
 
     fn requires_auth(&self) -> bool {
@@ -404,7 +433,8 @@ pub fn extract_tweet_id(url: &str) -> Result<String> {
     if let Some(status_idx) = url.find("/status/") {
         let after_status = &url[status_idx + 8..];
         // 提取数字 ID
-        let id: String = after_status.chars()
+        let id: String = after_status
+            .chars()
             .take_while(|c| c.is_ascii_digit())
             .collect();
 

@@ -10,25 +10,25 @@ use std::time::Duration;
 
 use crate::config::AppConfig;
 
-use super::handlers::{batch_download_impl, open_tuling_login, start_download_impl};
-use super::store::{
-    add_completed_download, get_history_items, reload_config,
-    send_notification,
-};
-use super::theme::AppTheme;
-use super::types::{
-    AppState, BatchItemState, BatchState, CourseCollectionState, ErrorDisplay, VideoInfoDisplay,
-};
-use super::components::{CardShadow, DestructivePillButton, ErrorPanel, ThemeSwatch, UrlInput, WhiteCard};
-use super::poller::{use_progress_poller, PollMsg};
 use super::actions::{
-    sync_course_action_to_state, sync_fetch_action_to_state, use_fetch_action, use_fetch_course_action,
+    sync_course_action_to_state, sync_fetch_action_to_state, use_fetch_action,
+    use_fetch_course_action,
 };
 use super::app_batch_progress::BatchProgressPanel;
 use super::app_batch_video::BatchVideoPanel;
 use super::app_course_pool::CoursePoolPanel;
 use super::app_video_card::VideoInfoCard;
+use super::components::{
+    CardShadow, DestructivePillButton, ErrorPanel, ThemeSwatch, UrlInput, WhiteCard,
+};
+use super::handlers::{batch_download_impl, open_tuling_login, start_download_impl};
+use super::poller::{use_progress_poller, PollMsg};
+use super::store::{add_completed_download, get_history_items, reload_config, send_notification};
+use super::theme::AppTheme;
 use super::theme::{BG_SUBTLE, TEXT_MUTED};
+use super::types::{
+    AppState, BatchItemState, BatchState, CourseCollectionState, ErrorDisplay, VideoInfoDisplay,
+};
 
 /// 主应用组件
 #[component]
@@ -95,10 +95,13 @@ pub(super) fn AppComponent() -> Element {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 let s = state_for_poll.read();
                 let any_active = s.course_collection_state.items.iter().any(|i| {
-                    i.slot.as_ref().map(|sl| {
-                        let st = sl.status.load(Ordering::Relaxed);
-                        st == 1 || st == 2
-                    }).unwrap_or(false)
+                    i.slot
+                        .as_ref()
+                        .map(|sl| {
+                            let st = sl.status.load(Ordering::Relaxed);
+                            st == 1 || st == 2
+                        })
+                        .unwrap_or(false)
                 });
                 drop(s);
                 if !any_active {
@@ -152,17 +155,22 @@ pub(super) fn AppComponent() -> Element {
 
                 std::thread::spawn(move || {
                     let (tx, rx) = std::sync::mpsc::channel();
-                    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                        // 之前 .ok() 静默吞掉 watcher 回调错误,改成显式 warn
-                        if let Err(e) = res {
-                            tracing::warn!("config watcher 回调错误: {}", e);
-                            return;
-                        }
-                        let _ = tx.send(());
-                    }) {
+                    let mut watcher = match notify::recommended_watcher(
+                        move |res: Result<notify::Event, notify::Error>| {
+                            // 之前 .ok() 静默吞掉 watcher 回调错误,改成显式 warn
+                            if let Err(e) = res {
+                                tracing::warn!("config watcher 回调错误: {}", e);
+                                return;
+                            }
+                            let _ = tx.send(());
+                        },
+                    ) {
                         Ok(w) => Some(w),
                         Err(e) => {
-                            tracing::warn!("无法创建 config watcher: {} (config 热重载将不可用)", e);
+                            tracing::warn!(
+                                "无法创建 config watcher: {} (config 热重载将不可用)",
+                                e
+                            );
                             None
                         }
                     };

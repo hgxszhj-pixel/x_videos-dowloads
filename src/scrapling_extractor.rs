@@ -94,7 +94,10 @@ fn extract_json_from_scripts(html: &str) -> Option<String> {
     for caps in script_pattern.captures_iter(html) {
         if let Some(content) = caps.get(1) {
             let text = content.as_str();
-            if text.contains("videoUrl") || text.contains("video_url") || text.contains("video.twimg.com") {
+            if text.contains("videoUrl")
+                || text.contains("video_url")
+                || text.contains("video.twimg.com")
+            {
                 return Some(text.to_string());
             }
         }
@@ -138,7 +141,9 @@ pub fn extract_m3u8_url(html: &str) -> Option<String> {
     for pattern in &patterns {
         if let Ok(re) = Regex::new(pattern) {
             if let Some(caps) = re.captures(html) {
-                let url = caps.get(1).or_else(|| caps.get(0))
+                let url = caps
+                    .get(1)
+                    .or_else(|| caps.get(0))
                     .map(|m| m.as_str().to_string())?;
                 if url.starts_with("http") {
                     return Some(url);
@@ -206,7 +211,10 @@ fn extract_video_variants(html: &str) -> Option<Vec<(String, u64)>> {
         if let Ok(re) = Regex::new(pattern) {
             for caps in re.captures_iter(html) {
                 let (url, bitrate) = if caps.len() >= 3 {
-                    (caps.get(2).unwrap().as_str().to_string(), caps.get(1).unwrap().as_str().parse().unwrap_or(0))
+                    (
+                        caps.get(2).unwrap().as_str().to_string(),
+                        caps.get(1).unwrap().as_str().parse().unwrap_or(0),
+                    )
                 } else {
                     (caps.get(1).unwrap().as_str().to_string(), 0)
                 };
@@ -308,10 +316,22 @@ mod tests {
 
     #[test]
     fn test_estimate_resolution_from_url() {
-        assert_eq!(estimate_resolution_from_url("vid/1280x720/test.mp4"), Some("1280x720".to_string()));
-        assert_eq!(estimate_resolution_from_url("vid/1920x1080/test.mp4"), Some("1920x1080".to_string()));
-        assert_eq!(estimate_resolution_from_url("vid/720p/test.mp4"), Some("720p".to_string()));
-        assert_eq!(estimate_resolution_from_url("vid/360p/test.mp4"), Some("360x".to_string()));
+        assert_eq!(
+            estimate_resolution_from_url("vid/1280x720/test.mp4"),
+            Some("1280x720".to_string())
+        );
+        assert_eq!(
+            estimate_resolution_from_url("vid/1920x1080/test.mp4"),
+            Some("1920x1080".to_string())
+        );
+        assert_eq!(
+            estimate_resolution_from_url("vid/720p/test.mp4"),
+            Some("720p".to_string())
+        );
+        assert_eq!(
+            estimate_resolution_from_url("vid/360p/test.mp4"),
+            Some("360x".to_string())
+        );
         assert_eq!(estimate_resolution_from_url("vid/no-res/test.mp4"), None);
     }
 }

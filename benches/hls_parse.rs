@@ -25,10 +25,7 @@ fn make_playlist(segment_count: usize) -> String {
             i % 10,
             i
         ));
-        s.push_str(&format!(
-            "https://cdn.example.com/hls/seg{:05}.ts\n",
-            i
-        ));
+        s.push_str(&format!("https://cdn.example.com/hls/seg{:05}.ts\n", i));
     }
     s.push_str("#EXT-X-ENDLIST\n");
     s

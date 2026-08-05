@@ -1,0 +1,9 @@
+# rustfmt 保守配置（2026-08-05 新增）
+# 目标：根治 `cargo fmt --check` ~490 处差异
+# 注：imports_granularity/group_imports 是 nightly-only 选项,稳定版会自动忽略
+edition = "2021"
+max_width = 100
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Default"
+reorder_imports = true

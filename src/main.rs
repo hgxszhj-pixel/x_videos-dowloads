@@ -10,10 +10,11 @@ mod config;
 mod core;
 mod danmaku;
 mod downloader;
+mod drission_client;
 mod fxtwitter;
 mod gui_dioxus;
-mod hls;
 mod history;
+mod hls;
 mod http_client;
 mod i18n;
 mod muxer;
@@ -21,7 +22,6 @@ mod platform;
 mod resolver_chain;
 mod scrapling_client;
 mod scrapling_extractor;
-mod drission_client;
 mod subtitle;
 mod types;
 mod utils;
@@ -75,7 +75,12 @@ fn main() {
     }
 
     // 历史和书签管理
-    if cli.history || cli.bookmarks || cli.bookmark.is_some() || cli.clear_history || cli.search.is_some() {
+    if cli.history
+        || cli.bookmarks
+        || cli.bookmark.is_some()
+        || cli.clear_history
+        || cli.search.is_some()
+    {
         if let Err(e) = commands::history::run_history_commands(cli) {
             eprintln!("历史命令执行失败: {}", e);
             std::process::exit(1);
@@ -93,16 +98,28 @@ fn main() {
     if cli.create_team.is_some() || cli.join_team.is_some() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         if let Some(ref name) = cli.create_team {
-            runtime.block_on(commands::serve::run_create_team(name, &cli.server_addr, &cli.device_name));
+            runtime.block_on(commands::serve::run_create_team(
+                name,
+                &cli.server_addr,
+                &cli.device_name,
+            ));
         } else if let Some(ref invite_code) = cli.join_team {
-            runtime.block_on(commands::serve::run_join_team(invite_code, &cli.server_addr, &cli.device_name));
+            runtime.block_on(commands::serve::run_join_team(
+                invite_code,
+                &cli.server_addr,
+                &cli.device_name,
+            ));
         }
         return;
     }
 
     // 初始化日志（根据 verbose 参数设置级别）。GUI 模式在 run_gui() 里初始化 (2026-08-01 修)。
     if !cli.gui {
-        let log_level = if cli.verbose { Level::DEBUG } else { Level::INFO };
+        let log_level = if cli.verbose {
+            Level::DEBUG
+        } else {
+            Level::INFO
+        };
         FmtSubscriber::builder()
             .with_max_level(log_level)
             .with_target(false)
@@ -122,8 +139,10 @@ fn main() {
         .enable_time()
         .build()
         .unwrap();
-    runtime.block_on(commands::download::run(cli, config)).unwrap_or_else(|e| {
-        error!("错误: {}", e);
-    });
+    runtime
+        .block_on(commands::download::run(cli, config))
+        .unwrap_or_else(|e| {
+            error!("错误: {}", e);
+        });
     std::process::exit(0);
 }

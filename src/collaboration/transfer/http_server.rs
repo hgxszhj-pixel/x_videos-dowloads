@@ -198,15 +198,15 @@ impl FileServer {
     /// 注册文件（路径验证）
     pub async fn register_file(&self, task_id: Uuid, path: PathBuf) -> Result<()> {
         // 验证路径安全性
-        let canonical = std::fs::canonicalize(&path)
-            .map_err(|_| anyhow::anyhow!("无法获取规范路径"))?;
+        let canonical =
+            std::fs::canonicalize(&path).map_err(|_| anyhow::anyhow!("无法获取规范路径"))?;
 
         let base = std::env::current_dir()
             .map_err(|_| anyhow::anyhow!("无法获取当前目录"))?
             .join("files");
 
-        let canonical_base = std::fs::canonicalize(&base)
-            .map_err(|_| anyhow::anyhow!("files 目录不存在"))?;
+        let canonical_base =
+            std::fs::canonicalize(&base).map_err(|_| anyhow::anyhow!("files 目录不存在"))?;
 
         if !canonical.starts_with(&canonical_base) {
             anyhow::bail!("路径遍历攻击尝试被阻止");
@@ -245,9 +245,14 @@ impl FileServer {
             let cors_allow_list = self.cors_allow_list.clone();
 
             tokio::spawn(async move {
-                if let Err(e) =
-                    Self::handle_request(&mut stream, files, rate_limiter, cors_allow_list, remote_addr)
-                        .await
+                if let Err(e) = Self::handle_request(
+                    &mut stream,
+                    files,
+                    rate_limiter,
+                    cors_allow_list,
+                    remote_addr,
+                )
+                .await
                 {
                     eprintln!("请求处理错误 ({}): {}", remote_addr, e);
                 }
@@ -334,7 +339,10 @@ impl FileServer {
         let response = if cors_headers.is_empty() {
             "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string()
         } else {
-            format!("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n{}\r\n", cors_headers)
+            format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n{}\r\n",
+                cors_headers
+            )
         };
         stream.write_all(response.as_bytes()).await?;
         Ok(())
@@ -342,8 +350,8 @@ impl FileServer {
 
     /// 路径安全验证：确保文件在允许的 files 目录下，防止路径遍历攻击
     fn validate_path(path: &PathBuf) -> Result<()> {
-        let canonical_path = std::fs::canonicalize(path)
-            .map_err(|e| anyhow::anyhow!("无法获取文件路径: {}", e))?;
+        let canonical_path =
+            std::fs::canonicalize(path).map_err(|e| anyhow::anyhow!("无法获取文件路径: {}", e))?;
 
         let base_dir = std::env::current_dir()
             .map_err(|e| anyhow::anyhow!("无法获取当前目录: {}", e))?

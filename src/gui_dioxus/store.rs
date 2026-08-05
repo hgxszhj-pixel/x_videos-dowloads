@@ -36,13 +36,17 @@ const MAX_HISTORY_ENTRIES: usize = 100;
 
 /// 初始化全局 History
 pub(super) fn init_global_history(history: History) {
-    let mut h = GLOBAL_HISTORY.lock().expect("init_global_history: failed to lock GLOBAL_HISTORY");
+    let mut h = GLOBAL_HISTORY
+        .lock()
+        .expect("init_global_history: failed to lock GLOBAL_HISTORY");
     *h = Some(history);
 }
 
 pub(super) fn add_completed_download(title: String, url: String, path: Option<PathBuf>) {
     // SAFETY: 锁持有区间内无 `.await` 调用，不阻塞 executor
-    let mut h = GLOBAL_HISTORY.lock().expect("add_completed_download: failed to lock GLOBAL_HISTORY");
+    let mut h = GLOBAL_HISTORY
+        .lock()
+        .expect("add_completed_download: failed to lock GLOBAL_HISTORY");
     if let Some(history) = h.as_mut() {
         let entry = HistoryEntry {
             id: uuid::Uuid::new_v4(),
@@ -66,18 +70,25 @@ pub(super) fn get_history_items() -> Vec<HistoryItem> {
     if let Ok(h) = GLOBAL_HISTORY.lock() {
         if let Some(history) = h.as_ref() {
             let entries = history.get_entries();
-            return entries.iter().rev().map(|e| {
-                let duration = e.duration_secs.map(|d| format!("{}:{:02}", (d as i64) / 60, (d as i64) % 60)).unwrap_or_default();
-                let completed_at = e.downloaded_at.format("%Y-%m-%d %H:%M").to_string();
-                let platform_name = format!("{:?}", e.platform);
-                HistoryItem {
-                    title: e.title.clone().unwrap_or_default(),
-                    uploader: platform_name,
-                    duration,
-                    completed_at,
-                    url: e.url.clone(),
-                }
-            }).collect();
+            return entries
+                .iter()
+                .rev()
+                .map(|e| {
+                    let duration = e
+                        .duration_secs
+                        .map(|d| format!("{}:{:02}", (d as i64) / 60, (d as i64) % 60))
+                        .unwrap_or_default();
+                    let completed_at = e.downloaded_at.format("%Y-%m-%d %H:%M").to_string();
+                    let platform_name = format!("{:?}", e.platform);
+                    HistoryItem {
+                        title: e.title.clone().unwrap_or_default(),
+                        uploader: platform_name,
+                        duration,
+                        completed_at,
+                        url: e.url.clone(),
+                    }
+                })
+                .collect();
         }
     }
     Vec::new()

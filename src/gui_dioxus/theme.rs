@@ -4,10 +4,10 @@
 #[derive(Default, Clone, PartialEq)]
 pub(super) enum AppTheme {
     #[default]
-    Purple,      // 紫色渐变
-    Ocean,       // 海洋蓝
-    Sunset,      // 日落橙
-    Forest,      // 森林绿
+    Purple, // 紫色渐变
+    Ocean,  // 海洋蓝
+    Sunset, // 日落橙
+    Forest, // 森林绿
 }
 
 // ============================================================================
@@ -15,13 +15,16 @@ pub(super) enum AppTheme {
 // ============================================================================
 
 /// 通用 button 共享属性
-pub(super) const STYLE_BTN_BASE: &str = "color: white; border: none; cursor: pointer; transition: all 0.3s ease;";
+pub(super) const STYLE_BTN_BASE: &str =
+    "color: white; border: none; cursor: pointer; transition: all 0.3s ease;";
 /// 圆形 icon button 共享属性
-pub(super) const STYLE_BTN_ICON: &str = "color: white; border: none; border-radius: 50%; cursor: pointer;";
+pub(super) const STYLE_BTN_ICON: &str =
+    "color: white; border: none; border-radius: 50%; cursor: pointer;";
 /// 裸 input（无边框，嵌在父容器里）
 pub(super) const STYLE_INPUT_BARE: &str = "flex: 1; border: none; outline: none;";
 /// 进度条底槽（不含 height/radius，由调用方指定；多数场景 height=10px radius=5px）
-pub(super) const STYLE_PROGRESS_TRACK: &str = "background: #e8e8e8; border-radius: 5px; overflow: hidden;";
+pub(super) const STYLE_PROGRESS_TRACK: &str =
+    "background: #e8e8e8; border-radius: 5px; overflow: hidden;";
 
 // ---------------------------------------------------------------------------
 // 中性色 token — 跨主题不变的灰阶/UI 色（不是风格 token；避免散落 hex）
@@ -69,10 +72,18 @@ impl AppTheme {
     // ------------------------------------------------------------------------
     // 语义色 — 跨主题一致的语义色（danger/success/primary），避免散落 hex
     // ------------------------------------------------------------------------
-    pub(super) fn color_danger(&self) -> &'static str { "#ea4335" }
-    pub(super) fn color_success(&self) -> &'static str { "#34a853" }
-    pub(super) fn color_primary(&self) -> &'static str { "#4285f4" }
-    pub(super) fn color_text_danger(&self) -> &'static str { "#721c24" }
+    pub(super) fn color_danger(&self) -> &'static str {
+        "#ea4335"
+    }
+    pub(super) fn color_success(&self) -> &'static str {
+        "#34a853"
+    }
+    pub(super) fn color_primary(&self) -> &'static str {
+        "#4285f4"
+    }
+    pub(super) fn color_text_danger(&self) -> &'static str {
+        "#721c24"
+    }
     /// 主题强调色（用于 batch progress 文字等跟随主题变化的 highlight）
     pub(super) fn color_accent(&self) -> &'static str {
         match self {
@@ -104,7 +115,13 @@ impl AppTheme {
         format!("{STYLE_BTN_BASE} background: linear-gradient(135deg, {} 0%, #c62828 100%); padding: {padding}; border-radius: {radius}; font-size: {font_size}; font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(234, 67, 53, 0.4);", self.color_danger())
     }
     /// 次要按钮（实色填充，无渐变）
-    pub(super) fn btn_solid(&self, bg: &str, padding: &str, radius: &str, font_size: &str) -> String {
+    pub(super) fn btn_solid(
+        &self,
+        bg: &str,
+        padding: &str,
+        radius: &str,
+        font_size: &str,
+    ) -> String {
         format!("{STYLE_BTN_BASE} background: {bg}; padding: {padding}; border-radius: {radius}; font-size: {font_size}; font-weight: 600;")
     }
 

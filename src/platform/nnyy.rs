@@ -2,10 +2,10 @@
 //!
 //! 支持 nnyy.in 电视剧/电影页面的 m3u8 链接提取
 
+use crate::history::Platform;
 use crate::hls::M3u8Parser;
 use crate::platform::{PlatformResolver, ResolverError};
-use crate::types::{VideoInfo, DownloadStrategy, VideoFormat};
-use crate::history::Platform;
+use crate::types::{DownloadStrategy, VideoFormat, VideoInfo};
 use async_trait::async_trait;
 use reqwest::Client;
 
@@ -27,17 +27,15 @@ impl NnyyResolver {
     /// 从页面 HTML 中提取 m3u8 URL
     async fn extract_m3u8_url(&self, url: &str) -> Result<String, ResolverError> {
         tracing::info!("NnyyResolver: 正在获取页面: {}", url);
-        let response = self.client.get(url).send().await
-            .map_err(|e| {
-                tracing::error!("NnyyResolver: 请求失败: {}", e);
-                ResolverError::Network(format!("请求失败: {}", e))
-            })?;
+        let response = self.client.get(url).send().await.map_err(|e| {
+            tracing::error!("NnyyResolver: 请求失败: {}", e);
+            ResolverError::Network(format!("请求失败: {}", e))
+        })?;
 
-        let html = response.text().await
-            .map_err(|e| {
-                tracing::error!("NnyyResolver: 读取响应失败: {}", e);
-                ResolverError::Network(format!("读取响应失败: {}", e))
-            })?;
+        let html = response.text().await.map_err(|e| {
+            tracing::error!("NnyyResolver: 读取响应失败: {}", e);
+            ResolverError::Network(format!("读取响应失败: {}", e))
+        })?;
 
         tracing::info!("NnyyResolver: 页面内容长度: {}", html.len());
 
@@ -62,7 +60,10 @@ impl NnyyResolver {
         }
 
         // 输出部分页面内容用于调试
-        tracing::warn!("NnyyResolver: 未找到 m3u8 URL，页面前500字符: {}", &html[..html.len().min(500)]);
+        tracing::warn!(
+            "NnyyResolver: 未找到 m3u8 URL，页面前500字符: {}",
+            &html[..html.len().min(500)]
+        );
         Err(ResolverError::ParseFailed("未找到 m3u8 URL".to_string()))
     }
 
@@ -77,7 +78,8 @@ impl NnyyResolver {
             .map_err(|e| ResolverError::ParseFailed(format!("m3u8 解析失败: {}", e)))?;
 
         // 生成标题
-        let title = format!("nnyy video ({} segments, {:.1}s)",
+        let title = format!(
+            "nnyy video ({} segments, {:.1}s)",
             playlist.segments.len(),
             playlist.total_duration
         );

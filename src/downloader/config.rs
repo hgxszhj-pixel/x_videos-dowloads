@@ -39,19 +39,19 @@ impl Default for DownloaderConfig {
     fn default() -> Self {
         Self {
             connect_timeout: 30,
-            request_timeout: 600, // 大文件需要更长超时
-            retry_count: 5,      // 增加重试次数
-            retry_max_delay: 30,  // 最大重试间隔30秒
+            request_timeout: 600,         // 大文件需要更长超时
+            retry_count: 5,               // 增加重试次数
+            retry_max_delay: 30,          // 最大重试间隔30秒
             chunk_size: 32 * 1024 * 1024, // 32MB chunk - 减少HTTP开销
             user_agent: None,
             proxy: None,
-            pool_max_idle_per_host: 32,  // 更大连接池
+            pool_max_idle_per_host: 32, // 更大连接池
             http2: true,
-            tcp_keepalive: 120, // 减少连接断开
-            parallel_segments: 4, // 默认4线程
-            adaptive_threads: true, // 启用自适应线程
-            min_threads: 2,        // 最少2线程
-            max_threads: 8,        // 最多8线程（防封IP）
+            tcp_keepalive: 120,              // 减少连接断开
+            parallel_segments: 4,            // 默认4线程
+            adaptive_threads: true,          // 启用自适应线程
+            min_threads: 2,                  // 最少2线程
+            max_threads: 8,                  // 最多8线程（防封IP）
             speed_threshold_bps: 500 * 1024, // 500KB/s 低于此值增加线程
         }
     }

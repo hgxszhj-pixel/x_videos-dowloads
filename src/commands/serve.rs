@@ -40,7 +40,14 @@ pub async fn run_create_team(name: &str, server_url: &str, device_name: &str) {
 
     // 先用临时 team_id 连接
     let temp_team_id = Uuid::nil();
-    let client = match CollaborationClient::connect(server_url, temp_team_id, device_id, device_name).await {
+    let client = match CollaborationClient::connect(
+        server_url,
+        temp_team_id,
+        device_id,
+        device_name,
+    )
+    .await
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("连接失败: {}", e);
@@ -74,7 +81,14 @@ pub async fn run_join_team(invite_code: &str, server_url: &str, device_name: &st
 
     // 先用临时 team_id 连接
     let temp_team_id = Uuid::nil();
-    let client = match CollaborationClient::connect(server_url, temp_team_id, device_id, device_name).await {
+    let client = match CollaborationClient::connect(
+        server_url,
+        temp_team_id,
+        device_id,
+        device_name,
+    )
+    .await
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("连接失败: {}", e);

@@ -11,9 +11,9 @@ pub mod types;
 
 // 公开 API - 从子模块重新导出
 #[allow(unused_imports)]
-pub use client::ws::{CollaborationClient, CollaborationClientWithFileHandler};
-#[allow(unused_imports)]
 pub use client::queue::LocalQueue;
+#[allow(unused_imports)]
+pub use client::ws::{CollaborationClient, CollaborationClientWithFileHandler};
 #[allow(unused_imports)]
 pub use server::{MessageHandler, WsServer};
 #[allow(unused_imports)]

@@ -75,19 +75,24 @@ impl M3u8Parser {
                     continue;
                 }
                 if line.starts_with("#EXT-X-VERSION:") {
-                    version = line.trim_start_matches("#EXT-X-VERSION:")
-                        .parse().ok();
+                    version = line.trim_start_matches("#EXT-X-VERSION:").parse().ok();
                 } else if line.starts_with("#EXT-X-TARGETDURATION:") {
-                    target_duration = line.trim_start_matches("#EXT-X-TARGETDURATION:")
-                        .parse().unwrap_or(0.0);
+                    target_duration = line
+                        .trim_start_matches("#EXT-X-TARGETDURATION:")
+                        .parse()
+                        .unwrap_or(0.0);
                 } else if line.starts_with("#EXT-X-MEDIA-SEQUENCE:") {
-                    sequence = line.trim_start_matches("#EXT-X-MEDIA-SEQUENCE:")
-                        .parse().unwrap_or(0);
+                    sequence = line
+                        .trim_start_matches("#EXT-X-MEDIA-SEQUENCE:")
+                        .parse()
+                        .unwrap_or(0);
                 } else if line.starts_with("#EXTINF:") {
                     // 格式: #EXTINF:<duration>[,<title>]
                     let parts: Vec<&str> = line.splitn(2, ',').collect();
-                    current_duration = parts[0].trim_start_matches("#EXTINF:")
-                        .parse().unwrap_or(0.0);
+                    current_duration = parts[0]
+                        .trim_start_matches("#EXTINF:")
+                        .parse()
+                        .unwrap_or(0.0);
                     current_title = parts.get(1).map(|s| s.to_string());
                 } else if line == "#EXT-X-KEY:METHOD=NONE" {
                     current_key_url = None;
@@ -177,7 +182,9 @@ impl M3u8Parser {
         let pattern = format!("{}=\"", attr);
         line.find(&pattern).and_then(|idx| {
             let start = idx + pattern.len();
-            line[start..].find('"').map(|end| line[start..start + end].to_string())
+            line[start..]
+                .find('"')
+                .map(|end| line[start..start + end].to_string())
         })
     }
 

@@ -3,9 +3,9 @@
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持 TokenManager 自动token生成和注入
 
-use crate::platform::{PlatformResolver, ResolverError, CookieFileManager, url_matcher};
-use crate::types::VideoInfo;
 use crate::history::Platform;
+use crate::platform::{url_matcher, CookieFileManager, PlatformResolver, ResolverError};
+use crate::types::VideoInfo;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -107,5 +107,4 @@ mod tests {
         assert!(resolver.supports_url("https://vm.tiktok.com/abc"));
         assert!(!resolver.supports_url("https://youtube.com/watch"));
     }
-
 }

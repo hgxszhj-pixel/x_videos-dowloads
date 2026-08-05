@@ -19,7 +19,11 @@ pub struct AuthToken {
 
 impl fmt::Display for AuthToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}:{}:{}", self.team_id, self.device_id, self.timestamp, self.signature)
+        write!(
+            f,
+            "{}:{}:{}:{}",
+            self.team_id, self.device_id, self.timestamp, self.signature
+        )
     }
 }
 
@@ -76,11 +80,11 @@ impl AuthToken {
             return Err(AuthError::InvalidFormat);
         };
 
-        let team_id = uuid::Uuid::parse_str(team_id_str)
-            .map_err(|_| AuthError::InvalidFormat)?;
-        let device_id = uuid::Uuid::parse_str(device_id_str)
-            .map_err(|_| AuthError::InvalidFormat)?;
-        let timestamp: u64 = timestamp_str.parse()
+        let team_id = uuid::Uuid::parse_str(team_id_str).map_err(|_| AuthError::InvalidFormat)?;
+        let device_id =
+            uuid::Uuid::parse_str(device_id_str).map_err(|_| AuthError::InvalidFormat)?;
+        let timestamp: u64 = timestamp_str
+            .parse()
             .map_err(|_| AuthError::InvalidFormat)?;
 
         Ok(Self {
@@ -120,8 +124,8 @@ impl AuthToken {
     /// HMAC-SHA256 签名
     fn hmac_sign(message: &str) -> String {
         let secret = get_shared_secret();
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-            .expect("HMAC can take key of any size");
+        let mut mac =
+            HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
         mac.update(message.as_bytes());
         let result = mac.finalize();
         hex::encode(result.into_bytes())

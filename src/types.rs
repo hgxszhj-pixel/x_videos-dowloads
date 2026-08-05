@@ -2,11 +2,11 @@
 //!
 //! 项目中使用的核心数据类型定义
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
 
 /// 平台来源
 ///
@@ -102,10 +102,19 @@ impl DownloadError {
     /// 创建 HTTP 错误
     pub fn http(status: u16) -> Self {
         let (message, action) = match status {
-            403 => ("服务器拒绝访问".to_string(), Some("可能需要登录，请设置 Cookie".to_string())),
+            403 => (
+                "服务器拒绝访问".to_string(),
+                Some("可能需要登录，请设置 Cookie".to_string()),
+            ),
             404 => ("视频不存在或已被删除".to_string(), None),
-            429 => ("请求过于频繁，已被限速".to_string(), Some("请稍后再试或使用代理".to_string())),
-            450..=499 => ("无法访问该内容".to_string(), Some("可能需要登录或内容不可用".to_string())),
+            429 => (
+                "请求过于频繁，已被限速".to_string(),
+                Some("请稍后再试或使用代理".to_string()),
+            ),
+            450..=499 => (
+                "无法访问该内容".to_string(),
+                Some("可能需要登录或内容不可用".to_string()),
+            ),
             500..=599 => ("服务器异常".to_string(), Some("稍后重试".to_string())),
             _ => ("下载请求失败".to_string(), None),
         };
@@ -226,23 +235,17 @@ impl From<crate::platform::ResolverError> for DownloadError {
             crate::platform::ResolverError::ContentUnavailable(msg) => {
                 DownloadError::content_unavailable(&msg)
             }
-            crate::platform::ResolverError::Network(msg) => {
-                DownloadError::network(msg.as_str())
-            }
-            crate::platform::ResolverError::ParseFailed(msg) => {
-                DownloadError {
-                    error_type: DownloadErrorType::Unknown(msg.clone()),
-                    message: format!("解析失败: {}", msg),
-                    action: Some("检查URL是否支持".to_string()),
-                }
-            }
-            crate::platform::ResolverError::Detailed { message, .. } => {
-                DownloadError {
-                    error_type: DownloadErrorType::Unknown(message.clone()),
-                    message: message.clone(),
-                    action: None,
-                }
-            }
+            crate::platform::ResolverError::Network(msg) => DownloadError::network(msg.as_str()),
+            crate::platform::ResolverError::ParseFailed(msg) => DownloadError {
+                error_type: DownloadErrorType::Unknown(msg.clone()),
+                message: format!("解析失败: {}", msg),
+                action: Some("检查URL是否支持".to_string()),
+            },
+            crate::platform::ResolverError::Detailed { message, .. } => DownloadError {
+                error_type: DownloadErrorType::Unknown(message.clone()),
+                message: message.clone(),
+                action: None,
+            },
         }
     }
 }
@@ -585,7 +588,10 @@ impl DownloadStatus {
     /// 预留 API：状态机判断，当前仅 mod tests 引用
     #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
-        matches!(self, DownloadStatus::Downloading | DownloadStatus::Preparing)
+        matches!(
+            self,
+            DownloadStatus::Downloading | DownloadStatus::Preparing
+        )
     }
 }
 
@@ -626,10 +632,15 @@ pub fn format_bytes(bytes: u64) -> String {
 /// 当前 downloader 内部 pipeline 已不再调用(merge_segments 走 trust-boundary-sanitized output_path),
 /// 保留给外部代码 (CLI/GUI) 在 user-input 信任边界可选调用。
 #[allow(dead_code)]
-pub fn validate_output_path(output_path: &std::path::Path, allowed_dir: &std::path::Path) -> Result<(), String> {
-    let canonical_output = output_path.canonicalize()
+pub fn validate_output_path(
+    output_path: &std::path::Path,
+    allowed_dir: &std::path::Path,
+) -> Result<(), String> {
+    let canonical_output = output_path
+        .canonicalize()
         .map_err(|_| format!("Invalid output path: {:?}", output_path))?;
-    let canonical_allowed = allowed_dir.canonicalize()
+    let canonical_allowed = allowed_dir
+        .canonicalize()
         .map_err(|e| format!("Invalid allowed directory: {}", e))?;
 
     if !canonical_output.starts_with(&canonical_allowed) {
@@ -661,7 +672,7 @@ pub fn sanitize_filename(name: &str) -> String {
                 '_'
             }
         })
-        .take(200)  // 限制长度防止过长文件名
+        .take(200) // 限制长度防止过长文件名
         .collect();
 
     // 防止空文件名
@@ -728,7 +739,10 @@ mod tests {
     #[test]
     fn test_sanitize_filename() {
         assert_eq!(sanitize_filename("normal_video.mp4"), "normal_video.mp4");
-        assert_eq!(sanitize_filename("video with spaces.mp4"), "video_with_spaces.mp4");
+        assert_eq!(
+            sanitize_filename("video with spaces.mp4"),
+            "video_with_spaces.mp4"
+        );
         assert_eq!(sanitize_filename("../../../etc/passwd"), "video");
         assert_eq!(sanitize_filename("/absolute/path"), "video");
         assert_eq!(sanitize_filename(""), "video");
@@ -765,7 +779,11 @@ mod tests {
 
     #[test]
     fn test_video_info_new() {
-        let info = VideoInfo::new("Test Video".to_string(), "https://example.com/video.mp4".to_string(), None);
+        let info = VideoInfo::new(
+            "Test Video".to_string(),
+            "https://example.com/video.mp4".to_string(),
+            None,
+        );
         assert_eq!(info.title, "Test Video");
         assert_eq!(info.url, "https://example.com/video.mp4");
         assert!(info.formats.is_empty());
@@ -812,7 +830,10 @@ mod tests {
     #[test]
     fn test_sanitize_filename_edge_cases() {
         assert_eq!(sanitize_filename("normal_video.mp4"), "normal_video.mp4");
-        assert_eq!(sanitize_filename("video with spaces.mp4"), "video_with_spaces.mp4");
+        assert_eq!(
+            sanitize_filename("video with spaces.mp4"),
+            "video_with_spaces.mp4"
+        );
         assert_eq!(sanitize_filename("../../../etc/passwd"), "video");
         assert_eq!(sanitize_filename("/absolute/path"), "video");
     }

@@ -50,7 +50,10 @@ impl Database {
 
     /// 初始化表结构
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute_batch(include_str!("schema.sql"))?;
         Ok(())
     }
@@ -65,7 +68,10 @@ impl Database {
             invite_code: generate_invite_code(),
             created_at: Utc::now(),
         };
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "INSERT INTO teams (id, name, invite_code, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![
@@ -80,9 +86,13 @@ impl Database {
 
     /// 通过邀请码获取团队
     pub fn get_team_by_code(&self, invite_code: &str) -> Result<Option<Team>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
-        let mut stmt =
-            conn.prepare("SELECT id, name, invite_code, created_at FROM teams WHERE invite_code = ?1")?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, invite_code, created_at FROM teams WHERE invite_code = ?1",
+        )?;
         let mut rows = stmt.query(params![invite_code])?;
         if let Some(row) = rows.next()? {
             Ok(Some(Team {
@@ -110,7 +120,10 @@ impl Database {
         if let Some(port) = device.public_port {
             validate_port(port)?;
         }
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             r#"INSERT INTO devices (id, team_id, name, public_ip, public_port, last_seen, is_online)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -135,7 +148,10 @@ impl Database {
 
     /// 更新设备心跳
     pub fn update_device_heartbeat(&self, device_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE devices SET last_seen = ?1, is_online = 1 WHERE id = ?2",
             params![Utc::now().to_rfc3339(), device_id.to_string()],
@@ -144,8 +160,16 @@ impl Database {
     }
 
     /// 更新设备的公网地址（通过 STUN 检测）
-    pub fn update_device_public_addr(&self, device_id: Uuid, public_ip: &str, public_port: u16) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+    pub fn update_device_public_addr(
+        &self,
+        device_id: Uuid,
+        public_ip: &str,
+        public_port: u16,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE devices SET public_ip = ?1, public_port = ?2 WHERE id = ?3",
             params![public_ip, public_port, device_id.to_string()],
@@ -155,16 +179,21 @@ impl Database {
 
     /// 获取团队的所有设备
     pub fn get_team_devices(&self, team_id: Uuid) -> Result<Vec<Device>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, name, public_ip, public_port, last_seen, is_online FROM devices WHERE team_id = ?1",
         )?;
         let rows = stmt.query_map(params![team_id.to_string()], |row| {
             Ok(Device {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
-                team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
-                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|_| {
+                    rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string())
+                })?,
+                team_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|_| {
+                    rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string())
+                })?,
                 name: row.get(2)?,
                 public_ip: row.get(3)?,
                 public_port: row.get(4)?,
@@ -179,7 +208,10 @@ impl Database {
 
     /// 获取设备所属团队ID
     pub fn get_device_team_id(&self, device_id: Uuid) -> Result<Option<Uuid>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare("SELECT team_id FROM devices WHERE id = ?1")?;
         let mut rows = stmt.query(params![device_id.to_string()])?;
         if let Some(row) = rows.next()? {
@@ -191,7 +223,10 @@ impl Database {
 
     /// 标记设备离线
     pub fn set_device_offline(&self, device_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE devices SET is_online = 0 WHERE id = ?1",
             params![device_id.to_string()],
@@ -202,17 +237,22 @@ impl Database {
     /// 获取设备信息
     #[allow(dead_code)]
     pub fn get_device(&self, device_id: Uuid) -> Result<Option<Device>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, name, public_ip, public_port, last_seen, is_online FROM devices WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![device_id.to_string()])?;
         if let Some(row) = rows.next()? {
             Ok(Some(Device {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
-                team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
-                    .map_err(|_| rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string()))?,
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|_| {
+                    rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string())
+                })?,
+                team_id: Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|_| {
+                    rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string())
+                })?,
                 name: row.get(2)?,
                 public_ip: row.get(3)?,
                 public_port: row.get(4)?,
@@ -230,7 +270,10 @@ impl Database {
 
     /// 创建任务
     pub fn create_task(&self, task: &Task, team_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let result = conn.execute(
             r#"INSERT INTO tasks (id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
@@ -252,7 +295,9 @@ impl Database {
 
         match result {
             Ok(_) => Ok(()),
-            Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("UNIQUE constraint failed") => {
+            Err(rusqlite::Error::SqliteFailure(_, Some(msg)))
+                if msg.contains("UNIQUE constraint failed") =>
+            {
                 Err(anyhow!("URL already exists"))
             }
             Err(e) => Err(e.into()),
@@ -261,7 +306,10 @@ impl Database {
 
     /// 更新任务
     pub fn update_task(&self, task: &Task, _team_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             r#"UPDATE tasks SET
                    status = ?1, claimed_by = ?2, claimed_at = ?3, progress = ?4,
@@ -272,7 +320,9 @@ impl Database {
                 task.claimed_by.map(|id| id.to_string()),
                 task.claimed_at.map(|dt| dt.to_rfc3339()),
                 task.progress,
-                task.local_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                task.local_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
                 task.file_size.map(|s| s as i64),
                 task.version as i64,
                 task.id.to_string()
@@ -283,7 +333,10 @@ impl Database {
 
     /// 获取团队的所有任务
     pub fn get_tasks_by_team(&self, team_id: Uuid) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version FROM tasks WHERE team_id = ?1",
         )?;
@@ -298,8 +351,7 @@ impl Database {
                 _ => TaskStatus::New,
             };
             Ok(Task {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .map_err(uuid_err_to_rusqlite)?,
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(uuid_err_to_rusqlite)?,
                 team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
                     .map_err(uuid_err_to_rusqlite)?,
                 url: row.get(2)?,
@@ -308,9 +360,11 @@ impl Database {
                     .get::<_, Option<String>>(4)?
                     .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
                     .transpose()?,
-                claimed_at: row
-                    .get::<_, Option<String>>(5)?
-                    .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
+                claimed_at: row.get::<_, Option<String>>(5)?.map(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .unwrap()
+                        .with_timezone(&Utc)
+                }),
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
@@ -327,7 +381,10 @@ impl Database {
 
     /// 获取设备认领的所有任务
     pub fn get_tasks_by_device(&self, device_id: Uuid) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version FROM tasks WHERE claimed_by = ?1",
         )?;
@@ -342,8 +399,7 @@ impl Database {
                 _ => TaskStatus::New,
             };
             Ok(Task {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .map_err(uuid_err_to_rusqlite)?,
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(uuid_err_to_rusqlite)?,
                 team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
                     .map_err(uuid_err_to_rusqlite)?,
                 url: row.get(2)?,
@@ -352,9 +408,11 @@ impl Database {
                     .get::<_, Option<String>>(4)?
                     .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
                     .transpose()?,
-                claimed_at: row
-                    .get::<_, Option<String>>(5)?
-                    .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
+                claimed_at: row.get::<_, Option<String>>(5)?.map(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .unwrap()
+                        .with_timezone(&Utc)
+                }),
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
@@ -371,7 +429,10 @@ impl Database {
 
     /// 获取被认领但可能超时的任务
     pub fn get_claimed_tasks(&self, team_id: Uuid) -> Result<Vec<Task>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, team_id, url, status, claimed_by, claimed_at, progress, local_path, file_size, created_by, created_at, version FROM tasks WHERE team_id = ?1 AND status = 'Claimed'",
         )?;
@@ -386,8 +447,7 @@ impl Database {
                 _ => TaskStatus::New,
             };
             Ok(Task {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .map_err(uuid_err_to_rusqlite)?,
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(uuid_err_to_rusqlite)?,
                 team_id: Uuid::parse_str(&row.get::<_, String>(1)?)
                     .map_err(uuid_err_to_rusqlite)?,
                 url: row.get(2)?,
@@ -396,9 +456,11 @@ impl Database {
                     .get::<_, Option<String>>(4)?
                     .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
                     .transpose()?,
-                claimed_at: row
-                    .get::<_, Option<String>>(5)?
-                    .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
+                claimed_at: row.get::<_, Option<String>>(5)?.map(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .unwrap()
+                        .with_timezone(&Utc)
+                }),
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
@@ -415,7 +477,10 @@ impl Database {
 
     /// 释放任务（将其重置为 Queued 状态）
     pub fn release_task(&self, task_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE tasks SET status = 'Queued', claimed_by = NULL, claimed_at = NULL, progress = 0, version = version + 1 WHERE id = ?1",
             params![task_id.to_string()],
@@ -425,21 +490,25 @@ impl Database {
 
     /// 获取所有团队ID
     pub fn get_all_team_ids(&self) -> Result<Vec<Uuid>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         let mut stmt = conn.prepare("SELECT DISTINCT team_id FROM devices")?;
         let rows = stmt.query_map([], |row| {
-            Uuid::parse_str(&row.get::<_, String>(0)?)
-                .map_err(uuid_err_to_rusqlite)
+            Uuid::parse_str(&row.get::<_, String>(0)?).map_err(uuid_err_to_rusqlite)
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
-
 
     // ========== 离线消息 ==========
 
     /// 保存离线消息
     pub fn save_offline_message(&self, device_id: Uuid, message: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "INSERT INTO offline_messages (device_id, message, created_at) VALUES (?1, ?2, ?3)",
             params![device_id.to_string(), message, Utc::now().to_rfc3339()],
@@ -449,16 +518,23 @@ impl Database {
 
     /// 获取设备的离线消息
     pub fn get_offline_messages(&self, device_id: Uuid) -> Result<Vec<String>> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
-        let mut stmt =
-            conn.prepare("SELECT message FROM offline_messages WHERE device_id = ?1 ORDER BY created_at")?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT message FROM offline_messages WHERE device_id = ?1 ORDER BY created_at",
+        )?;
         let rows = stmt.query_map(params![device_id.to_string()], |row| row.get(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     /// 清除设备的离线消息
     pub fn clear_offline_messages(&self, device_id: Uuid) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Database lock poisoned: {}", e))?;
         conn.execute(
             "DELETE FROM offline_messages WHERE device_id = ?1",
             params![device_id.to_string()],
@@ -471,7 +547,8 @@ impl Database {
 /// 字符集: 0-9, A-Z, a-z, !@#$%^&*  (共 50 个字符)
 fn generate_invite_code() -> String {
     use rand::Rng;
-    const CHARSET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!@#$%^&*";
+    const CHARSET: &[u8] =
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!@#$%^&*";
     let mut rng = rand::rngs::OsRng;
     (0..16)
         .map(|_| {
@@ -498,7 +575,10 @@ mod tests {
 
         assert_eq!(team.name, "Test Team");
         assert_eq!(team.invite_code.len(), 16);
-        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric() || "!@#$%^&*".contains(c)));
+        assert!(team
+            .invite_code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!@#$%^&*".contains(c)));
     }
 
     #[test]
@@ -506,7 +586,8 @@ mod tests {
         let db = create_test_db();
         let created = db.create_team("Test Team").expect("Failed to create team");
 
-        let found = db.get_team_by_code(&created.invite_code)
+        let found = db
+            .get_team_by_code(&created.invite_code)
             .expect("Failed to get team by code")
             .expect("Team not found");
 
@@ -517,7 +598,8 @@ mod tests {
     #[test]
     fn test_get_team_by_code_not_found() {
         let db = create_test_db();
-        let found = db.get_team_by_code("NONEXISTENT")
+        let found = db
+            .get_team_by_code("NONEXISTENT")
             .expect("Failed to query team");
         assert!(found.is_none());
     }
@@ -537,9 +619,12 @@ mod tests {
             is_online: true,
         };
 
-        db.register_device(&device).expect("Failed to register device");
+        db.register_device(&device)
+            .expect("Failed to register device");
 
-        let devices = db.get_team_devices(team.id).expect("Failed to get team devices");
+        let devices = db
+            .get_team_devices(team.id)
+            .expect("Failed to get team devices");
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].name, "Test Device");
     }
@@ -559,10 +644,13 @@ mod tests {
             is_online: true,
         };
 
-        db.register_device(&device).expect("Failed to register device");
-        db.update_device_heartbeat(device.id).expect("Failed to update heartbeat");
+        db.register_device(&device)
+            .expect("Failed to register device");
+        db.update_device_heartbeat(device.id)
+            .expect("Failed to update heartbeat");
 
-        let retrieved = db.get_device(device.id)
+        let retrieved = db
+            .get_device(device.id)
             .expect("Failed to get device")
             .expect("Device not found");
         assert!(retrieved.is_online);
@@ -583,10 +671,13 @@ mod tests {
             is_online: true,
         };
 
-        db.register_device(&device).expect("Failed to register device");
-        db.set_device_offline(device.id).expect("Failed to set device offline");
+        db.register_device(&device)
+            .expect("Failed to register device");
+        db.set_device_offline(device.id)
+            .expect("Failed to set device offline");
 
-        let retrieved = db.get_device(device.id)
+        let retrieved = db
+            .get_device(device.id)
             .expect("Failed to get device")
             .expect("Device not found");
         assert!(!retrieved.is_online);
@@ -599,7 +690,8 @@ mod tests {
         let device_id = Uuid::new_v4();
 
         let task = Task::new("https://example.com/video".to_string(), team.id, device_id);
-        db.create_task(&task, team.id).expect("Failed to create task");
+        db.create_task(&task, team.id)
+            .expect("Failed to create task");
 
         let tasks = db.get_tasks_by_team(team.id).expect("Failed to get tasks");
         assert_eq!(tasks.len(), 1);
@@ -614,12 +706,14 @@ mod tests {
         let device_id = Uuid::new_v4();
 
         let mut task = Task::new("https://example.com/video".to_string(), team.id, device_id);
-        db.create_task(&task, team.id).expect("Failed to create task");
+        db.create_task(&task, team.id)
+            .expect("Failed to create task");
 
         task.status = TaskStatus::Claimed;
         task.claimed_by = Some(device_id);
         task.progress = 50.0;
-        db.update_task(&task, team.id).expect("Failed to update task");
+        db.update_task(&task, team.id)
+            .expect("Failed to update task");
 
         let tasks = db.get_tasks_by_team(team.id).expect("Failed to get tasks");
         assert_eq!(tasks[0].status, TaskStatus::Claimed);
@@ -635,7 +729,8 @@ mod tests {
         let mut task = Task::new("https://example.com/video".to_string(), team.id, device_id);
         task.status = TaskStatus::Claimed;
         task.claimed_by = Some(device_id);
-        db.create_task(&task, team.id).expect("Failed to create task");
+        db.create_task(&task, team.id)
+            .expect("Failed to create task");
 
         db.release_task(task.id).expect("Failed to release task");
 
@@ -653,12 +748,16 @@ mod tests {
         let mut task = Task::new("https://example.com/video1".to_string(), team.id, device_id);
         task.status = TaskStatus::Claimed;
         task.claimed_by = Some(device_id);
-        db.create_task(&task, team.id).expect("Failed to create task");
+        db.create_task(&task, team.id)
+            .expect("Failed to create task");
 
         let task2 = Task::new("https://example.com/video2".to_string(), team.id, device_id);
-        db.create_task(&task2, team.id).expect("Failed to create task");
+        db.create_task(&task2, team.id)
+            .expect("Failed to create task");
 
-        let tasks = db.get_tasks_by_device(device_id).expect("Failed to get tasks by device");
+        let tasks = db
+            .get_tasks_by_device(device_id)
+            .expect("Failed to get tasks by device");
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].url, "https://example.com/video1");
     }
@@ -668,16 +767,23 @@ mod tests {
         let db = create_test_db();
         let device_id = Uuid::new_v4();
 
-        db.save_offline_message(device_id, "Message 1").expect("Failed to save message");
-        db.save_offline_message(device_id, "Message 2").expect("Failed to save message");
+        db.save_offline_message(device_id, "Message 1")
+            .expect("Failed to save message");
+        db.save_offline_message(device_id, "Message 2")
+            .expect("Failed to save message");
 
-        let messages = db.get_offline_messages(device_id).expect("Failed to get messages");
+        let messages = db
+            .get_offline_messages(device_id)
+            .expect("Failed to get messages");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0], "Message 1");
         assert_eq!(messages[1], "Message 2");
 
-        db.clear_offline_messages(device_id).expect("Failed to clear messages");
-        let messages = db.get_offline_messages(device_id).expect("Failed to get messages");
+        db.clear_offline_messages(device_id)
+            .expect("Failed to clear messages");
+        let messages = db
+            .get_offline_messages(device_id)
+            .expect("Failed to get messages");
         assert!(messages.is_empty());
     }
 
@@ -699,7 +805,10 @@ mod tests {
         assert_eq!(team.invite_code.len(), 16);
 
         // 邀请码应该包含字母、数字和特殊字符
-        assert!(team.invite_code.chars().all(|c| c.is_ascii_alphanumeric() || "!@#$%^&*".contains(c)));
+        assert!(team
+            .invite_code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!@#$%^&*".contains(c)));
     }
 
     #[test]
@@ -717,9 +826,11 @@ mod tests {
             is_online: true,
         };
 
-        db.register_device(&device).expect("Failed to register device");
+        db.register_device(&device)
+            .expect("Failed to register device");
 
-        let found_team_id = db.get_device_team_id(device.id)
+        let found_team_id = db
+            .get_device_team_id(device.id)
             .expect("Failed to get device team id")
             .expect("Team ID should not be None");
         assert_eq!(found_team_id, team.id);
@@ -730,7 +841,8 @@ mod tests {
         let db = create_test_db();
         let fake_id = Uuid::new_v4();
 
-        let found = db.get_device_team_id(fake_id)
+        let found = db
+            .get_device_team_id(fake_id)
             .expect("Failed to query device team id");
         assert!(found.is_none());
     }
@@ -760,8 +872,10 @@ mod tests {
             is_online: true,
         };
 
-        db.register_device(&device1).expect("Failed to register device1");
-        db.register_device(&device2).expect("Failed to register device2");
+        db.register_device(&device1)
+            .expect("Failed to register device1");
+        db.register_device(&device2)
+            .expect("Failed to register device2");
 
         let team_ids = db.get_all_team_ids().expect("Failed to get all team ids");
         assert_eq!(team_ids.len(), 2);
@@ -779,17 +893,22 @@ mod tests {
         let mut task1 = Task::new("https://example.com/video1".to_string(), team.id, device_id);
         task1.status = TaskStatus::Claimed;
         task1.claimed_by = Some(device_id);
-        db.create_task(&task1, team.id).expect("Failed to create task1");
+        db.create_task(&task1, team.id)
+            .expect("Failed to create task1");
 
         let task2 = Task::new("https://example.com/video2".to_string(), team.id, device_id);
-        db.create_task(&task2, team.id).expect("Failed to create task2");
+        db.create_task(&task2, team.id)
+            .expect("Failed to create task2");
 
         let mut task3 = Task::new("https://example.com/video3".to_string(), team.id, device_id);
         task3.status = TaskStatus::Claimed;
         task3.claimed_by = Some(device_id);
-        db.create_task(&task3, team.id).expect("Failed to create task3");
+        db.create_task(&task3, team.id)
+            .expect("Failed to create task3");
 
-        let claimed = db.get_claimed_tasks(team.id).expect("Failed to get claimed tasks");
+        let claimed = db
+            .get_claimed_tasks(team.id)
+            .expect("Failed to get claimed tasks");
         assert_eq!(claimed.len(), 2);
     }
 
@@ -817,10 +936,13 @@ mod tests {
                 last_seen: Utc::now(),
                 is_online: true,
             };
-            db.register_device(&device).expect("Failed to register device");
+            db.register_device(&device)
+                .expect("Failed to register device");
         }
 
-let devices = db.get_team_devices(team.id).expect("Failed to get team devices");
+        let devices = db
+            .get_team_devices(team.id)
+            .expect("Failed to get team devices");
         assert_eq!(devices.len(), 5);
     }
 
@@ -833,12 +955,16 @@ let devices = db.get_team_devices(team.id).expect("Failed to get team devices");
 
         // 创建第一个任务
         let task1 = Task::new(url.clone(), team.id, device_id);
-        db.create_task(&task1, team.id).expect("First task should be created");
+        db.create_task(&task1, team.id)
+            .expect("First task should be created");
 
         // 尝试创建相同 URL 的任务应该失败
         let task2 = Task::new(url, team.id, device_id);
         let result = db.create_task(&task2, team.id);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("URL already exists"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("URL already exists"));
     }
 }

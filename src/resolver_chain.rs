@@ -247,7 +247,10 @@ mod tests {
         let r2 = global_registry(&config);
 
         // 两次调用必须返回同一个 Arc 指针（singleton 契约）
-        assert!(Arc::ptr_eq(&r1, &r2), "global_registry must return same Arc");
+        assert!(
+            Arc::ptr_eq(&r1, &r2),
+            "global_registry must return same Arc"
+        );
     }
 
     #[test]
@@ -268,7 +271,9 @@ mod tests {
 
         // TikTok / Bilibili 也应注册
         assert_eq!(
-            registry.select_resolver("https://tiktok.com/video/1").platform(),
+            registry
+                .select_resolver("https://tiktok.com/video/1")
+                .platform(),
             crate::history::Platform::TikTok
         );
         assert_eq!(
@@ -280,7 +285,9 @@ mod tests {
 
         // 未知平台应回退到默认 resolver (Other)
         assert_eq!(
-            registry.select_resolver("https://example.com/video").platform(),
+            registry
+                .select_resolver("https://example.com/video")
+                .platform(),
             crate::history::Platform::Other
         );
     }

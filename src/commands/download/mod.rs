@@ -39,7 +39,9 @@ pub async fn run(cli: Cli, config: AppConfig) -> Result<()> {
     let ytdlp = YtDlp::new();
 
     if !ytdlp.is_available() {
-        anyhow::bail!("错误: 未找到 yt-dlp。请安装 yt-dlp: https://github.com/yt-dlp/yt-dlp#installation");
+        anyhow::bail!(
+            "错误: 未找到 yt-dlp。请安装 yt-dlp: https://github.com/yt-dlp/yt-dlp#installation"
+        );
     }
 
     info!("X Video Downloader v{}", env!("CARGO_PKG_VERSION"));
@@ -238,10 +240,7 @@ fn print_video_formats(info: &VideoInfo) {
             .map(format_bytes)
             .unwrap_or_else(|| "N/A".to_string());
 
-        let resolution = fmt
-            .resolution
-            .clone()
-            .unwrap_or_else(|| "N/A".to_string());
+        let resolution = fmt.resolution.clone().unwrap_or_else(|| "N/A".to_string());
 
         println!(
             "{:<10} {:<8} {:<15} {:<12}",
@@ -269,18 +268,12 @@ mod tests {
 
     #[test]
     fn ytdlp_success_records_completed() {
-        assert_eq!(
-            decide_ytdlp_history_status(true),
-            DownloadStatus::Completed
-        );
+        assert_eq!(decide_ytdlp_history_status(true), DownloadStatus::Completed);
     }
 
     #[test]
     fn ytdlp_failure_records_failed() {
         // P0-1 regression: 失败的下载不应被记为 Completed
-        assert_eq!(
-            decide_ytdlp_history_status(false),
-            DownloadStatus::Failed
-        );
+        assert_eq!(decide_ytdlp_history_status(false), DownloadStatus::Failed);
     }
 }

@@ -48,7 +48,10 @@ pub(super) fn install_drag_drop_bridge(mut state: Store<AppState>) {
                     state.write().status_message = "拖放 URL 已捕获".to_string();
                 }
                 Err(e) => {
-                    warn!("[bridge] drag-drop URL receive failed (Eval task likely closed): {}", e);
+                    warn!(
+                        "[bridge] drag-drop URL receive failed (Eval task likely closed): {}",
+                        e
+                    );
                     break;
                 }
             }

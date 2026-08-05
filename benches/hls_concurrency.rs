@@ -4,8 +4,8 @@
 //! download across {1, 2, 4, 8, 16, 32} concurrency. Plain `Instant` loop —
 //! one sample per config. Run: `cargo bench --bench hls_concurrency`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -43,21 +43,32 @@ async fn run_once(max_concurrent: usize) -> (Duration, usize) {
 
     let server = tokio::spawn(async move {
         loop {
-            let (mut socket, _) = match listener.accept().await { Ok(p) => p, Err(_) => break };
+            let (mut socket, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
             let reqs = req_counter.clone();
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 4096];
-                let n = match socket.read(&mut buf).await { Ok(n) if n > 0 => n, _ => return };
+                let n = match socket.read(&mut buf).await {
+                    Ok(n) if n > 0 => n,
+                    _ => return,
+                };
                 let req = String::from_utf8_lossy(&buf[..n]).into_owned();
                 reqs.fetch_add(1, Ordering::SeqCst);
                 tokio::time::sleep(Duration::from_millis(SEGMENT_LATENCY_MS)).await;
                 let (ct, body) = if req.starts_with("GET /manifest") {
                     let mut m = String::from("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXT-X-MEDIA-SEQUENCE:0\n");
-                    for i in 0..SEGMENT_COUNT { m.push_str(&format!("#EXTINF:5.0,\nseg_{:04}.ts\n", i)); }
+                    for i in 0..SEGMENT_COUNT {
+                        m.push_str(&format!("#EXTINF:5.0,\nseg_{:04}.ts\n", i));
+                    }
                     m.push_str("#EXT-X-ENDLIST\n");
                     ("application/vnd.apple.mpegurl", m)
                 } else {
-                    ("video/mp2t", String::from_utf8_lossy(SEGMENT_PAYLOAD).into_owned())
+                    (
+                        "video/mp2t",
+                        String::from_utf8_lossy(SEGMENT_PAYLOAD).into_owned(),
+                    )
                 };
                 let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", ct, body.len());
                 let _ = socket.write_all(resp.as_bytes()).await;
@@ -69,7 +80,9 @@ async fn run_once(max_concurrent: usize) -> (Duration, usize) {
 
     let tmp = tempfile::tempdir().unwrap();
     let out = tmp.path().join("out.ts");
-    let dl = HlsDownloader::new(reqwest::Client::new()).max_concurrent(max_concurrent).retry_count(1);
+    let dl = HlsDownloader::new(reqwest::Client::new())
+        .max_concurrent(max_concurrent)
+        .retry_count(1);
     let url = format!("http://127.0.0.1:{}/manifest.m3u8", port);
     let start = Instant::now();
     let _ = dl.download(&url, &out, None).await;
@@ -80,8 +93,16 @@ async fn run_once(max_concurrent: usize) -> (Duration, usize) {
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() {
     let configs = [1usize, 2, 4, 8, 16, 32];
-    println!("{:<14} | {:>13} | {:>13}", "max_concurrent", "wall_ms", "requests");
-    println!("{}-+-{}-+-{}", "-".repeat(14), "-".repeat(15), "-".repeat(15));
+    println!(
+        "{:<14} | {:>13} | {:>13}",
+        "max_concurrent", "wall_ms", "requests"
+    );
+    println!(
+        "{}-+-{}-+-{}",
+        "-".repeat(14),
+        "-".repeat(15),
+        "-".repeat(15)
+    );
     for &c in &configs {
         let (dt, total) = run_once(c).await;
         println!("{:<14} | {:>13} | {:>13}", c, dt.as_millis(), total);

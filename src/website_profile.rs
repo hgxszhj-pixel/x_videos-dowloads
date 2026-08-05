@@ -77,8 +77,19 @@ enum ProfileTemplate {
 
 impl ProfileTemplate {
     fn build(&self, domain: &str) -> WebsiteProfile {
-        let (anti_crawler_type, adaptive_threads, max_threads, speed_threshold_bps, anti_settings, requires_auth, recommended_delay_ms) = match self {
-            Self::Cloudflare { delay_ms, thread_limit } => (
+        let (
+            anti_crawler_type,
+            adaptive_threads,
+            max_threads,
+            speed_threshold_bps,
+            anti_settings,
+            requires_auth,
+            recommended_delay_ms,
+        ) = match self {
+            Self::Cloudflare {
+                delay_ms,
+                thread_limit,
+            } => (
                 AntiCrawlerType::Cloudflare,
                 true,
                 if *thread_limit { 4 } else { 6 },
@@ -136,10 +147,20 @@ impl ProfileTemplate {
             success_count: 0,
             failure_count: 0,
             last_visited: 0,
-            has_thread_limit: matches!(self, Self::Cloudflare { thread_limit: true, .. })
-                || matches!(self, Self::Auth { .. }),
-            has_speed_limit: matches!(self, Self::Cloudflare { thread_limit: true, .. })
-                || matches!(self, Self::Auth { .. }),
+            has_thread_limit: matches!(
+                self,
+                Self::Cloudflare {
+                    thread_limit: true,
+                    ..
+                }
+            ) || matches!(self, Self::Auth { .. }),
+            has_speed_limit: matches!(
+                self,
+                Self::Cloudflare {
+                    thread_limit: true,
+                    ..
+                }
+            ) || matches!(self, Self::Auth { .. }),
             anti_crawler_type,
             requires_auth,
             recommended_delay_ms,
@@ -282,11 +303,13 @@ impl WebsiteProfile {
         }
 
         // 如果速度很快，降低线程需求
-        if speed_bps > 2 * 1024 * 1024 { // > 2MB/s
+        if speed_bps > 2 * 1024 * 1024 {
+            // > 2MB/s
             self.has_thread_limit = false;
         }
 
-        info!("网站 {} 记录成功，速度: {:.1} KB/s，平均: {:.1} KB/s",
+        info!(
+            "网站 {} 记录成功，速度: {:.1} KB/s，平均: {:.1} KB/s",
             self.domain,
             speed_bps as f64 / 1024.0,
             self.avg_speed_bps as f64 / 1024.0
@@ -302,7 +325,10 @@ impl WebsiteProfile {
         if self.failure_count >= 3 && self.success_count < self.failure_count {
             self.has_thread_limit = true;
             self.max_threads = (self.max_threads / 2).max(2);
-            info!("网站 {} 检测到线程限制，降低最大线程到 {}", self.domain, self.max_threads);
+            info!(
+                "网站 {} 检测到线程限制，降低最大线程到 {}",
+                self.domain, self.max_threads
+            );
         }
     }
 
@@ -351,48 +377,65 @@ fn get_profile_for_domain(domain: &str) -> Option<WebsiteProfile> {
         // video.twimg.com 不支持并发 Range 分片请求 (实测 4 路并发下
         // "Got error: Downloaded X bytes, expected Y" 重试 10 次仍失败);
         // 单连接直下可达 7 MiB/s。绕开 Cloudflare 模板直接定 max_threads=1。
-        "video.twimg.com" => return Some(WebsiteProfile {
-            domain: domain.to_string(),
-            adaptive_threads: false,
-            min_threads: 1,
-            max_threads: 1,
-            speed_threshold_bps: 500 * 1024,
-            ..Default::default()
-        }),
-        "api.fxtwitter.com" => return Some(WebsiteProfile {
-            domain: domain.to_string(),
-            adaptive_threads: false,
-            min_threads: 1,
-            max_threads: 2,
-            speed_threshold_bps: 1024 * 1024,
-            ..Default::default()
-        }),
-        "v.redd.it" | "preview.redd.it" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
+        "video.twimg.com" => {
+            return Some(WebsiteProfile {
+                domain: domain.to_string(),
+                adaptive_threads: false,
+                min_threads: 1,
+                max_threads: 1,
+                speed_threshold_bps: 500 * 1024,
+                ..Default::default()
+            })
+        }
+        "api.fxtwitter.com" => {
+            return Some(WebsiteProfile {
+                domain: domain.to_string(),
+                adaptive_threads: false,
+                min_threads: 1,
+                max_threads: 2,
+                speed_threshold_bps: 1024 * 1024,
+                ..Default::default()
+            })
+        }
+        "v.redd.it" | "preview.redd.it" => ProfileTemplate::Cloudflare {
+            delay_ms: 500,
+            thread_limit: true,
+        },
 
         // ===== 代码托管社区 =====
         "github.com" => ProfileTemplate::RateLimit { delay_ms: 1000 },
         "githubusercontent.com" => ProfileTemplate::None,
 
         // ===== 博客平台 =====
-        "medium.com" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: true },
+        "medium.com" => ProfileTemplate::Cloudflare {
+            delay_ms: 500,
+            thread_limit: true,
+        },
         "substack.com" | "wordpress.com" | "blogspot.com" => ProfileTemplate::None,
         "tumblr.com" => ProfileTemplate::Auth { delay_ms: 1000 },
 
         // ===== 视频平台 =====
         "youtube.com" | "youtu.be" => ProfileTemplate::RateLimit { delay_ms: 500 },
-        "twitch.tv" => ProfileTemplate::Cloudflare { delay_ms: 1000, thread_limit: true },
+        "twitch.tv" => ProfileTemplate::Cloudflare {
+            delay_ms: 1000,
+            thread_limit: true,
+        },
         "vimeo.com" | "dailymotion.com" => ProfileTemplate::None,
 
         // ===== 社区论坛 =====
         "reddit.com" => ProfileTemplate::Auth { delay_ms: 1000 },
         "stackoverflow.com" => ProfileTemplate::None,
-        "disqus.com" => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false },
+        "disqus.com" => ProfileTemplate::Cloudflare {
+            delay_ms: 500,
+            thread_limit: false,
+        },
 
         // ===== 新闻媒体 =====
         "bbc.com" => ProfileTemplate::None,
-        "cnn.com" | "theguardian.com" | "washingtonpost.com" => {
-            ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false }
-        }
+        "cnn.com" | "theguardian.com" | "washingtonpost.com" => ProfileTemplate::Cloudflare {
+            delay_ms: 500,
+            thread_limit: false,
+        },
         "nytimes.com" => ProfileTemplate::Auth { delay_ms: 1000 },
 
         // ===== 社交平台（通配符匹配） =====
@@ -400,15 +443,22 @@ fn get_profile_for_domain(domain: &str) -> Option<WebsiteProfile> {
         s if s.ends_with(".instagram.com") => ProfileTemplate::Auth { delay_ms: 1000 },
         s if s.ends_with(".youtube.com") => ProfileTemplate::RateLimit { delay_ms: 500 },
         s if s.ends_with(".tiktok.com") => ProfileTemplate::JavaScript,
-        s if s.ends_with(".pinterest.com") => {
-            ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false }
-        }
+        s if s.ends_with(".pinterest.com") => ProfileTemplate::Cloudflare {
+            delay_ms: 500,
+            thread_limit: false,
+        },
         s if s.ends_with(".linkedin.com") => ProfileTemplate::Auth { delay_ms: 1000 },
-        s if s.ends_with(".x.com") => ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false },
+        s if s.ends_with(".x.com") => ProfileTemplate::Cloudflare {
+            delay_ms: 500,
+            thread_limit: false,
+        },
 
         // ===== 通配符（默认配置） =====
         s if s.ends_with(".com") || s.ends_with(".org") || s.ends_with(".net") => {
-            ProfileTemplate::Cloudflare { delay_ms: 500, thread_limit: false }
+            ProfileTemplate::Cloudflare {
+                delay_ms: 500,
+                thread_limit: false,
+            }
         }
 
         // 未知域名，返回 None（将使用默认配置）
@@ -455,8 +505,8 @@ impl WebsiteProfileStore {
         }
 
         // 获取默认配置
-        let new_profile = get_profile_for_domain(domain)
-            .unwrap_or_else(|| WebsiteProfile::from_domain(domain));
+        let new_profile =
+            get_profile_for_domain(domain).unwrap_or_else(|| WebsiteProfile::from_domain(domain));
 
         // 使用写锁插入 - 第二次检查（在写锁内）
         let mut profiles = self.profiles.write().unwrap();
@@ -551,9 +601,10 @@ static PROFILE_STORE: OnceLock<RwLock<WebsiteProfileStore>> = OnceLock::new();
 /// 获取全局网站特征存储器
 pub fn get_profile_store() -> &'static RwLock<WebsiteProfileStore> {
     PROFILE_STORE.get_or_init(|| {
-        let config_dir = directories::ProjectDirs::from("com", "x-video-downloader", "x-video-downloader")
-            .map(|dirs| dirs.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
+        let config_dir =
+            directories::ProjectDirs::from("com", "x-video-downloader", "x-video-downloader")
+                .map(|dirs| dirs.config_dir().to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
 
         let store_path = config_dir.join("website_profiles.json");
 
@@ -570,14 +621,23 @@ pub fn get_recommended_config(url: &str) -> (bool, u32, u32, u64) {
     let store = get_profile_store();
 
     // 使用 get_or_create 实现懒加载
-    let profile = store.read().unwrap().get(&domain)
+    let profile = store
+        .read()
+        .unwrap()
+        .get(&domain)
         .or_else(|| get_profile_for_domain(&domain))
         .unwrap_or_else(|| WebsiteProfile::from_domain(&domain));
 
     if profile.confidence() > 0.5 {
         let (min, max, threshold) = profile.recommended_config();
-        info!("使用已知配置 {}: min={}, max={}, threshold={:.1}KB/s, 可信度={:.1}%",
-            domain, min, max, threshold as f64 / 1024.0, profile.confidence() * 100.0);
+        info!(
+            "使用已知配置 {}: min={}, max={}, threshold={:.1}KB/s, 可信度={:.1}%",
+            domain,
+            min,
+            max,
+            threshold as f64 / 1024.0,
+            profile.confidence() * 100.0
+        );
         (profile.adaptive_threads, min, max, threshold)
     } else {
         info!("使用默认配置: {}", domain);
@@ -622,7 +682,7 @@ mod tests {
         assert_eq!(profile.avg_speed_bps, 1024 * 1024);
 
         profile.record_success(2 * 1024 * 1024); // 2MB/s
-        // 移动平均: (1 + 2) / 2 = 1.5MB/s
+                                                 // 移动平均: (1 + 2) / 2 = 1.5MB/s
         assert!(profile.avg_speed_bps > 1024 * 1024);
     }
 
@@ -656,7 +716,10 @@ mod tests {
 
         // 大文件：8 段（饱和）
         assert_eq!(profile.recommended_segments_for_size(500 * 1024 * 1024), 8);
-        assert_eq!(profile.recommended_segments_for_size(2 * 1024 * 1024 * 1024), 8);
+        assert_eq!(
+            profile.recommended_segments_for_size(2 * 1024 * 1024 * 1024),
+            8
+        );
 
         // max_threads=1 的域（video.twimg.com 风格）所有分桶都退化到 1
         let low = WebsiteProfile {

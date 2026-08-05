@@ -53,7 +53,11 @@ pub fn run_gui() {
             eprintln!("[GUI 日志] tail -f {}", log_path.display());
         }
         Err(e) => {
-            eprintln!("[GUI 日志] 无法打开 {}: {} — 回退 stderr-only", log_path.display(), e);
+            eprintln!(
+                "[GUI 日志] 无法打开 {}: {} — 回退 stderr-only",
+                log_path.display(),
+                e
+            );
             FmtSubscriber::builder()
                 .with_max_level(Level::INFO)
                 .with_target(false)
@@ -73,9 +77,10 @@ pub fn run_gui() {
 
     // 初始化 History
     // 初始化全局 History 实例（带缓存）
-    let data_dir = directories::ProjectDirs::from("com", "x-video-downloader", "X Video Downloader")
-        .map(|dirs| dirs.data_dir().to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let data_dir =
+        directories::ProjectDirs::from("com", "x-video-downloader", "X Video Downloader")
+            .map(|dirs| dirs.data_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
     let history = match History::new(&data_dir) {
         Ok(h) => h,
         Err(e) => {

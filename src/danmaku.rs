@@ -51,7 +51,10 @@ pub async fn download_danmaku(client: &reqwest::Client, bvid: &str) -> Result<St
 
     let resp = client
         .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        )
         .header("Referer", "https://www.bilibili.com")
         .send()
         .await
@@ -151,7 +154,9 @@ pub fn danmaku_to_ass(danmaku: &[DanmakuEntry], width: u32, height: u32) -> Stri
     ass.push_str("Style: Special, sans-serif, 28, &H00FFFFFF, &H00FFFFFF, &H00000000, &H00000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 2, 0, 5, 20, 20, 2, 1\n");
 
     ass.push_str("\n[Events]\n");
-    ass.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+    ass.push_str(
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+    );
 
     for entry in danmaku {
         let style = match entry.type_ {
@@ -166,7 +171,11 @@ pub fn danmaku_to_ass(danmaku: &[DanmakuEntry], width: u32, height: u32) -> Stri
         let end = format_timestamp(entry.time + 5.0); // 默认显示 5 秒
 
         // 过滤特殊字符
-        let text = entry.text.replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}");
+        let text = entry
+            .text
+            .replace('\\', "\\\\")
+            .replace('{', "\\{")
+            .replace('}', "\\}");
 
         ass.push_str(&format!(
             "Dialogue: 0,{},{},{},,20,20,2,,{{\\c{}}}{}\n",
@@ -218,7 +227,7 @@ mod tests {
     #[test]
     fn test_danmaku_to_ass() {
         let entries = vec![
-                       DanmakuEntry {
+            DanmakuEntry {
                 time: 1.0,
                 type_: 1,
                 color: 0xFFFFFF,

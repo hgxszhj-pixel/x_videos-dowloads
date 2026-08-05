@@ -3,16 +3,16 @@
 //! 支持 kc.zhixueyun.com 智学云平台的视频和文档下载
 //! sectionType: 6 = 视频 (mp4), 10 = 文档 (pdf)
 
-use crate::platform::{CookiePool, PlatformResolver, ResolverError, url_matcher};
-use crate::types::VideoInfo;
 use crate::history::Platform;
+use crate::platform::{url_matcher, CookiePool, PlatformResolver, ResolverError};
+use crate::types::VideoInfo;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::channel;
+use std::sync::Arc;
 use std::thread;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// 下载进度回调
 pub type ProgressCallback = Arc<dyn Fn(u64, u64, &str) + Send + Sync>;
@@ -145,7 +145,11 @@ impl ZhiXueYunResolver {
     fn extract_course_id(url: &str) -> Option<String> {
         if let Some(fragment) = url.split('#').nth(1) {
             let parts: Vec<&str> = fragment.split('/').collect();
-            if parts.len() >= 5 && parts[1] == "study" && parts[2] == "subject" && parts[3] == "detail" {
+            if parts.len() >= 5
+                && parts[1] == "study"
+                && parts[2] == "subject"
+                && parts[3] == "detail"
+            {
                 return Some(parts[4].to_string());
             }
         }
@@ -161,10 +165,19 @@ static BASE_HEADERS: once_cell::sync::Lazy<HeaderMap> = once_cell::sync::Lazy::n
     let mut headers = HeaderMap::new();
     headers.insert(reqwest::header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36".parse().unwrap());
     headers.insert(reqwest::header::ACCEPT, "*/*".parse().unwrap());
-    headers.insert(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9".parse().unwrap());
+    headers.insert(
+        reqwest::header::ACCEPT_LANGUAGE,
+        "zh-CN,zh;q=0.9".parse().unwrap(),
+    );
     headers.insert(reqwest::header::DNT, "1".parse().unwrap());
-    headers.insert(HeaderName::from_static("x-requested-with"), "XMLHttpRequest".parse().unwrap());
-    headers.insert(HeaderName::from_static("referer"), "https://kc.zhixueyun.com/".parse().unwrap());
+    headers.insert(
+        HeaderName::from_static("x-requested-with"),
+        "XMLHttpRequest".parse().unwrap(),
+    );
+    headers.insert(
+        HeaderName::from_static("referer"),
+        "https://kc.zhixueyun.com/".parse().unwrap(),
+    );
     headers
 });
 
@@ -186,20 +199,30 @@ impl ZhiXueYunResolver {
 
         let mut headers = base_headers;
         if let Some(t) = token {
-            headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer__{}", t.trim_start_matches("Bearer__").trim()).parse().unwrap());
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer__{}", t.trim_start_matches("Bearer__").trim())
+                    .parse()
+                    .unwrap(),
+            );
         }
         Ok(headers)
     }
 
     /// 获取分类下的所有课程ID
-    fn get_courses_by_category(&self, category_id: &str, token: &str) -> anyhow::Result<Vec<CourseInfo>> {
+    fn get_courses_by_category(
+        &self,
+        category_id: &str,
+        token: &str,
+    ) -> anyhow::Result<Vec<CourseInfo>> {
         let url = format!(
             "https://kc.zhixueyun.com/api/v1/course-study/subject/chapter-progress?courseId={}&knowledgePaymentEnable=false",
             category_id
         );
 
         let headers = self.get_auth_headers(Some(token))?;
-        let response = self.get_client()
+        let response = self
+            .get_client()
             .get(&url)
             .headers(headers.clone())
             .send()
@@ -209,7 +232,8 @@ impl ZhiXueYunResolver {
             anyhow::bail!("课程查询 API 返回错误: {}", response.status());
         }
 
-        let body = response.text()
+        let body = response
+            .text()
             .map_err(|e| anyhow::anyhow!("读取课程响应失败: {}", e))?;
 
         let json: serde_json::Value = serde_json::from_str(&body)
@@ -219,13 +243,22 @@ impl ZhiXueYunResolver {
 
         if let Some(chapters) = json.as_array() {
             for chapter in chapters {
-                if let Some(sections) = chapter.get("courseChapterSections").and_then(|s| s.as_array()) {
+                if let Some(sections) = chapter
+                    .get("courseChapterSections")
+                    .and_then(|s| s.as_array())
+                {
                     for section in sections {
                         if section.get("sectionType").and_then(|v| v.as_i64()) == Some(10) {
                             if let Some(id) = section.get("resourceId").and_then(|v| v.as_str()) {
-                                let name = section.get("name").and_then(|v| v.as_str())
-                                    .unwrap_or("未知课程").to_string();
-                                courses.push(CourseInfo { id: id.to_string(), name });
+                                let name = section
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("未知课程")
+                                    .to_string();
+                                courses.push(CourseInfo {
+                                    id: id.to_string(),
+                                    name,
+                                });
                             }
                         }
                     }
@@ -244,7 +277,8 @@ impl ZhiXueYunResolver {
         );
 
         let headers = self.get_auth_headers(Some(token))?;
-        let response = self.get_client()
+        let response = self
+            .get_client()
             .get(&url)
             .headers(headers.clone())
             .send()
@@ -254,7 +288,8 @@ impl ZhiXueYunResolver {
             anyhow::bail!("API 请求失败: {}", response.status());
         }
 
-        let body = response.text()
+        let body = response
+            .text()
             .map_err(|e| anyhow::anyhow!("读取响应失败: {}", e))?;
 
         let json: serde_json::Value = serde_json::from_str(&body)?;
@@ -263,26 +298,36 @@ impl ZhiXueYunResolver {
 
         if let Some(chapters) = json.as_array() {
             for chapter in chapters {
-                let chapter_name = chapter.get("name")
+                let chapter_name = chapter
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("未知章节")
                     .to_string();
 
-                if let Some(sections) = chapter.get("courseChapterSections").and_then(|s| s.as_array()) {
+                if let Some(sections) = chapter
+                    .get("courseChapterSections")
+                    .and_then(|s| s.as_array())
+                {
                     for section in sections {
                         let section_type = section.get("sectionType").and_then(|v| v.as_i64());
                         if section_type == Some(10) || section_type == Some(6) {
-                            let doc_id = section.get("resourceId")
+                            let doc_id = section
+                                .get("resourceId")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
-                                .or_else(|| section.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+                                .or_else(|| {
+                                    section
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                });
 
-                            let doc_name = section.get("name")
+                            let doc_name = section
+                                .get("name")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("未知文档")
                                 .to_string();
 
-                            
                             if let Some(id) = doc_id {
                                 documents.push(DocumentInfo {
                                     id,
@@ -300,7 +345,12 @@ impl ZhiXueYunResolver {
     }
 
     /// 获取文件预览信息（带重试）
-    fn get_file_preview_with_retry(&self, resource_id: &str, token: &str, max_retries: u32) -> anyhow::Result<FilePreview> {
+    fn get_file_preview_with_retry(
+        &self,
+        resource_id: &str,
+        token: &str,
+        max_retries: u32,
+    ) -> anyhow::Result<FilePreview> {
         let mut last_error = None;
 
         for attempt in 0..max_retries {
@@ -319,17 +369,28 @@ impl ZhiXueYunResolver {
                 Ok(response) if response.status().is_success() => {
                     if let Ok(body) = response.text() {
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                            let file_url = json.get("previewUrl")
+                            let file_url = json
+                                .get("previewUrl")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
-                                .or_else(|| json.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()));
+                                .or_else(|| {
+                                    json.get("url")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                });
 
                             if let Some(url_str) = file_url {
-                                let extention = json.get("extention").and_then(|v| v.as_str()).unwrap_or("mp4");
-                                let filename = json.get("filename").and_then(|v| v.as_str())
+                                let extention = json
+                                    .get("extention")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("mp4");
+                                let filename = json
+                                    .get("filename")
+                                    .and_then(|v| v.as_str())
                                     .map(|s| s.to_string())
                                     .unwrap_or_else(|| format!("document.{}", extention));
-                                let file_size = json.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let file_size =
+                                    json.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
 
                                 return Ok(FilePreview {
                                     secure_url: url_str,
@@ -353,27 +414,34 @@ impl ZhiXueYunResolver {
             }
         }
 
-        anyhow::bail!("获取预览失败 (重试 {} 次): {}", max_retries, last_error.unwrap_or_default())
+        anyhow::bail!(
+            "获取预览失败 (重试 {} 次): {}",
+            max_retries,
+            last_error.unwrap_or_default()
+        )
     }
 
     /// 下载文件（带重试）
-    fn download_file_with_retry(&self, url: &str, output_path: &std::path::Path, max_retries: u32) -> anyhow::Result<u64> {
+    fn download_file_with_retry(
+        &self,
+        url: &str,
+        output_path: &std::path::Path,
+        max_retries: u32,
+    ) -> anyhow::Result<u64> {
         let mut last_error = None;
 
         for attempt in 0..max_retries {
             let headers = self.get_auth_headers(None)?;
 
             match self.get_client().get(url).headers(headers.clone()).send() {
-                Ok(response) if response.status().is_success() => {
-                    match response.bytes() {
-                        Ok(bytes) => {
-                            let size = bytes.len() as u64;
-                            std::fs::write(output_path, bytes)?;
-                            return Ok(size);
-                        }
-                        Err(e) => last_error = Some(format!("读取失败: {}", e)),
+                Ok(response) if response.status().is_success() => match response.bytes() {
+                    Ok(bytes) => {
+                        let size = bytes.len() as u64;
+                        std::fs::write(output_path, bytes)?;
+                        return Ok(size);
                     }
-                }
+                    Err(e) => last_error = Some(format!("读取失败: {}", e)),
+                },
                 Ok(response) => {
                     last_error = Some(format!("HTTP {}", response.status()));
                 }
@@ -387,17 +455,28 @@ impl ZhiXueYunResolver {
             }
         }
 
-        anyhow::bail!("下载失败 (重试 {} 次): {}", max_retries, last_error.unwrap_or_default())
+        anyhow::bail!(
+            "下载失败 (重试 {} 次): {}",
+            max_retries,
+            last_error.unwrap_or_default()
+        )
     }
 
     /// 下载单个文件
     #[allow(dead_code)]
-    pub fn download_file(&self, url: &str, token: &str, output_path: &std::path::Path) -> anyhow::Result<u64> {
+    pub fn download_file(
+        &self,
+        url: &str,
+        token: &str,
+        output_path: &std::path::Path,
+    ) -> anyhow::Result<u64> {
         let course_id = Self::extract_course_id(url)
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
 
         let docs = self.get_all_documents(&course_id, token)?;
-        let doc = docs.into_iter().next()
+        let doc = docs
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow::anyhow!("未找到文档"))?;
 
         let preview = self.get_file_preview_with_retry(&doc.id, token, 3)?;
@@ -486,7 +565,8 @@ impl ZhiXueYunResolver {
             Ok(preview) => {
                 // 生成文件名: {课程名称}/{章节名称}/{文档名称}.{扩展名}
                 let ext = preview.filename.rsplit('.').next().unwrap_or("mp4");
-                let file_name = format!("{}/{}/{}.{}",
+                let file_name = format!(
+                    "{}/{}/{}.{}",
                     sanitize_filename(&course.name),
                     sanitize_filename(&doc.chapter_name),
                     sanitize_filename(&doc.name),
@@ -518,7 +598,7 @@ impl ZhiXueYunResolver {
                         success: false,
                         error: Some(e.to_string()),
                         size: 0,
-                    }
+                    },
                 }
             }
             Err(e) => DownloadResult {
@@ -526,21 +606,31 @@ impl ZhiXueYunResolver {
                 success: false,
                 error: Some(e.to_string()),
                 size: 0,
-            }
+            },
         }
     }
 
     /// 下载单个文件（公开接口，返回 DownloadResult）
     #[allow(dead_code)]
-    pub fn download_single(&self, url: &str, token: &str, output_path: &std::path::Path) -> anyhow::Result<DownloadResult> {
+    pub fn download_single(
+        &self,
+        url: &str,
+        token: &str,
+        output_path: &std::path::Path,
+    ) -> anyhow::Result<DownloadResult> {
         let course_id = Self::extract_course_id(url)
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
 
         let docs = self.get_all_documents(&course_id, token)?;
-        let doc = docs.into_iter().next()
+        let doc = docs
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow::anyhow!("未找到文档"))?;
 
-        let course = CourseInfo { id: course_id.clone(), name: "Unknown".to_string() };
+        let course = CourseInfo {
+            id: course_id.clone(),
+            name: "Unknown".to_string(),
+        };
 
         let result = self.download_single_file(
             &course,
@@ -567,7 +657,9 @@ impl ZhiXueYunResolver {
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
 
         let docs = self.get_all_documents(&course_id, token)?;
-        let doc = docs.into_iter().next()
+        let doc = docs
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow::anyhow!("未找到文档"))?;
 
         Ok(VideoInfo {
@@ -586,14 +678,28 @@ impl ZhiXueYunResolver {
 
     /// 下载课程的所有文档
     #[allow(dead_code)]
-    pub fn download_all_documents(&self, url: &str, token: &str, output_dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
+    pub fn download_all_documents(
+        &self,
+        url: &str,
+        token: &str,
+        output_dir: &std::path::Path,
+    ) -> anyhow::Result<Vec<String>> {
         let results = self.download_all_with_progress(url, token, output_dir, None, 4)?;
-        Ok(results.into_iter().filter(|r| r.success).map(|r| r.filename).collect())
+        Ok(results
+            .into_iter()
+            .filter(|r| r.success)
+            .map(|r| r.filename)
+            .collect())
     }
 
     /// 使用分类ID批量下载
     #[allow(dead_code)]
-    pub fn download_all_by_category(&self, url: &str, token: &str, output_dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
+    pub fn download_all_by_category(
+        &self,
+        url: &str,
+        token: &str,
+        output_dir: &std::path::Path,
+    ) -> anyhow::Result<Vec<String>> {
         self.download_all_documents(url, token, output_dir)
     }
 }
@@ -601,7 +707,13 @@ impl ZhiXueYunResolver {
 /// 清理文件名中的非法字符
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -618,7 +730,8 @@ impl PlatformResolver for ZhiXueYunResolver {
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         let token = self.get_token()?;
 
-        self.fetch_video_info(url, &token).map_err(ResolverError::from)
+        self.fetch_video_info(url, &token)
+            .map_err(ResolverError::from)
     }
 
     fn requires_auth(&self) -> bool {
