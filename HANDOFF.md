@@ -1,34 +1,24 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-01（is_logged_in 改 AppleScript+ego-lite,跨浏览器 Keychain 加密密钥问题彻底绕过,225 tests pass）
+**更新**: 2026-08-05（rustfmt 配置 + 90 文件格式化 + HLS per-segment 进度 + 课程池解析离线化 + STUN 注释清理 + 7 文档归档,232 tests pass）
 
 ---
 
-## 📜 最近 commits (2026-08-01)
+## 📜 最近 commits (2026-08-05)
 
 | Commit | 主题 | 改动文件 |
 |---|---|---|
-| `853ae12` | `fix(drission): Keychain service 名是 "ego safe storage" 不是 "ego lite Safe Storage"` | `src/drission_client.rs` (`decrypt_ego_lite_cookies_for_vip` service 名修正) |
-| `609e265` | `fix(drission): macOS 用 SQLite+Keychain 解密 ego-lite cookies,AppleScript execute javascript 在 ego-lite 中不可用` | `Cargo.toml` (`aes-gcm` + `pbkdf2` + `sha1`) + `src/drission_client.rs` (`decrypt_ego_lite_cookies_for_vip` 新增) |
-| `9da4209` | `docs(handoff): 登记 1de74e9 AppleScript+ego-lite 检测 + 经验 #28-31` | HANDOFF.md |
-| `1de74e9` | `fix(drission): macOS 用 AppleScript + ego-lite 检测登录态,避开 Keychain 加密密钥不匹配` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` AppleScript 路径,后被 SQLite 路径取代) |
-| `9c7e763` | `fix(drission): 登录轮询要求 user_id 是非空字符串,加 30s/60s 进度日志` | `src/drission_client.rs` (`open_login_window` polling) |
-| `b784420` | `fix(drission): 改用 Drission headed 模式 + 项目自建 profile 解决跨浏览器 cookie 加密不匹配` | `src/drission_client.rs` (`default_profile_dir` → 项目自建) |
-| `d89a182` | `fix(gui): tracing subscriber 移到 run_gui(),main() 里那 30 行是 dead code` | `src/main.rs` + `src/gui_dioxus/mod.rs` |
-| `4268369` | `fix(main): GUI 日志路径简化到 /tmp,加 stderr 兜底` | `src/main.rs` (后来发现是 dead code,被 d89a182 移走) |
-| `7a8ff43` | `fix(gui): SessionExpired 错误归类为 login 而不是 course,提示文案匹配` | `src/gui_dioxus/actions.rs` (错误前缀 🔑 + Code:2506 匹配) |
-| `b631b02` | `fix(drission): 区分 LoginStatus::SessionExpired vs NotLoggedIn,GUI 给出明确指引` | `src/drission_client.rs` (LoginStatus enum) + `src/gui_dioxus/handlers.rs` |
-| `c1b0927` | `docs(handoff): 精简至 246 行,保留代码修改/绝对路径,丢弃叙述分析` | HANDOFF.md |
-| `89b4e38` | `docs(handoff): 登记 ego-lite profile 路径修复 + 经验 #27` | HANDOFF.md |
-| `d0419e9` | `fix(drission): 修复 ego-lite profile 路径检测` | `src/drission_client.rs` (`Citro Labs/ego lite` 加首位) |
-| `700ba46` | `test(diag): 加 diag_is_logged_in_real_profile 隔离诊断` | `src/drission_client.rs` 新增 `#[ignore]` 测试 |
-| `512b679` | `fix(gui): is_logged_in 诊断增强 + 多 URL 兜底` | `src/drission_client.rs` (`check_login_at` 拆分 + `log_candidate_profiles`) |
-| `494755c` | `fix(gui): 双击分析课程不再误报"需要登录"` | `src/gui_dioxus/handlers.rs` URL 传参 + `src/drission_client.rs` 诊断 tracing |
+| `3029c23` | `test(tulingpython): extract parse_channel_items for offline E2E coverage` | `src/platform/tulingpython.rs` (抽离纯函数 + 3 测试 9→12) + `src/drission_client.rs` (E2E 注释指向离线覆盖) |
+| `241365d` | `docs(collaboration): clarify STUN flow in team handler comments` | `src/collaboration/server/handler.rs` (两处 TODO → 准确机制说明) |
+| `ef4bad3` | `feat(hls): per-segment progress callback with throttling` | `src/hls/downloader.rs` (per-segment 回调 + ≤50 次节流,经验 #26) |
+| `bda810b` | `docs(plans): mark tuling course pool design as implemented + archive README` | `docs/plans/2026-07-27-*.md` 状态更新 + `docs/plans/archive/README.md` 归档原则 |
+| `59e4bea` | `chore(fmt): add rustfmt.toml + apply cargo fmt across workspace` | `rustfmt.toml` (新) + 80+ 个 .rs 纯格式改动 + 7 docs/plans 归档到 archive/ |
+| `95b1fbb` | `fix(downloader): TempDir 改 OS temp + merge atomic rename 杜绝 .tmpXXX/ 孤儿` | `src/downloader/parallel.rs` + `src/downloader/merge.rs` + `src/types.rs` |
+| `853ae12` | `fix(drission): Keychain service 名是 "ego safe storage" 不是 "ego lite Safe Storage"` | `src/drission_client.rs` |
+| `609e265` | `fix(drission): macOS 用 SQLite+Keychain 解密 ego-lite cookies` | `Cargo.toml` + `src/drission_client.rs` |
 | `d6cd948` | `feat(platform): 切换 Scrapling → Drission CDP` | `Cargo.toml` + `src/main.rs` + `src/drission_client.rs` + `src/platform/*` |
-| `832109b` | `feat(download): X 下载速度自适应` | `src/fxtwitter/` + `src/website_profile.rs` + `src/downloader/mod.rs` + `src/commands/download/strategy_*` + `src/gui_dioxus/handlers.rs` |
-| `50f229d` | `feat(test): 真实 TulingPython 响应 fixture + poller M6 + components M9` | 4 fixture JSON + `src/gui_dioxus/poller.rs` + `src/gui_dioxus/components.rs` |
-| `b50d4f1` | `simplify(gui): 7 项 /simplify agent 建议修复` | OR 展平 + 4 死字段 + 1 平行 flag + 4 trivial |
-| `baa3328` | `refactor(gui): 拆分 app.rs (1177 → 651 行)` | 7 个新子组件 + `app.rs` 精简 + `mod.rs` |
+
+> 全部 commit 含 `Intent: <一句话>` (`.git/hooks/commit-msg` 强制)。`SkillOpt/` 是 gitbutler workspace 残留。
 
 > 全部 commit 含 `Intent: <一句话>` (`.git/hooks/commit-msg` 强制)。`SkillOpt/` 是 gitbutler workspace 残留。
 
@@ -153,7 +143,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 - `run_js` 注入 `video.play()` + 点 `[class*=play]`
 - column.items 翻页: `data.total > 20` 时由 `DrissionClient::capture` 自动注入 JS 调 page 2..N
 
-### 测试 (225 passed / 7 ignored)
+### 测试 (232 passed / 8 ignored)
 
 | 测试 | 文件 | 用途 |
 |------|------|------|
@@ -213,6 +203,9 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | 29 | macOS Chromium cookie 加密密钥 = Keychain entry "<ProductName> Safe Storage"(ego-lite 实测是 **"ego safe storage"** 小写)。跨浏览器互解不出对方 cookies → 服务端 Code:2506。**唯一可靠方案**: 直接读 ego-lite SQLite + Keychain 解密出 cookies,再 reqwest 直发 API — 不切 profile、不开新浏览器、不靠 AppleScript(ego-lite 字典无 execute javascript) | `src/drission_client.rs` (`decrypt_ego_lite_cookies_for_vip`) |
 | 30 | `tracing` subscriber 必须在实际跑日志的代码路径上 init。`cli.gui → run_gui()` 早 return 时,main() 里的 init 是 dead code — GUI 日志全丢。**位置**: `src/gui_dioxus/mod.rs::run_gui()` 顶部 | `src/main.rs` + `src/gui_dioxus/mod.rs` |
 | 31 | LoginStatus 判定必须严格:`user_id` 是 **非空字符串** 才算登录。`user_id: null` (Code:2506 响应常见) 用 `is_some()` 误判 true。Code: `uid = ui.get("user_id").and_then(\|v\| v.as_str()).filter(\|s\| !s.is_empty())` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` + `check_login_at`) |
+| 32 | **`TempDir::new_in(user_dir)` 是泄漏的反模式**: `Drop` 不保证跑 (`kill -9` / 信号 / GUI 强制退出),必在用户目录留 `.tmpXXX/` 孤儿。**两条根治路径**: ① `TempDir::new()` 走 OS temp (推荐,简单);② merge 阶段写到 `<output>.tmp` + `std::fs::rename()` atomic rename 到 `<output>` (POSIX `rename(2)` 同 FS 原子)。后者同时保证 merge 中断 → 残留 `*.mp4.tmp` 而不是半截 `<output>` | `/Users/hgxszhj/x_videos-dowloads/src/downloader/parallel.rs` (`TempDir::new()`) + `/Users/hgxszhj/x_videos-dowloads/src/downloader/merge.rs` (`append_tmp_suffix` + atomic rename) + `/Users/hgxszhj/x_videos-dowloads/src/types.rs` (`validate_output_path` 标 dead_code) |
+| 33 | per-segment 回调节流: 1000+ 分段视频会触发回调风暴,按 `max(1, total/50)` 取模节流 (≤50 次) + GUI 端 500ms 轮询二次吃掉 | `src/hls/downloader.rs` |
+| 34 | 网络耦合代码离线测试: 抽离 `parse_channel_items(json) -> Option<(Vec, Vec)>` 纯函数,网络路径用 Option=None 表示"非该路径",消除 `#[ignore]` E2E 留下的解析盲点 | `src/platform/tulingpython.rs` |
 
 ---
 
@@ -220,7 +213,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 
 | 检查 | 结果 |
 |------|------|
-| `cargo test` | ✅ 225 passed, 7 ignored (2026-08-01 AppleScript 登录检测) |
+| `cargo test` | ✅ 232 passed, 8 ignored (2026-08-05 rustfmt + 离线 E2E 覆盖) |
 | `cargo check` | ✅ 0 warnings |
 | `cargo clippy --all-targets` | ✅ 0 warnings |
 
@@ -234,7 +227,7 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 | 小鹅通未登录 → "内容暂无法观看" | GUI 启动 AppleScript 打开 ego-lite (macOS) 或 Drission headed (其他平台),让用户扫码 |
 | 小鹅通登录过期 (Code:2506) | is_logged_in 返回 SessionExpired,GUI 提示"重扫码" |
 | Chrome SingletonLock 残留 | `is_profile_dir_in_use` (`src/drission_client.rs:80`) 拦截 |
-| `cargo fmt --check` 报 ~490 处格式差异 | pre-existing, 无 rustfmt.toml |
+| `~/Movies/.tmpXXX/` 历史 37 个孤儿 (2026-08-04 前) | 用户手动删,保留 `.tmpYtWA2P/`。代码侧已根治 (2026-08-04 commit 95b1fbb),新下载不会再产生 |
 
 ## 调试
 
