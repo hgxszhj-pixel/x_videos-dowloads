@@ -3,9 +3,9 @@
 //! 支持并发下载、分段解密和进度回调
 
 use std::path::PathBuf;
-use std::sync::Arc;
 #[allow(unused_imports)] // AtomicUsize is used in #[cfg(test)] mod tests via `use super::*;`
-use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -15,9 +15,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
-use crate::types::DownloadProgress;
-use super::parser::{M3u8Parser, M3u8Segment};
 use super::crypto::{fetch_key, parse_iv};
+use super::parser::{M3u8Parser, M3u8Segment};
+use crate::types::{DownloadProgress, DownloadStatus};
 
 /// HLS 下载器配置
 #[allow(dead_code)] // proxy field exposed in public API for future use
@@ -54,7 +54,7 @@ impl Default for HlsDownloaderConfig {
             retry_max_delay_ms: 20000, // 最大 20s
             proxy: None,
             referer: None,
-            max_failed_segments: 5,    // 默认 5 次失败后停止
+            max_failed_segments: 5, // 默认 5 次失败后停止
         }
     }
 }
@@ -70,7 +70,10 @@ impl HlsDownloader {
     /// 使用配置创建下载器（自动创建带代理的 Client）
     pub async fn with_config(config: HlsDownloaderConfig) -> Result<Self> {
         let client = Self::create_client(&config.proxy)?;
-        Ok(Self { client, config: Arc::new(config) })
+        Ok(Self {
+            client,
+            config: Arc::new(config),
+        })
     }
 
     pub fn new(client: Client) -> Self {
@@ -131,13 +134,16 @@ impl HlsDownloader {
             builder = builder.proxy(reqwest::Proxy::all(&proxy_with_scheme)?);
         }
 
-        builder.build().map_err(|e| anyhow!("Failed to build HTTP client: {}", e))
+        builder
+            .build()
+            .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))
     }
 
     /// 下载 m3u8 播放列表并合并成分段文件
-    // TODO: progress_callback is currently unused (no per-segment progress reporting).
-    // Keep param for API compatibility; future work should wire it up.
-    #[allow(unused_variables)]
+    ///
+    /// `progress_callback` 在每个分段下载完成后被回调一次（per-segment 粒度）。
+    /// 由于 m3u8 总字节数通常未知（无 Content-Length），按"已下载分段 / 总分段"估算 percent，
+    /// 并以累计字节数计算瞬时速度。
     pub async fn download(
         &self,
         url: &str,
@@ -146,12 +152,16 @@ impl HlsDownloader {
     ) -> Result<u64> {
         // 1. 获取并解析 m3u8
         info!("获取 m3u8: {}", url);
-        let playlist = M3u8Parser::fetch_and_parse(&self.client, url).await
+        let playlist = M3u8Parser::fetch_and_parse(&self.client, url)
+            .await
             .context("failed to fetch m3u8")?;
 
         let total_segments = playlist.segments.len();
         let total_duration = playlist.total_duration;
-        info!("解析完成: {} 分段, 总时长 {:.1}s", total_segments, total_duration);
+        info!(
+            "解析完成: {} 分段, 总时长 {:.1}s",
+            total_segments, total_duration
+        );
 
         // 2. 创建临时目录存储分段
         let temp_dir = output_path.with_extension("tmp");
@@ -171,31 +181,81 @@ impl HlsDownloader {
         let failed_count_clone = failed_count.clone();
         let config = self.config.clone();
 
+        // Per-segment 进度跟踪：累计下载字节 + 起始时间（用于算 speed）
+        let progress_bytes = Arc::new(AtomicU64::new(0));
+        let start_time = std::time::Instant::now();
+        // 节流：已上报分段数（避免每段都回调；目标 ≤ 50 次总回调）
+        let last_reported = Arc::new(AtomicU64::new(0));
+        let report_every = std::cmp::max(1, total_segments / 50);
+
         // 使用 Semaphore 限制最大并发（修复：之前 max_concurrent 未实际生效）
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
 
-        let tasks: Vec<_> = segments.into_iter().enumerate().map(|(i, seg)| {
-            let client = client.clone();
-            let output = segment_paths[i].clone();
-            let cancel = cancel_flag.clone();
-            let failed_count = failed_count_clone.clone();
-            let config = config.clone();
-            let semaphore = semaphore.clone();
+        let tasks: Vec<_> = segments
+            .into_iter()
+            .enumerate()
+            .map(|(i, seg)| {
+                let client = client.clone();
+                let output = segment_paths[i].clone();
+                let cancel = cancel_flag.clone();
+                let failed_count = failed_count_clone.clone();
+                let config = config.clone();
+                let semaphore = semaphore.clone();
+                let progress_bytes = progress_bytes.clone();
+                let last_reported = last_reported.clone();
+                let progress_cb = progress_callback.clone();
 
-            tokio::spawn(async move {
-                // 获取 semaphore permit，超过 max_concurrent 时阻塞等待
-                let _permit = semaphore.acquire().await
-                    .context("semaphore closed unexpectedly")?;
-                Self::download_segment_with_retry(
-                    &client,
-                    &seg,
-                    &output,
-                    cancel,
-                    &failed_count,
-                    &config,
-                ).await
+                tokio::spawn(async move {
+                    // 获取 semaphore permit，超过 max_concurrent 时阻塞等待
+                    let _permit = semaphore
+                        .acquire()
+                        .await
+                        .context("semaphore closed unexpectedly")?;
+                    let result = Self::download_segment_with_retry(
+                        &client,
+                        &seg,
+                        &output,
+                        cancel,
+                        &failed_count,
+                        &config,
+                    )
+                    .await;
+
+                    // Per-segment 进度回调（仅 Ok 时上报；节流至 ≤ 50 次）
+                    if let Ok(size) = &result {
+                        let bytes = progress_bytes.fetch_add(*size, Ordering::Relaxed) + size;
+                        let prev = last_reported.load(Ordering::Relaxed);
+                        let should_report = prev + 1 >= total_segments as u64
+                            || (i as u64 + 1).is_multiple_of(report_every as u64);
+                        if should_report
+                            && last_reported.swap(i as u64 + 1, Ordering::Relaxed) == prev
+                        {
+                            if let Some(ref cb) = progress_cb {
+                                let elapsed = start_time.elapsed().as_secs_f64();
+                                let speed = if elapsed > 0.0 {
+                                    bytes as f64 / elapsed
+                                } else {
+                                    0.0
+                                };
+                                let mut p = DownloadProgress::new("hls".to_string())
+                                    .with_status(DownloadStatus::Downloading);
+                                p.bytes_downloaded = bytes;
+                                p.speed = speed;
+                                // 按"已下载分段序号 / 总分段"估算（i+1 是当前完成的最高序号近似）
+                                p.percent = if total_segments > 0 {
+                                    (i as f64 + 1.0) / total_segments as f64
+                                } else {
+                                    0.0
+                                };
+                                cb(p);
+                            }
+                        }
+                    }
+
+                    result
+                })
             })
-        }).collect();
+            .collect();
 
         // 等待所有分段下载完成
         let mut failed_segments = Vec::new();
@@ -217,8 +277,10 @@ impl HlsDownloader {
             // 检查是否超过最大失败数
             let current_failed = failed_segments.len() as u32;
             if current_failed >= self.config.max_failed_segments {
-                warn!("失败分段数 ({}) 超过限制 ({})，停止下载",
-                      current_failed, self.config.max_failed_segments);
+                warn!(
+                    "失败分段数 ({}) 超过限制 ({})，停止下载",
+                    current_failed, self.config.max_failed_segments
+                );
                 // 设置取消标志
                 cancel_flag.store(true, Ordering::Relaxed);
                 break;
@@ -231,7 +293,11 @@ impl HlsDownloader {
         } else if self.config.skip_unavailable {
             warn!("跳过 {} 个不可用分段，继续合并", failed_segments.len());
         } else {
-            return Err(anyhow!("下载失败: {} 个分段错误 ({:?})", failed_segments.len(), &failed_segments[..failed_segments.len().min(5)]));
+            return Err(anyhow!(
+                "下载失败: {} 个分段错误 ({:?})",
+                failed_segments.len(),
+                &failed_segments[..failed_segments.len().min(5)]
+            ));
         }
 
         // 4. 合并分段
@@ -283,7 +349,9 @@ impl HlsDownloader {
             match tokio::time::timeout(
                 timeout,
                 Self::download_single_segment(client, segment, output, &config.referer),
-            ).await {
+            )
+            .await
+            {
                 Ok(Ok(size)) => return Ok(size),
                 Ok(Err(e)) => {
                     let err_msg = e.to_string();
@@ -295,7 +363,11 @@ impl HlsDownloader {
                         attempt + 1,
                         config.retry_count,
                         e,
-                        if is_retryable { "可重试" } else { "不可重试" }
+                        if is_retryable {
+                            "可重试"
+                        } else {
+                            "不可重试"
+                        }
                     );
 
                     // 不可重试错误直接失败
@@ -305,21 +377,33 @@ impl HlsDownloader {
                     }
                 }
                 Err(_) => {
-                    warn!("分段 {} 下载超时 (attempt {}/{})",
-                          segment.sequence, attempt + 1, config.retry_count);
+                    warn!(
+                        "分段 {} 下载超时 (attempt {}/{})",
+                        segment.sequence,
+                        attempt + 1,
+                        config.retry_count
+                    );
                 }
             }
 
             // 指数退避: delay = min(base * 2^attempt, max_delay)
             if attempt < config.retry_count - 1 {
                 let delay_ms = (base_delay * 2u64.pow(attempt)).min(max_delay);
-                info!("分段 {} 等待 {:.1}s 后重试...", segment.sequence, delay_ms as f64 / 1000.0);
+                info!(
+                    "分段 {} 等待 {:.1}s 后重试...",
+                    segment.sequence,
+                    delay_ms as f64 / 1000.0
+                );
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
         }
 
         failed_count.fetch_add(1, Ordering::Relaxed);
-        Err(anyhow!("分段 {} 下载失败 (已重试 {} 次)", segment.sequence, config.retry_count))
+        Err(anyhow!(
+            "分段 {} 下载失败 (已重试 {} 次)",
+            segment.sequence,
+            config.retry_count
+        ))
     }
 
     /// 判断错误是否可重试
@@ -354,7 +438,10 @@ impl HlsDownloader {
 
         // 使用自定义 Referer 或构造（同源防盗链）
         let referer = custom_referer.clone().unwrap_or_else(|| {
-            segment.url.split('?').next()
+            segment
+                .url
+                .split('?')
+                .next()
                 .map(|path| {
                     if let Some(idx) = path.rfind('/') {
                         let base = &path[..idx];
@@ -363,7 +450,11 @@ impl HlsDownloader {
                         } else if let Some(scheme_end) = segment.url.find("://") {
                             let scheme = &segment.url[..scheme_end + 3];
                             if let Some(host_end) = segment.url[scheme_end + 3..].find('/') {
-                                format!("{}{}", scheme, &segment.url[scheme_end + 3..scheme_end + 3 + host_end])
+                                format!(
+                                    "{}{}",
+                                    scheme,
+                                    &segment.url[scheme_end + 3..scheme_end + 3 + host_end]
+                                )
                             } else {
                                 segment.url.clone()
                             }
@@ -378,7 +469,8 @@ impl HlsDownloader {
         });
 
         // 下载分段（带 Referer 防防盗链）
-        let response = client.get(&segment.url)
+        let response = client
+            .get(&segment.url)
             .header("Referer", &referer)
             .send()
             .await?;
@@ -421,10 +513,9 @@ impl HlsDownloader {
 
     /// 解密分段 (AES-128-CBC + PKCS7 padding)
     fn decrypt_segment(data: &[u8], key: &[u8; 16], iv: &[u8; 16]) -> Result<Vec<u8>> {
-        use aes::Aes128;
         use aes::cipher::{BlockDecryptMut, KeyInit};
+        use aes::Aes128;
         use generic_array::GenericArray;
-        
 
         if !data.len().is_multiple_of(16) {
             return Err(anyhow!("ciphertext must be 16-byte aligned"));
@@ -458,7 +549,9 @@ impl HlsDownloader {
         let padding = result.last().copied().unwrap_or(0) as usize;
         if padding > 0 && padding <= 16 && result.len() >= padding {
             // 验证 padding 是否正确
-            let is_valid = result[result.len() - padding..].iter().all(|&b| b == padding as u8);
+            let is_valid = result[result.len() - padding..]
+                .iter()
+                .all(|&b| b == padding as u8);
             if is_valid {
                 result.truncate(result.len() - padding);
             }
@@ -495,18 +588,20 @@ mod tests {
         let active = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
 
-        let tasks: Vec<_> = (0..TOTAL_TASKS).map(|_| {
-            let semaphore = semaphore.clone();
-            let active = active.clone();
-            let peak = peak.clone();
-            tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.unwrap();
-                let cur = active.fetch_add(1, Ordering::SeqCst) + 1;
-                peak.fetch_max(cur, Ordering::SeqCst);
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                active.fetch_sub(1, Ordering::SeqCst);
+        let tasks: Vec<_> = (0..TOTAL_TASKS)
+            .map(|_| {
+                let semaphore = semaphore.clone();
+                let active = active.clone();
+                let peak = peak.clone();
+                tokio::spawn(async move {
+                    let _permit = semaphore.acquire().await.unwrap();
+                    let cur = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(cur, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
             })
-        }).collect();
+            .collect();
 
         for t in tasks {
             t.await.unwrap();
@@ -532,7 +627,10 @@ mod tests {
     async fn test_semaphore_zero_permits_blocks() {
         let semaphore = Arc::new(Semaphore::new(0));
         let acquired = semaphore.try_acquire();
-        assert!(acquired.is_err(), "try_acquire on zero-permit semaphore should fail");
+        assert!(
+            acquired.is_err(),
+            "try_acquire on zero-permit semaphore should fail"
+        );
     }
 
     /// 端到端集成测试：用 mock HTTP server 验证 max_concurrent 真实限制并发
