@@ -326,7 +326,7 @@ impl HlsDownloader {
         Ok(total_written)
     }
 
-    /// 下载单个分段（带指数退避重试）
+    /// 下载单个分段（带指数退避重试 + Retry-After 头解析）
     #[allow(clippy::too_many_arguments)]
     async fn download_segment_with_retry(
         client: &Client,
@@ -346,6 +346,9 @@ impl HlsDownloader {
                 return Err(anyhow!("下载已取消"));
             }
 
+            // 本轮响应的 Retry-After 秒数（仅 Ok(Err) 时设置;超时归零）
+            let mut last_retry_after_secs: Option<u64> = None;
+
             match tokio::time::timeout(
                 timeout,
                 Self::download_single_segment(client, segment, output, &config.referer),
@@ -357,6 +360,8 @@ impl HlsDownloader {
                     let err_msg = e.to_string();
                     // 区分可重试和不可重试错误
                     let is_retryable = Self::is_retryable_error(&err_msg);
+                    // 优先采用服务端 Retry-After 头指示的等待时间（429/503 常见）
+                    last_retry_after_secs = Self::extract_retry_after_from_err(&err_msg);
                     warn!(
                         "分段 {} 下载错误 (attempt {}/{}): {} [{}]",
                         segment.sequence,
@@ -383,16 +388,26 @@ impl HlsDownloader {
                         attempt + 1,
                         config.retry_count
                     );
+                    // last_retry_after_secs 保持 None → 走指数退避
                 }
             }
 
-            // 指数退避: delay = min(base * 2^attempt, max_delay)
+            // 退避策略:Retry-After > 指数退避(都受 max_delay 约束)
             if attempt < config.retry_count - 1 {
-                let delay_ms = (base_delay * 2u64.pow(attempt)).min(max_delay);
+                let delay_ms = match last_retry_after_secs {
+                    Some(secs) => secs.saturating_mul(1000).min(max_delay),
+                    None => (base_delay * 2u64.pow(attempt)).min(max_delay),
+                };
+                let reason = if last_retry_after_secs.is_some() {
+                    "retry-after"
+                } else {
+                    "exp-backoff"
+                };
                 info!(
-                    "分段 {} 等待 {:.1}s 后重试...",
+                    "分段 {} 等待 {:.1}s 后重试 ({})...",
                     segment.sequence,
-                    delay_ms as f64 / 1000.0
+                    delay_ms as f64 / 1000.0,
+                    reason
                 );
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
@@ -425,6 +440,26 @@ impl HlsDownloader {
 
         // 可重试错误
         true
+    }
+
+    /// 解析 HTTP `Retry-After` 头的秒数（仅支持纯数字格式，date 格式需 chrono 不引入）。
+    /// 返回 `None` 表示无值/格式不识别。
+    fn parse_retry_after_secs(value: &str) -> Option<u64> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        trimmed.parse::<u64>().ok()
+    }
+
+    /// 从 `download_single_segment` 生成的错误消息中提取 Retry-After 秒数。
+    /// 消息格式：`"HTTP 429 (retry-after: 5s)"`。其他格式返回 `None`。
+    fn extract_retry_after_from_err(err_msg: &str) -> Option<u64> {
+        let start = err_msg.find("retry-after:")? + "retry-after:".len();
+        let rest = &err_msg[start..];
+        let end = rest.find('s').unwrap_or(rest.len());
+        let num_str = rest[..end].trim().trim_end_matches(')');
+        num_str.parse::<u64>().ok()
     }
 
     /// 下载单个分段
@@ -475,7 +510,18 @@ impl HlsDownloader {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(anyhow!("HTTP {}", response.status()));
+            let status = response.status();
+            // 429/503 通常携带 Retry-After 头（秒数或 HTTP date）。
+            // 仅支持秒数格式（date 格式需 chrono，避免引入重依赖）。
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(Self::parse_retry_after_secs);
+            return match retry_after {
+                Some(secs) => Err(anyhow!("HTTP {} (retry-after: {}s)", status, secs)),
+                None => Err(anyhow!("HTTP {}", status)),
+            };
         }
 
         let bytes = response.bytes().await?;
@@ -748,6 +794,67 @@ mod tests {
             observed_peak >= 2,
             "peak {} too low — semaphore too restrictive",
             observed_peak
+        );
+    }
+
+    /// Retry-After 头解析：纯数字格式
+    #[test]
+    fn parse_retry_after_secs_parses_positive_integer() {
+        assert_eq!(HlsDownloader::parse_retry_after_secs("120"), Some(120));
+        assert_eq!(HlsDownloader::parse_retry_after_secs("0"), Some(0));
+        assert_eq!(HlsDownloader::parse_retry_after_secs("1"), Some(1));
+    }
+
+    #[test]
+    fn parse_retry_after_secs_handles_whitespace() {
+        assert_eq!(HlsDownloader::parse_retry_after_secs("  120  "), Some(120));
+        assert_eq!(HlsDownloader::parse_retry_after_secs("\t5\n"), Some(5));
+    }
+
+    #[test]
+    fn parse_retry_after_secs_rejects_empty_and_invalid() {
+        assert_eq!(HlsDownloader::parse_retry_after_secs(""), None);
+        assert_eq!(HlsDownloader::parse_retry_after_secs("   "), None);
+        // 负数、浮点、date 格式 → 不支持,返回 None
+        assert_eq!(HlsDownloader::parse_retry_after_secs("-5"), None);
+        assert_eq!(HlsDownloader::parse_retry_after_secs("1.5"), None);
+        assert_eq!(
+            HlsDownloader::parse_retry_after_secs("Wed, 21 Oct 2015 07:28:00 GMT"),
+            None
+        );
+        assert_eq!(HlsDownloader::parse_retry_after_secs("abc"), None);
+    }
+
+    /// 从 download_single_segment 错误消息提取 Retry-After
+    #[test]
+    fn extract_retry_after_from_err_parses_standard_format() {
+        assert_eq!(
+            HlsDownloader::extract_retry_after_from_err(
+                "HTTP 429 Too Many Requests (retry-after: 5s)"
+            ),
+            Some(5)
+        );
+        assert_eq!(
+            HlsDownloader::extract_retry_after_from_err("HTTP 503 (retry-after: 120s)"),
+            Some(120)
+        );
+        assert_eq!(
+            HlsDownloader::extract_retry_after_from_err("HTTP 429 (retry-after:0s)"),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn extract_retry_after_from_err_returns_none_for_plain_error() {
+        // 无 retry-after 标记
+        assert_eq!(
+            HlsDownloader::extract_retry_after_from_err("HTTP 500 Internal Server Error"),
+            None
+        );
+        // 格式损坏
+        assert_eq!(
+            HlsDownloader::extract_retry_after_from_err("HTTP 429 (retry-after: not_a_number)"),
+            None
         );
     }
 }
