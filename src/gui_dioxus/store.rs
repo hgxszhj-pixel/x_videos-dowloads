@@ -113,6 +113,20 @@ pub(super) fn reload_config() {
     }
 }
 
+/// 持久化主题到配置文件。
+/// P1-2:4 个 ThemeSwatch onclick 共享此 helper,避免重复 AppConfig::load/save 样板。
+/// 注:store.write() 需要 dioxus component 上下文,无法在普通函数内调用;
+/// 调用方必须先写 store 再调用此函数持久化。
+pub(super) fn persist_theme(theme_name: &str) {
+    if let Ok(mut cfg) = AppConfig::load() {
+        cfg.theme = theme_name.to_string();
+        if let Err(e) = cfg.save() {
+            warn!("持久化主题失败: {}", e);
+        }
+    }
+    info!("Theme applied: {}", theme_name);
+}
+
 /// AppleScript 字符串转义:先转反斜杠(否则后面替换 \\\" 时反斜杠会被重复 escape),
 /// 再转双引号;换行/制表等控制字符替换为空格,防注入到 AppleScript 字符串外。
 fn escape_applescript_string(s: &str) -> String {

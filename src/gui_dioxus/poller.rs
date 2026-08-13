@@ -22,6 +22,10 @@ pub(super) enum PollMsg {
         progress_arc: Arc<AtomicU32>,
         speed_arc: Arc<AtomicU64>,
         total_bytes_arc: Arc<AtomicU64>,
+        /// P0-2:独立 Signal,poller 直接 set 而不写 store,缩小重渲染范围
+        progress_signal: Signal<f32>,
+        speed_signal: Signal<String>,
+        size_signal: Signal<String>,
     },
     /// 批量下载轮询：每个视频进度 + 速度
     Batch {
@@ -31,6 +35,9 @@ pub(super) enum PollMsg {
 }
 
 /// 安装轮询 coroutine（在 AppComponent 顶层调用）
+///
+/// 注意:progress/speed/size Signal 不作为参数捕获,而是经 PollMsg::Single 由调用方传入
+/// (因为下载启动时调用方拥有 Signal 句柄)。函数本身只持有 Store<AppState> 即可。
 pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollMsg> {
     use_coroutine(move |mut rx: UnboundedReceiver<PollMsg>| async move {
         while let Some(msg) = rx.next().await {
@@ -39,8 +46,12 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                     progress_arc,
                     speed_arc,
                     total_bytes_arc,
+                    mut progress_signal,
+                    mut speed_signal,
+                    mut size_signal,
                 } => {
                     let mut last_progress = 0.0_f32;
+                    let mut last_speed: u64 = 0;
                     let mut last_size: u64 = 0;
                     loop {
                         tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
@@ -48,15 +59,20 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                             break;
                         }
                         let percent = progress_arc.load(Ordering::Relaxed) as f32 / 10000.0;
+                        // P0-2: 写 Signal 而非 store → 进度条区域独立重渲染
+                        // P1-3: speed/size 加阈值节流 (≥ 100 KiB/s 变化才更新)
                         if (percent - last_progress).abs() >= PROGRESS_THRESHOLD || percent >= 1.0 {
-                            state.write().download_progress = percent;
+                            progress_signal.set(percent);
                             last_progress = percent;
                         }
                         let speed = speed_arc.load(Ordering::Relaxed);
-                        state.write().download_speed = format_speed(speed);
+                        if speed.abs_diff(last_speed) >= 100 * 1024 {
+                            speed_signal.set(format_speed(speed));
+                            last_speed = speed;
+                        }
                         let total = total_bytes_arc.load(Ordering::Relaxed);
                         if total != last_size && total > 0 {
-                            state.write().download_file_size = format_file_size(total);
+                            size_signal.set(format_file_size(total));
                             last_size = total;
                         }
                         if percent >= 1.0 {

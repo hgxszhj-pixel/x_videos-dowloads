@@ -23,7 +23,9 @@ use super::components::{
 };
 use super::handlers::{batch_download_impl, open_tuling_login, start_download_impl};
 use super::poller::{use_progress_poller, PollMsg};
-use super::store::{add_completed_download, get_history_items, reload_config, send_notification};
+use super::store::{
+    add_completed_download, get_history_items, persist_theme, reload_config, send_notification,
+};
 use super::theme::AppTheme;
 use super::theme::{BG_SUBTLE, TEXT_MUTED};
 use super::types::{
@@ -36,16 +38,21 @@ pub(super) fn AppComponent() -> Element {
     let mut state = use_store(AppState::default);
     let video_info = use_signal(VideoInfoDisplay::default);
 
-    // AppTheme reactive signal（顶层 use_signal，避免 use_context_provider 内 hook-in-hook 违反 Rules of Hooks）
-    let mut theme_signal = use_signal(|| state.read().theme.clone());
-    // 把 Signal 句柄提供到 context（Signal<T> 是 Copy，闭包直接 return handle）
+    // 进度信号(P0-2):独立 Signal 而非 store 字段,单字段写只触发依赖该 Signal 的
+    // 进度条区域重渲染,不再因 progress/speed/size 变更而刷新整个 251 行 rsx。
+    let mut progress_signal = use_signal(|| 0.0_f32);
+    let mut speed_signal: Signal<String> = use_signal(String::new);
+    let mut size_signal: Signal<String> = use_signal(String::new);
+
+    // 主题 Signal — components.rs 中 ThemeSwatch / ErrorPanel / 另一组件
+    // 通过 use_context::<Signal<AppTheme>>() 读当前主题,避免订阅整个 AppState Store。
+    // 这里必须提供(Signal<AppTheme> 是 Copy,不会 move 原 binding)。
+    let mut theme_signal: Signal<AppTheme> = use_signal(|| state.read().theme.clone());
     use_context_provider(|| theme_signal);
-    // sync state.theme 变化 → theme_signal（响应主题切换）
-    use_effect(move || {
-        theme_signal.set(state.read().theme.clone());
-    });
 
     // 进度轮询 coroutine — 替代手写 spawn(async move { loop { ... } }) 轮询循环
+    // P0-2: progress_signal/speed_signal/size_signal 经 PollMsg::Single 由下载按钮传,
+    // use_progress_poller 不再需要这 3 个参数
     let poller = use_progress_poller(state);
 
     // config watcher shutdown flag — use_drop 必须在 render 期注册(Dioxus 0.7 hook placement),
@@ -58,10 +65,6 @@ pub(super) fn AppComponent() -> Element {
         }
     });
 
-    // 课程池轮询 mount-once guard:use_effect 读 state 会随 state 变化重跑,
-    // 每次都 spawn 新 task 导致指数增长。用此 flag 锁定只启动一次,循环退出时清空。
-    let mut course_poller_active: Signal<bool> = use_signal(|| false);
-
     // fetch action — 替代手写 submit_urls 闭包（latest-wins 自动 cancel）
     let mut fetch_action = use_fetch_action();
     sync_fetch_action_to_state(state, video_info, fetch_action);
@@ -70,66 +73,9 @@ pub(super) fn AppComponent() -> Element {
     let mut course_action = use_fetch_course_action();
     sync_course_action_to_state(state, fetch_action, course_action);
 
-    // 课程池进度轮询：把每项 CourseItemSlot 原子值同步到 Store。
-    // 轮询节奏：使用 Dioxus 内置 use_future 周期不易控制；这里用 use_effect + sleep。
-    use_effect(move || {
-        // mount-once guard:已经在跑就不重复 spawn
-        if course_poller_active.cloned() {
-            return;
-        }
-        let s = state.read();
-        let has_slot = s
-            .course_collection_state
-            .items
-            .iter()
-            .any(|i| i.slot.is_some());
-        drop(s);
-        if !has_slot {
-            return;
-        }
-        course_poller_active.set(true);
-        let mut poller_flag_for_loop = course_poller_active;
-        let mut state_for_poll = state;
-        spawn(async move {
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                let s = state_for_poll.read();
-                let any_active = s.course_collection_state.items.iter().any(|i| {
-                    i.slot
-                        .as_ref()
-                        .map(|sl| {
-                            let st = sl.status.load(Ordering::Relaxed);
-                            st == 1 || st == 2
-                        })
-                        .unwrap_or(false)
-                });
-                drop(s);
-                if !any_active {
-                    break;
-                }
-                let mut s = state_for_poll.write();
-                for it in s.course_collection_state.items.iter_mut() {
-                    if let Some(sl) = it.slot.as_ref() {
-                        it.progress = sl.progress.load(Ordering::Relaxed) as f32 / 10000.0;
-                        let st = sl.status.load(Ordering::Relaxed);
-                        let new_status = match st {
-                            1 => "resolving",
-                            2 => "downloading",
-                            3 => "completed",
-                            4 => "failed",
-                            5 => "skipped",
-                            _ => "pending",
-                        };
-                        if it.status != new_status {
-                            it.status = new_status.to_string();
-                        }
-                    }
-                }
-            }
-            // 循环退出后清 flag,允许下次课程池重新触发时再启动
-            poller_flag_for_loop.set(false);
-        });
-    });
+    // 课程池进度轮询由 app_course_pool.rs:142 的 polling task 负责(2026-08-09 修复,
+    // 带聚合 + 终态退出 + mount-once guard)。这里故意不重复 spawn,避免双 polling
+    // 各跑一遍相同 slot 原子读 + store 写,造成 33 项 × 2 = 66 次冗余 op/500ms。
 
     // 拖放 URL bridge — 解锁 HANDOFF §明日继续 #5（macOS WKWebView 监听外部 drop）
     use_effect(move || {
@@ -266,41 +212,32 @@ pub(super) fn AppComponent() -> Element {
                             theme: AppTheme::Purple,
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Purple;
-                                // 持久化
-                                if let Ok(mut cfg) = AppConfig::load() {
-                                    cfg.theme = "Purple".to_string();
-                                    let _ = cfg.save();
-                                }
+                                theme_signal.set(AppTheme::Purple);
+                                persist_theme("Purple");
                             },
                         }
                         ThemeSwatch {
                             theme: AppTheme::Ocean,
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Ocean;
-                                if let Ok(mut cfg) = AppConfig::load() {
-                                    cfg.theme = "Ocean".to_string();
-                                    let _ = cfg.save();
-                                }
+                                theme_signal.set(AppTheme::Ocean);
+                                persist_theme("Ocean");
                             },
                         }
                         ThemeSwatch {
                             theme: AppTheme::Sunset,
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Sunset;
-                                if let Ok(mut cfg) = AppConfig::load() {
-                                    cfg.theme = "Sunset".to_string();
-                                    let _ = cfg.save();
-                                }
+                                theme_signal.set(AppTheme::Sunset);
+                                persist_theme("Sunset");
                             },
                         }
                         ThemeSwatch {
                             theme: AppTheme::Forest,
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Forest;
-                                if let Ok(mut cfg) = AppConfig::load() {
-                                    cfg.theme = "Forest".to_string();
-                                    let _ = cfg.save();
-                                }
+                                theme_signal.set(AppTheme::Forest);
+                                persist_theme("Forest");
                             },
                         }
                     }
@@ -426,11 +363,14 @@ pub(super) fn AppComponent() -> Element {
                     }
                     button {
                         onclick: move |_| {
-                            state.write().url = String::new();
-                            state.write().error_display = None;
-                            state.write().status_message = "Enter video URL".to_string();
-                            state.write().has_video_info = false;
-                            state.write().course_collection_state = CourseCollectionState::default();
+                            // 单事务写:5 个字段一次性提交,避免多次 state.write() micro-tx
+                            // 让 ErrorPanel / Status 等 reactive 订阅者漏掉某次更新
+                            let mut s = state.write();
+                            s.url = String::new();
+                            s.error_display = None;
+                            s.status_message = "Enter video URL".to_string();
+                            s.has_video_info = false;
+                            s.course_collection_state = CourseCollectionState::default();
                         },
                         style: "padding: 0 20px; background: #f5f5f5; border: none; border-radius: 10px; font-size: 14px; color: #666; transition: all 0.3s ease;",
                         "🗑️ 清空"
@@ -458,7 +398,7 @@ pub(super) fn AppComponent() -> Element {
 
             // 课程池下载面板 - 拆到 app_course_pool.rs (Step 6)
             if state.read().course_collection_state.visible {
-                CoursePoolPanel { state }
+                CoursePoolPanel { state, progress_signal }
             }
 
             // 操作按钮
@@ -473,7 +413,10 @@ pub(super) fn AppComponent() -> Element {
                             }
                             state.write().is_downloading = true;
                             state.write().status_message = "Downloading...".to_string();
-                            state.write().download_progress = 0.0;
+                            // P0-2: 清空进度 Signal 而非 store 字段(保持兼容)
+                            progress_signal.set(0.0);
+                            speed_signal.set(String::new());
+                            size_signal.set(String::new());
 
                             // 创建进度追踪原子变量
                             let progress_arc = Arc::new(AtomicU32::new(0));
@@ -492,6 +435,8 @@ pub(super) fn AppComponent() -> Element {
 
                             // 使用 spawn 在后台异步执行下载
                             let mut state = state;
+                            // P0-2:克隆进度 Signal 句柄供 spawn 内 + poller 使用
+                            let mut progress_signal_for_task = progress_signal;
                             spawn(async move {
                                 match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), Some(total_bytes_arc_clone), Some(cancel_flag_clone), format_id, crate::types::DownloadStrategy::Native).await {
                                     Ok(_) => {
@@ -502,7 +447,7 @@ pub(super) fn AppComponent() -> Element {
                                         // 等待 1.5 秒让 ffmpeg 完成 stream copy 合并
                                         tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
                                         state.write().status_message = "Download completed".to_string();
-                                        state.write().download_progress = 1.0;
+                                        progress_signal_for_task.set(1.0);
                                         // 添加到历史记录
                                         add_completed_download(title.clone(), url.clone(), None);
                                         send_notification("Download Complete", &format!("{} has been downloaded successfully", title));
@@ -522,6 +467,9 @@ pub(super) fn AppComponent() -> Element {
                                 progress_arc: progress_arc.clone(),
                                 speed_arc: speed_arc.clone(),
                                 total_bytes_arc: total_bytes_arc.clone(),
+                                progress_signal,
+                                speed_signal,
+                                size_signal,
                             });
                         },
                         style: "{state.read().theme.btn_success(\"14px\", \"10px\", \"15px\")} flex: 1;",
@@ -590,7 +538,8 @@ pub(super) fn AppComponent() -> Element {
                     }
                 }
 
-            // 进度显示
+            // 进度显示 — P0-2: 进度条读 Signal 而非 store 字段,
+            // 重渲染范围从整个 AppComponent 缩到仅本区域
             if state.read().is_downloading && !state.read().batch_state.visible {
                 WhiteCard {
                     shadow: CardShadow::Elevated,
@@ -598,23 +547,23 @@ pub(super) fn AppComponent() -> Element {
                         style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;",
                         div {
                             style: "font-size: 15px; font-weight: 600; color: {state.read().theme.color_success()};",
-                            "📥 下载中... {(state.read().download_progress * 100.0).round() as i32}%"
+                            "📥 下载中... {(progress_signal.cloned() * 100.0).round() as i32}%"
                         }
                         div {
                             style: "font-size: 12px; color: {TEXT_MUTED};",
-                            "{state.read().download_speed}"
+                            "{speed_signal.cloned()}"
                         }
                     }
                     div {
                         style: "height: 12px; background: #e8e8e8; border-radius: 6px; overflow: hidden;",
                         div {
-                            style: "height: 100%; width: {state.read().download_progress * 100.0}%; background: {state.read().theme.progress_gradient_success()}; border-radius: 6px; transition: width 0.3s ease;",
+                            style: "height: 100%; width: {progress_signal.cloned() * 100.0}%; background: {state.read().theme.progress_gradient_success()}; border-radius: 6px; transition: width 0.3s ease;",
                         }
                     }
-                    if !state.read().download_file_size.is_empty() {
+                    if !size_signal.cloned().is_empty() {
                         div {
                             style: "font-size: 12px; color: {TEXT_MUTED}; margin-top: 8px;",
-                            "📦 大小: {state.read().download_file_size}"
+                            "📦 大小: {size_signal.cloned()}"
                         }
                     }
                     // 取消按钮（仅在 cancel_flag 存在时显示）

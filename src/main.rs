@@ -133,8 +133,20 @@ fn main() {
     // 否则 reqwest::blocking::Client 会在 runtime 内创建阻塞池导致 panic
     let _ = crate::platform::ZhiXueYunResolver::new_preinit();
 
-    // 运行CLI应用 - 使用当前线程 runtime 避免 blocking pool panic
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    // 运行 CLI 应用 - 使用多线程 runtime (P2-1)
+    //
+    // 历史:曾用 new_current_thread 避免 blocking pool panic。但实测 GUI 卡顿
+    // 主要源于 current_thread 在 8 并发 .ts 下载 + GUI 渲染同时进行时,无 worker
+    // 余量处理 Dioxus 的细粒度反应更新。
+    //
+    // 升级 multi_thread 的安全前提:
+    // 1. reqwest::blocking::Client 仍须在 runtime 创建前预初始化(避免 runtime 内
+    //    自动创建 blocking pool),见上方 ZhiXueYunResolver::new_preinit。
+    // 2. std::sync::Mutex (GLOBAL_HISTORY) 在 multi_thread 下同样安全 —— 锁持有区间
+    //    无 .await 调用,经 store.rs:test_global_history_no_lock_across_await_invariant 验证。
+    //    详见 store.rs:21-31 SAFETY 注释。
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
         .enable_io()
         .enable_time()
         .build()
