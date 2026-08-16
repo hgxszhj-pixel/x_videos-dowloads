@@ -34,11 +34,42 @@ fn slot_status_to_str(v: u8) -> &'static str {
 }
 
 /// UI 展示用的状态文案 (rsx! {} 不允许 if-else,提一个函数绕开)
+/// 统一覆盖所有 6 个 status,避免半行带图标/半行裸字符串的视觉割裂
 fn status_display(s: &str) -> String {
-    if s == "exists" {
-        "✓ 已下载".to_string()
-    } else {
-        s.to_string()
+    match s {
+        "exists" => "✓ 已下载".to_string(),
+        "completed" => "✅ 已完成".to_string(),
+        "failed" => "❌ 失败".to_string(),
+        "skipped" => "⏭️ 已跳过".to_string(),
+        "downloading" => "⬇️ 下载中".to_string(),
+        "resolving" => "🔍 解析中".to_string(),
+        // pending 或未来新增 status 原样输出,不 panic
+        _ => s.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 所有 6 个 status 必须命中已知分支(防止新增 status 时漏改 UI 显示)
+    #[test]
+    fn test_status_display_covers_all_known_statuses() {
+        assert_eq!(status_display("exists"), "✓ 已下载");
+        assert_eq!(status_display("completed"), "✅ 已完成");
+        assert_eq!(status_display("failed"), "❌ 失败");
+        assert_eq!(status_display("skipped"), "⏭️ 已跳过");
+        assert_eq!(status_display("downloading"), "⬇️ 下载中");
+        assert_eq!(status_display("resolving"), "🔍 解析中");
+    }
+
+    /// pending 或未知 status 走 fallback (原样输出),不 panic
+    /// —— 与 ErrorDisplay::label 的 fallback 策略一致
+    #[test]
+    fn test_status_display_falls_back_for_unknown() {
+        assert_eq!(status_display("pending"), "pending");
+        assert_eq!(status_display("future_thing"), "future_thing");
+        assert_eq!(status_display(""), "");
     }
 }
 
