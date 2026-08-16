@@ -332,10 +332,83 @@ pub(super) async fn open_tuling_login(target_url: &str) -> anyhow::Result<()> {
 ///
 /// 返回每项最终状态 (id, status) 供调用方写回 UI。
 /// 单条课节下载进度槽（跨 task 共享，GUI 端 use_effect 轮询拉取）
+/// 课节状态枚举 — 替代之前 `set_status` 与 `slot_status_to_str` 的两处并行 `&str/u8 → variant` switch。
+/// 编译器强制每个 `match` 覆盖全部 7 个 variant,新增/删除 variant 时两处同步更新,
+/// 避免 drift 引入"写入 6 但 UI 永远显示 pending"之类的隐性 bug。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CourseItemStatus {
+    Pending,
+    Resolving,
+    Downloading,
+    Completed,
+    Failed,
+    Skipped,
+    /// 输出目录已有同名 .mp4 文件(>0 字节),跳过本次下载
+    Exists,
+}
+
+impl CourseItemStatus {
+    /// 字符串名(与历史 wire format 一致:小写英文,UI 层 `status_display()` 单独映射 emoji)
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Resolving => "resolving",
+            Self::Downloading => "downloading",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+            Self::Exists => "exists",
+        }
+    }
+
+    /// 原子存储用的 u8 discriminant — 与历史 `AtomicU8` wire format 兼容
+    pub fn as_u8(self) -> u8 {
+        match self {
+            Self::Pending => 0,
+            Self::Resolving => 1,
+            Self::Downloading => 2,
+            Self::Completed => 3,
+            Self::Failed => 4,
+            Self::Skipped => 5,
+            Self::Exists => 6,
+        }
+    }
+
+    /// 从原子值反向解析 — 未知值返回 `None` (UI fallback 到默认 pending)
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Pending),
+            1 => Some(Self::Resolving),
+            2 => Some(Self::Downloading),
+            3 => Some(Self::Completed),
+            4 => Some(Self::Failed),
+            5 => Some(Self::Skipped),
+            6 => Some(Self::Exists),
+            _ => None,
+        }
+    }
+}
+
+impl std::str::FromStr for CourseItemStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "resolving" => Ok(Self::Resolving),
+            "downloading" => Ok(Self::Downloading),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "skipped" => Ok(Self::Skipped),
+            "exists" => Ok(Self::Exists),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct CourseItemSlot {
     pub progress: AtomicU32, // 0-10000 表示 0.00%-100.00%
-    pub status: AtomicU8,    // 0=pending 1=resolving 2=downloading 3=completed 4=failed 5=skipped 6=exists (输出目录已有同名文件,跳过下载)
+    pub status: AtomicU8,    // 用 CourseItemStatus::as_u8() / from_u8() 双向转换,避免裸 u8 漂移
     /// 实时下载速度（字节/秒，由 DownloadProgress 回调写入）
     pub speed: AtomicU64,
     /// 总字节数（首次回调确定后写入,>0 表示已知）
@@ -343,17 +416,70 @@ pub struct CourseItemSlot {
 }
 
 impl CourseItemSlot {
-    pub fn set_status(&self, s: &str) {
-        let v = match s {
-            "resolving" => 1,
-            "downloading" => 2,
-            "completed" => 3,
-            "failed" => 4,
-            "skipped" => 5,
-            "exists" => 6,
-            _ => 0,
-        };
-        self.status.store(v, Ordering::Relaxed);
+    pub fn set_status(&self, st: CourseItemStatus) {
+        self.status.store(st.as_u8(), Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod status_enum_tests {
+    use super::*;
+
+    /// 7 个 variant 全部覆盖 — 防止新增 status 时漏改 `as_str` / `as_u8` / `FromStr`
+    #[test]
+    fn test_status_enum_round_trip_string() {
+        for &st in &[
+            CourseItemStatus::Pending,
+            CourseItemStatus::Resolving,
+            CourseItemStatus::Downloading,
+            CourseItemStatus::Completed,
+            CourseItemStatus::Failed,
+            CourseItemStatus::Skipped,
+            CourseItemStatus::Exists,
+        ] {
+            let s = st.as_str();
+            let parsed: CourseItemStatus = s.parse().expect("known status must parse");
+            assert_eq!(parsed, st, "round-trip mismatch for {s}");
+        }
+    }
+
+    #[test]
+    fn test_status_enum_round_trip_u8() {
+        for &st in &[
+            CourseItemStatus::Pending,
+            CourseItemStatus::Resolving,
+            CourseItemStatus::Downloading,
+            CourseItemStatus::Completed,
+            CourseItemStatus::Failed,
+            CourseItemStatus::Skipped,
+            CourseItemStatus::Exists,
+        ] {
+            let v = st.as_u8();
+            let parsed = CourseItemStatus::from_u8(v).expect("known u8 must parse");
+            assert_eq!(parsed, st, "u8 round-trip mismatch for {v}");
+        }
+    }
+
+    /// wire format 与历史 AtomicU8 兼容(0-6 连续,7+ 返回 None 视为 corrupted state)
+    #[test]
+    fn test_status_enum_u8_values_match_legacy_doc() {
+        assert_eq!(CourseItemStatus::Pending.as_u8(), 0);
+        assert_eq!(CourseItemStatus::Resolving.as_u8(), 1);
+        assert_eq!(CourseItemStatus::Downloading.as_u8(), 2);
+        assert_eq!(CourseItemStatus::Completed.as_u8(), 3);
+        assert_eq!(CourseItemStatus::Failed.as_u8(), 4);
+        assert_eq!(CourseItemStatus::Skipped.as_u8(), 5);
+        assert_eq!(CourseItemStatus::Exists.as_u8(), 6);
+    }
+
+    #[test]
+    fn test_status_enum_unknown_inputs_fall_back() {
+        // 未知 u8 → None (UI 端 fallback pending,不会 panic)
+        assert_eq!(CourseItemStatus::from_u8(7), None);
+        assert_eq!(CourseItemStatus::from_u8(255), None);
+        // 未知字符串 → parse 失败
+        assert!("future".parse::<CourseItemStatus>().is_err());
+        assert!("".parse::<CourseItemStatus>().is_err());
     }
 }
 
@@ -391,7 +517,7 @@ async fn resolve_items_serially(
         if !item.selected {
             results.push((item.id.clone(), "skipped".into()));
             if let Some(s) = slot {
-                s.set_status("skipped");
+                s.set_status(CourseItemStatus::Skipped);
             }
             continue;
         }
@@ -402,13 +528,13 @@ async fn resolve_items_serially(
             if let Some(s) = slot.as_ref() {
                 s.total_bytes.store(file_size, Ordering::Relaxed);
                 s.progress.store(10000, Ordering::Relaxed);
-                s.set_status("exists");
+                s.set_status(CourseItemStatus::Exists);
             }
             results.push((item.id.clone(), "exists".into()));
             continue;
         }
         if let Some(s) = slot.as_ref() {
-            s.set_status("resolving");
+            s.set_status(CourseItemStatus::Resolving);
         }
         // 登录态已在 fetch_course_collection_impl 入口预检；每条课节复用同一 session。
         // 单条课节页若 m3u8 未拦截到（CatCatch 提示），由 translate_resolve_error 归类为“需要登录”。
@@ -423,7 +549,7 @@ async fn resolve_items_serially(
                 let msg = format!("failed: TulingPythonResolver 初始化失败 ({e})");
                 results.push((item.id.clone(), msg));
                 if let Some(s) = slot.as_ref() {
-                    s.set_status("failed");
+                    s.set_status(CourseItemStatus::Failed);
                 }
                 continue;
             }
@@ -432,14 +558,14 @@ async fn resolve_items_serially(
             Ok(info) => {
                 resolved[i] = Some(info.url);
                 if let Some(s) = slot.as_ref() {
-                    s.set_status("downloading");
+                    s.set_status(CourseItemStatus::Downloading);
                 }
             }
             Err(e) => {
                 let norm = translate_resolve_error(&e);
                 results.push((item.id.clone(), norm));
                 if let Some(s) = slot.as_ref() {
-                    s.set_status("failed");
+                    s.set_status(CourseItemStatus::Failed);
                 }
             }
         }
@@ -506,13 +632,13 @@ async fn download_resolved_concurrently(
                 Ok(()) => {
                     if let Some(s) = slot_for_done.as_ref() {
                         s.progress.store(10000, Ordering::Relaxed);
-                        s.set_status("completed");
+                        s.set_status(CourseItemStatus::Completed);
                     }
                     (id, "completed".into())
                 }
                 Err(msg) => {
                     if let Some(s) = slot_for_done.as_ref() {
-                        s.set_status("failed");
+                        s.set_status(CourseItemStatus::Failed);
                     }
                     (id, format!("failed: {msg}"))
                 }

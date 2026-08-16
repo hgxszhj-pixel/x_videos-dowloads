@@ -13,24 +13,20 @@ use std::sync::atomic::Ordering;
 use dioxus::prelude::*;
 
 use super::components::{CardShadow, CloseButton, WhiteCard};
-use super::handlers::{course_download_pool_impl, CourseItemSlot};
+use super::handlers::{course_download_pool_impl, CourseItemSlot, CourseItemStatus};
 use super::theme::{BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY};
 use super::types::{
     format_size_fraction, format_speed, AppState, AppStateStoreExt,
     CourseCollectionStateStoreExt, CourseItemDisplayStoreExt,
 };
 
-/// 把 atomic slot status (u8) 翻译回 CourseItemDisplay.status 字符串
+/// 把 atomic slot status (u8) 翻译回 CourseItemDisplay.status 字符串。
+/// 委托给 CourseItemStatus::from_u8 + .as_str(),与 set_status 共享同一枚举 ——
+/// 编译器强制 write/read 双向对齐,新增变体会同时漏在两处。
 fn slot_status_to_str(v: u8) -> &'static str {
-    match v {
-        1 => "resolving",
-        2 => "downloading",
-        3 => "completed",
-        4 => "failed",
-        5 => "skipped",
-        6 => "exists",
-        _ => "pending",
-    }
+    CourseItemStatus::from_u8(v)
+        .map(|s| s.as_str())
+        .unwrap_or("pending")
 }
 
 /// UI 展示用的状态文案 (rsx! {} 不允许 if-else,提一个函数绕开)
