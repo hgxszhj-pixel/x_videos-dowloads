@@ -178,16 +178,18 @@ pub(super) fn CoursePoolPanel(
                                     style: "height: 100%; width: {items_store.index(idx).progress()() * 100.0}%; background: {state.read().theme.gradient()}; transition: width 0.3s ease;",
                                 }
                             }
-                            // 详细信息行:速度 + 大小分数
+                            // 详细信息行:速度 + 大小分数(仅 total_bytes 已知时显示,避免 6.42 MiB/s + 0 B 误导)
                             div {
                                 style: "display: flex; gap: 10px; padding-left: 42px; font-size: 10px; color: {TEXT_MUTED}; white-space: nowrap;",
                                 span {
                                     style: "min-width: 60px;",
                                     "{items_store.index(idx).speed()}"
                                 }
-                                span {
-                                    style: "min-width: 130px;",
-                                    "{format_size_fraction(items_store.index(idx).downloaded_bytes()(), items_store.index(idx).total_bytes()())}"
+                                if items_store.index(idx).total_bytes()() > 0 {
+                                    span {
+                                        style: "min-width: 130px;",
+                                        "{format_size_fraction(items_store.index(idx).downloaded_bytes()(), items_store.index(idx).total_bytes()())}"
+                                    }
                                 }
                             }
                         }
