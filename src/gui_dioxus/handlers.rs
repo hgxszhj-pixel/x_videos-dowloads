@@ -389,6 +389,14 @@ impl CourseItemStatus {
             _ => None,
         }
     }
+
+    /// 是否为终态(完成 / 失败 / 跳过 / 已存在)。用于 polling task 退出守卫。
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Skipped | Self::Exists
+        )
+    }
 }
 
 impl std::str::FromStr for CourseItemStatus {
@@ -482,6 +490,20 @@ mod status_enum_tests {
         // 未知字符串 → parse 失败
         assert!("future".parse::<CourseItemStatus>().is_err());
         assert!("".parse::<CourseItemStatus>().is_err());
+    }
+
+    /// is_terminal 必须覆盖 Completed/Failed/Skipped/Exists(active=false 的终态),
+    /// 排除 Pending/Resolving/Downloading(active 还在跑)。新增 active variant 时
+    /// 若忘了加,会让 polling task 提前 break → UI 永远停在中间状态。
+    #[test]
+    fn test_is_terminal_covers_terminal_variants() {
+        assert!(CourseItemStatus::Completed.is_terminal());
+        assert!(CourseItemStatus::Failed.is_terminal());
+        assert!(CourseItemStatus::Skipped.is_terminal());
+        assert!(CourseItemStatus::Exists.is_terminal());
+        assert!(!CourseItemStatus::Pending.is_terminal());
+        assert!(!CourseItemStatus::Resolving.is_terminal());
+        assert!(!CourseItemStatus::Downloading.is_terminal());
     }
 }
 

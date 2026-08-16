@@ -30,6 +30,43 @@ fn slot_status_to_str(v: u8) -> &'static str {
         .unwrap_or("pending")
 }
 
+/// 聚合课程池底部进度(0.0..1.0)。**只统计本会话真在跑的项**:
+/// - `Pending` / `Resolving`:不计入(未开始 / 还在解析,没下载进度可计)
+/// - `Skipped` / `Exists`:不计入(用户取消 / 旧文件,非本次下载工作)
+/// - `Downloading`:用当前 percent
+/// - `Completed`:1.0
+/// - `Failed`:用最后 percent(任务失败时保留已下载字节占比)
+///
+/// 修复前:snapshot 5 exists + 1 resolving + 3 pending → 全计入 → 5×100/9 ≈ 0.556
+/// 底部进度条误显示 56% 但 item 6 还在解析,完全没有"开始下载"。
+/// 修复后:同样 snapshot → 0 active → None → 进度条保持 0%。
+fn aggregate_course_progress(snapshot: &[(u32, u8, u64, u64)]) -> Option<f32> {
+    let mut sum = 0.0_f32;
+    let mut active = 0usize;
+    for (progress_raw, status_u8, _, _) in snapshot {
+        let st = CourseItemStatus::from_u8(*status_u8)?;
+        // 排除非 active 状态(未启动 / 已退出本会话)
+        if !matches!(
+            st,
+            CourseItemStatus::Downloading
+                | CourseItemStatus::Completed
+                | CourseItemStatus::Failed
+        ) {
+            continue;
+        }
+        active += 1;
+        let percent = *progress_raw as f32 / 100.0; // 0..100 范围
+        sum += match st {
+            CourseItemStatus::Completed => 100.0,
+            _ => percent, // Downloading/Failed 用最后 progress
+        };
+    }
+    if active == 0 {
+        return None;
+    }
+    Some(sum / active as f32 / 100.0)
+}
+
 /// UI 展示用的状态文案 (rsx! {} 不允许 if-else,提一个函数绕开)
 /// 统一覆盖所有 6 个 status,避免半行带图标/半行裸字符串的视觉割裂
 fn status_display(s: &str) -> String {
@@ -67,6 +104,82 @@ mod tests {
         assert_eq!(status_display("pending"), "pending");
         assert_eq!(status_display("future_thing"), "future_thing");
         assert_eq!(status_display(""), "");
+    }
+
+    /// 课程池底部进度聚合:`(progress_raw, status_u8, _, _)` 四元组列表
+    /// status_u8 用 CourseItemStatus::as_u8() 写出,避免 magic 数字
+    fn snap(progress_pct: u32, st: CourseItemStatus) -> (u32, u8, u64, u64) {
+        (progress_pct, st.as_u8(), 0, 0)
+    }
+
+    /// 用户截图复现:5 exists + 1 resolving + 3 pending → 不应有任何 active 项
+    /// 修复前:agg 把 9 项全算 → 5×100/9 ≈ 0.556(底部"56% 已下载"误导)
+    /// 修复后:仅 active(Downloading/Completed/Failed)算 → None → 进度保持 0%
+    #[test]
+    fn test_aggregate_excludes_pending_resolving_exists_skipped() {
+        let snapshot = vec![
+            snap(10000, CourseItemStatus::Exists),
+            snap(10000, CourseItemStatus::Exists),
+            snap(10000, CourseItemStatus::Exists),
+            snap(10000, CourseItemStatus::Exists),
+            snap(10000, CourseItemStatus::Exists),
+            snap(0, CourseItemStatus::Resolving),
+            snap(0, CourseItemStatus::Pending),
+            snap(0, CourseItemStatus::Pending),
+            snap(0, CourseItemStatus::Pending),
+        ];
+        assert_eq!(
+            aggregate_course_progress(&snapshot),
+            None,
+            "9 项无任何 active → None(进度保持 0%,不显示 56% 误导)"
+        );
+    }
+
+    /// 单一 active 项:100% Completed → 1.0
+    #[test]
+    fn test_aggregate_completed_is_full() {
+        let snapshot = vec![snap(10000, CourseItemStatus::Completed)];
+        assert_eq!(
+            aggregate_course_progress(&snapshot),
+            Some(1.0),
+            "1 项 Completed → 100% (active 分母 = 1,sum = 100)"
+        );
+    }
+
+    /// 混合:1 Downloading 50% + 1 Completed 100% → 平均 75%
+    #[test]
+    fn test_aggregate_mixes_downloading_and_completed() {
+        let snapshot = vec![
+            snap(5000, CourseItemStatus::Downloading),
+            snap(10000, CourseItemStatus::Completed),
+        ];
+        assert_eq!(
+            aggregate_course_progress(&snapshot),
+            Some(0.75),
+            "active=2, sum=50+100=150, overall=150/2/100=0.75"
+        );
+    }
+
+    /// Failed 用最后 percent(任务失败时保留已下载字节占比,不归零)
+    #[test]
+    fn test_aggregate_failed_uses_last_progress() {
+        let snapshot = vec![snap(3000, CourseItemStatus::Failed)];
+        assert_eq!(
+            aggregate_course_progress(&snapshot),
+            Some(0.30),
+            "Failed 30% → active 计入,sum=30,overall=0.30"
+        );
+    }
+
+    /// 未知 u8 status (例如旧 wire format 残留值) → from_u8 返回 None → helper 返回 None
+    #[test]
+    fn test_aggregate_unknown_status_returns_none() {
+        let snapshot = vec![(5000_u32, 99_u8, 0_u64, 0_u64)];
+        assert_eq!(
+            aggregate_course_progress(&snapshot),
+            None,
+            "未知 u8 → from_u8 None → 整条 helper None → 进度不变(不 panic)"
+        );
     }
 }
 
@@ -261,8 +374,6 @@ pub(super) fn CoursePoolPanel(
                                 // 2) 写回 store (只在变化时写,避免无谓 render)
                                 {
                                     let mut s = state_for_polling.write();
-                                    let mut agg_percent = 0.0_f32;
-                                    let mut agg_count = 0usize;
                                     for (i, (progress_raw, status_u8, speed_raw, total_bytes_raw)) in
                                         snapshot.iter().enumerate()
                                     {
@@ -293,26 +404,28 @@ pub(super) fn CoursePoolPanel(
                                                         as u64;
                                                 item.downloaded_bytes = downloaded;
                                             }
-                                            // 累计聚合:每项的 percent 直接累加平均
-                                            agg_percent += percent;
-                                            agg_count += 1;
+                                            // 单项 percent 已写回 item.progress(上面);
+                                            // 聚合进度走专门的 helper,排除 Pending/Resolving/Skipped/Exists,
+                                            // 避免底部进度条在"还在解析"或"全是历史文件"时显示虚假百分比
                                         }
                                     }
                                     // P0-2: 推到顶层 Signal 而非 store.download_progress
                                     // 缩小重渲染范围到进度条区域
-                                    if agg_count > 0 {
-                                        let overall = agg_percent / agg_count as f32 / 100.0;
+                                    if let Some(overall) = aggregate_course_progress(&snapshot) {
                                         let current = progress_signal_for_polling.cloned();
                                         if (current - overall).abs() > 0.005 {
                                             progress_signal_for_polling.set(overall);
                                         }
                                     }
                                 }
-                                // 3) 所有项到达终态(completed/failed/skipped/exists)→ 退出轮询
+                                // 3) 所有项到达终态(Completed/Failed/Skipped/Exists)→ 退出轮询
                                 let all_done = snapshot
                                     .iter()
                                     .zip(slots_for_polling.iter())
-                                    .all(|((_, st, _, _), _)| (3..=6).contains(st));
+                                    .all(|((_, st, _, _), _)| {
+                                        CourseItemStatus::from_u8(*st)
+                                            .is_some_and(CourseItemStatus::is_terminal)
+                                    });
                                 if all_done {
                                     break;
                                 }
