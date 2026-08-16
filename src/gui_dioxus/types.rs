@@ -330,4 +330,56 @@ mod tests {
             );
         }
     }
+
+    /// format_eta 边界覆盖 (60s/3600s 进位规则)
+    /// 锁定"为什么这样格式化":poller.rs:74 ETA 计算后直接 display,改格式必须同步改测试
+    #[test]
+    fn test_format_eta_subminute() {
+        assert_eq!(format_eta(0), "0s");
+        assert_eq!(format_eta(5), "5s");
+        assert_eq!(format_eta(59), "59s");
+    }
+
+    #[test]
+    fn test_format_eta_minutes() {
+        assert_eq!(format_eta(60), "1m 0s"); // 60s 进位边界
+        assert_eq!(format_eta(125), "2m 5s");
+        assert_eq!(format_eta(3599), "59m 59s"); // 1h 进位前边界
+    }
+
+    #[test]
+    fn test_format_eta_hours() {
+        assert_eq!(format_eta(3600), "1h 0m"); // 1h 进位边界
+        assert_eq!(format_eta(7325), "2h 2m"); // 7325s = 2*3600 + 2*60 + 5 → 显示 "2h 2m" (秒数省略)
+    }
+
+    /// format_size_fraction 三分支:total=0 fallback、normal fraction、downloaded>=total fallback
+    /// 锁定"为什么"大小列在 unknown 时显示"0 B"还是"—"——本函数当前选 "0 B",UI 单独 hide 该列
+    #[test]
+    fn test_format_size_fraction_total_zero() {
+        // 未知 total 时只显示 downloaded,UI 端单独 hide 该列(避免"0 B"误导)
+        assert_eq!(format_size_fraction(0, 0), "0 B");
+        assert_eq!(
+            format_size_fraction(5 * 1024 * 1024, 0),
+            "5.00 MB"
+        );
+    }
+
+    #[test]
+    fn test_format_size_fraction_normal() {
+        assert_eq!(
+            format_size_fraction(5 * 1024 * 1024, 10 * 1024 * 1024),
+            "5.00 MB / 10.00 MB"
+        );
+    }
+
+    #[test]
+    fn test_format_size_fraction_downloaded_exceeds_total() {
+        // 边界:已下载 >= 总(可能 server 报 length 偏小,或 progress 计算误差)
+        // → fallback 到只显示 downloaded,避免"5 MB / 3 MB"反向视觉
+        assert_eq!(
+            format_size_fraction(5 * 1024 * 1024, 3 * 1024 * 1024),
+            "5.00 MB"
+        );
+    }
 }

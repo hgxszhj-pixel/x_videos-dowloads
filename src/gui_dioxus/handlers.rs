@@ -398,17 +398,14 @@ async fn resolve_items_serially(
         // P-1 (2026-08-16): 跳过已下载课节 — 检查输出目录是否存在同名 mp4 (>0 字节)
         // 大小 > 0 视为"有内容",0 字节的占位文件视为不存在,触发正常下载
         // 填充 slot.total_bytes/progress 让 UI 直接显示 "✓ 已下载" + 100% + 文件大小
-        let output_path = build_output_path(&output_dir, &item.title);
-        if let Ok(meta) = tokio::fs::metadata(&output_path).await {
-            if meta.len() > 0 {
-                if let Some(s) = slot.as_ref() {
-                    s.total_bytes.store(meta.len(), Ordering::Relaxed);
-                    s.progress.store(10000, Ordering::Relaxed);
-                    s.set_status("exists");
-                }
-                results.push((item.id.clone(), "exists".into()));
-                continue;
+        if let Some(file_size) = file_is_already_downloaded(&output_dir, &item.title).await {
+            if let Some(s) = slot.as_ref() {
+                s.total_bytes.store(file_size, Ordering::Relaxed);
+                s.progress.store(10000, Ordering::Relaxed);
+                s.set_status("exists");
             }
+            results.push((item.id.clone(), "exists".into()));
+            continue;
         }
         if let Some(s) = slot.as_ref() {
             s.set_status("resolving");
@@ -568,4 +565,72 @@ async fn download_one(
 fn build_output_path(dir: &std::path::Path, title: &str) -> PathBuf {
     let safe = sanitize_filename(title);
     dir.join(format!("{safe}.mp4"))
+}
+
+/// 检查 `output_dir/{title}.mp4` 是否已存在并有内容 (>0 字节)。
+/// - 返回 `Some(size)` 表示文件已就绪,调用方应跳过下载
+/// - 返回 `None` 表示文件不存在 / 是 0 字节占位符 / metadata 读取失败
+///
+/// 抽离成独立函数 (而非 inline 在 `resolve_items_serially`) 是为了单测可覆盖三个分支:
+/// 不存在 / 0 字节 / 有内容。inline 写 + 串行 resolve 流程则只能端到端覆盖 (需要 mock Drission)。
+pub(super) async fn file_is_already_downloaded(
+    output_dir: &std::path::Path,
+    title: &str,
+) -> Option<u64> {
+    let output_path = build_output_path(output_dir, title);
+    tokio::fs::metadata(&output_path)
+        .await
+        .ok()
+        .and_then(|m| if m.len() > 0 { Some(m.len()) } else { None })
+}
+
+#[cfg(test)]
+mod skip_existing_tests {
+    use super::*;
+    use std::io::Write;
+
+    /// 三分支:不存在 → None,0 字节 → None,有内容 → Some(size)
+    /// —— 任何分支回归都会让用户重复下载已存在的课节
+    #[tokio::test]
+    async fn test_file_is_already_downloaded_returns_none_when_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let size = file_is_already_downloaded(dir.path(), "lesson_01").await;
+        assert_eq!(size, None, "missing file should not be skipped");
+    }
+
+    #[tokio::test]
+    async fn test_file_is_already_downloaded_returns_none_for_zero_bytes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("lesson_02.mp4");
+        std::fs::File::create(&path).expect("create 0-byte file");
+        let size = file_is_already_downloaded(dir.path(), "lesson_02").await;
+        assert_eq!(size, None, "0-byte placeholder should not be skipped");
+    }
+
+    #[tokio::test]
+    async fn test_file_is_already_downloaded_returns_size_when_present() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("lesson_03.mp4");
+        let payload = vec![0u8; 1024];
+        std::fs::File::create(&path)
+            .expect("create")
+            .write_all(&payload)
+            .expect("write");
+        let size = file_is_already_downloaded(dir.path(), "lesson_03").await;
+        assert_eq!(size, Some(1024), "1 KiB file should be skipped with exact size");
+    }
+
+    /// 标题中的特殊字符经过 `sanitize_filename` 后路径可能变化 —
+    /// 跳过检查必须用与 `download_one` 完全相同的 `build_output_path` 公式。
+    /// 该测试保证两边共用 helper (已经验证),无独立断言
+    #[tokio::test]
+    async fn test_file_is_already_downloaded_uses_sanitized_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // 标题含空格 + 特殊字符,sanitize_filename 会替换为空格变下划线
+        let sanitized_title = sanitize_filename("lesson / special?");
+        let path = dir.path().join(format!("{sanitized_title}.mp4"));
+        std::fs::write(&path, vec![1u8; 16]).expect("write");
+        let size = file_is_already_downloaded(dir.path(), "lesson / special?").await;
+        assert_eq!(size, Some(16), "sanitized title must map to the same path as download_one");
+    }
 }
