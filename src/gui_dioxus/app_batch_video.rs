@@ -13,11 +13,21 @@ use dioxus::prelude::*;
 use super::components::{CardShadow, WhiteCard};
 use super::handlers::batch_download_impl;
 use super::theme::{TEXT_MUTED, TEXT_PRIMARY};
-use super::types::{AppState, BatchItemState, BatchState};
+use super::types::{
+    AppState, AppStateStoreExt, BatchItemState, BatchState, BatchVideoStateStoreExt,
+    VideoInfoDisplayStoreExt,
+};
 
 /// 批量视频列表面板 (含下载/取消按钮)
 #[component]
 pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
+    // 列表只读 —— 此面板渲染期间 items 不再变化 —— 旧代码 `items().iter()` 也能用。
+    // 仍提取 sub-store 让结构与 batch_progress/course_pool 一致,未来要加交互(checkbox/删除)
+    // 时不会因裸引用而无订阅翻车。
+    //
+    // 注:不能写 `Store<Vec<...>>` 标注 —— 链式 `.batch_video_state().items()` 实际返回
+    // `MappedMutSignal` lens,不是默认 `WriteSignal`。让编译器自动推断。
+    let items_store = state.batch_video_state().items();
     rsx! {
         WhiteCard {
             shadow: CardShadow::Soft,
@@ -31,7 +41,10 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
             }
             div {
                 style: "display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto; padding-right: 4px;",
-                for (idx, item) in state.read().batch_video_state.items.iter().enumerate() {
+                // `items_store.index(idx).field()` per-item reactive 订阅,
+                // 与 course_pool / batch_progress 模式一致。当前列表只读,
+                // 这个改动主要是防御性 — 防止未来加交互时翻车。
+                for idx in 0..items_store.len() {
                     div {
                         style: "{state.read().theme.bg_card_white()} padding: 14px; transition: all 0.3s ease;",
                         div {
@@ -42,12 +55,12 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                             }
                             div {
                                 style: "font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
-                                "{item.title}"
+                                "{items_store.index(idx).title()}"
                             }
                         }
                         div {
                             style: "font-size: 11px; color: {TEXT_MUTED}; padding-left: 36px;",
-                            "👤 {item.uploader}  |  ⏱️ {item.duration}  |  📁 {item.formats.len()} 种画质"
+                            "👤 {items_store.index(idx).uploader()}  |  ⏱️ {items_store.index(idx).duration()}  |  📁 {items_store.index(idx).formats().len()} 种画质"
                         }
                     }
                 }
@@ -57,6 +70,8 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
         div {
             style: "display: flex; gap: 12px; margin-top: 16px;",
             button {
+                // P3-2:下载中禁用启动按钮
+                disabled: state.read().is_downloading,
                 onclick: move |_| {
                     // 实现批量下载
                     let items = state.read().batch_video_state.items.clone();
@@ -81,6 +96,7 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                         progress: 0.0,
                         status: format!("准备下载 {} 个视频", initial_items.len()),
                         items: initial_items,
+                        aggregate_speed: String::new(),
                     };
                     // 同步 canonical flag,poller.rs:66 gate 才能正常轮询
                     state.write().is_downloading = true;
@@ -93,7 +109,11 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                     });
                 },
                 style: "{state.read().theme.btn_success(\"14px\", \"12px\", \"15px\")} flex: 1;",
-                "⬇️ 全部下载"
+                if state.read().is_downloading {
+                    "⏳ 下载中..."
+                } else {
+                    "⬇️ 全部下载"
+                }
             }
             button {
                 onclick: move |_| {

@@ -300,6 +300,9 @@ pub(super) async fn fetch_course_collection_impl(
             status: "pending".into(),
             progress: 0.0,
             slot: None,
+            speed: String::new(),
+            downloaded_bytes: 0,
+            total_bytes: 0,
         })
         .collect();
     let total = items.len();
@@ -332,7 +335,11 @@ pub(super) async fn open_tuling_login(target_url: &str) -> anyhow::Result<()> {
 #[derive(Default)]
 pub struct CourseItemSlot {
     pub progress: AtomicU32, // 0-10000 表示 0.00%-100.00%
-    pub status: AtomicU8,    // 0=pending 1=resolving 2=downloading 3=completed 4=failed 5=skipped
+    pub status: AtomicU8,    // 0=pending 1=resolving 2=downloading 3=completed 4=failed 5=skipped 6=exists (输出目录已有同名文件,跳过下载)
+    /// 实时下载速度（字节/秒，由 DownloadProgress 回调写入）
+    pub speed: AtomicU64,
+    /// 总字节数（首次回调确定后写入,>0 表示已知）
+    pub total_bytes: AtomicU64,
 }
 
 impl CourseItemSlot {
@@ -343,6 +350,7 @@ impl CourseItemSlot {
             "completed" => 3,
             "failed" => 4,
             "skipped" => 5,
+            "exists" => 6,
             _ => 0,
         };
         self.status.store(v, Ordering::Relaxed);
@@ -373,6 +381,11 @@ async fn resolve_items_serially(
     let mut results: Vec<(String, String)> = Vec::with_capacity(total);
     let mut resolved: Vec<Option<String>> = vec![None; total];
 
+    // 一次性加载输出目录,避免每条课节重复 load config
+    let output_dir = AppConfig::load()
+        .map(|c| c.output_dir)
+        .unwrap_or_else(|_| PathBuf::from("./Downloads"));
+
     for (i, item) in state.items.iter().enumerate() {
         let slot = slots.get(i).cloned();
         if !item.selected {
@@ -381,6 +394,21 @@ async fn resolve_items_serially(
                 s.set_status("skipped");
             }
             continue;
+        }
+        // P-1 (2026-08-16): 跳过已下载课节 — 检查输出目录是否存在同名 mp4 (>0 字节)
+        // 大小 > 0 视为"有内容",0 字节的占位文件视为不存在,触发正常下载
+        // 填充 slot.total_bytes/progress 让 UI 直接显示 "✓ 已下载" + 100% + 文件大小
+        let output_path = build_output_path(&output_dir, &item.title);
+        if let Ok(meta) = tokio::fs::metadata(&output_path).await {
+            if meta.len() > 0 {
+                if let Some(s) = slot.as_ref() {
+                    s.total_bytes.store(meta.len(), Ordering::Relaxed);
+                    s.progress.store(10000, Ordering::Relaxed);
+                    s.set_status("exists");
+                }
+                results.push((item.id.clone(), "exists".into()));
+                continue;
+            }
         }
         if let Some(s) = slot.as_ref() {
             s.set_status("resolving");
@@ -465,6 +493,12 @@ async fn download_resolved_concurrently(
                 if let Some(s) = slot.as_ref() {
                     s.progress
                         .store((dp.percent * 10000.0) as u32, Ordering::Relaxed);
+                    s.speed
+                        .store(dp.speed as u64, Ordering::Relaxed);
+                    if dp.total_bytes > 0 {
+                        s.total_bytes
+                            .store(dp.total_bytes, Ordering::Relaxed);
+                    }
                 }
             });
         let slot_for_done = slots.get(i).cloned();

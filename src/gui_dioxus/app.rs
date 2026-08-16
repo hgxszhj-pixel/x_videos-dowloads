@@ -43,6 +43,9 @@ pub(super) fn AppComponent() -> Element {
     let mut progress_signal = use_signal(|| 0.0_f32);
     let mut speed_signal: Signal<String> = use_signal(String::new);
     let mut size_signal: Signal<String> = use_signal(String::new);
+    // 剩余时间(由 poller.rs 根据 total_bytes/speed/progress 算好再写入,
+    // 避免 UI 里反向解析字符串或重复读原子)
+    let mut eta_signal: Signal<String> = use_signal(String::new);
 
     // 主题 Signal — components.rs 中 ThemeSwatch / ErrorPanel / 另一组件
     // 通过 use_context::<Signal<AppTheme>>() 读当前主题,避免订阅整个 AppState Store。
@@ -417,6 +420,7 @@ pub(super) fn AppComponent() -> Element {
                             progress_signal.set(0.0);
                             speed_signal.set(String::new());
                             size_signal.set(String::new());
+                            eta_signal.set(String::new());
 
                             // 创建进度追踪原子变量
                             let progress_arc = Arc::new(AtomicU32::new(0));
@@ -470,6 +474,7 @@ pub(super) fn AppComponent() -> Element {
                                 progress_signal,
                                 speed_signal,
                                 size_signal,
+                                eta_signal,
                             });
                         },
                         style: "{state.read().theme.btn_success(\"14px\", \"10px\", \"15px\")} flex: 1;",
@@ -511,6 +516,7 @@ pub(super) fn AppComponent() -> Element {
                                 progress: 0.0,
                                 status: format!("准备下载 {} 个视频", url_list.len()),
                                 items: batch_items,
+                                aggregate_speed: String::new(),
                             };
                             // 同步 canonical flag,poller.rs:66 gate 才能正常轮询
                             state.write().is_downloading = true;
@@ -550,8 +556,14 @@ pub(super) fn AppComponent() -> Element {
                             "📥 下载中... {(progress_signal.cloned() * 100.0).round() as i32}%"
                         }
                         div {
-                            style: "font-size: 12px; color: {TEXT_MUTED};",
-                            "{speed_signal.cloned()}"
+                            style: "display: flex; gap: 12px; font-size: 12px; color: {TEXT_MUTED}; align-items: center;",
+                            span { "⚡ {speed_signal.cloned()}" }
+                            if !eta_signal.cloned().is_empty() {
+                                span {
+                                    style: "color: {state.read().theme.color_accent()}; font-weight: 600;",
+                                    "⏱️ ETA {eta_signal.cloned()}"
+                                }
+                            }
                         }
                     }
                     div {

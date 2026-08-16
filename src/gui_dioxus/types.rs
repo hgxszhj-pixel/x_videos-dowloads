@@ -67,6 +67,30 @@ pub(super) fn format_speed(bytes_per_sec: u64) -> String {
     }
 }
 
+/// 格式化剩余时间 (seconds -> "5s" / "2m 5s" / "1h 2m")
+pub(super) fn format_eta(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("{}s", seconds)
+    } else if seconds < 3600 {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
+/// 格式化大小分数 ("X.XX MB / Y.YY GB")。total=0 时只显示 downloaded。
+pub(super) fn format_size_fraction(downloaded: u64, total: u64) -> String {
+    if total == 0 || downloaded >= total {
+        format_file_size(downloaded)
+    } else {
+        format!(
+            "{} / {}",
+            format_file_size(downloaded),
+            format_file_size(total)
+        )
+    }
+}
+
 #[derive(Store)]
 pub(super) struct AppState {
     pub(super) url: String,
@@ -210,6 +234,9 @@ pub(crate) struct BatchState {
     pub(super) progress: f32, // 总体进度
     pub(super) status: String,
     pub(super) items: Vec<BatchItemState>,
+    /// 聚合下载速度（所有 active 项 speed_arc 之和 → format_speed）。
+    /// 由 poller.rs:130 同步计算并写入。"" 表示无 active 下载。
+    pub(super) aggregate_speed: String,
 }
 
 /// 批量视频信息状态
@@ -234,6 +261,12 @@ pub(super) struct CourseItemDisplay {
     pub(super) progress: f32,
     /// 进度槽（跨 task 共享，use_effect 轮询把原子值写回 progress/status）
     pub(super) slot: Option<Arc<super::handlers::CourseItemSlot>>,
+    /// 实时下载速度（polling 写回,format_speed 输出）
+    pub(super) speed: String,
+    /// 已下载字节数（progress × total_bytes 估算）
+    pub(super) downloaded_bytes: u64,
+    /// 总字节数（slot.total_bytes 写入）
+    pub(super) total_bytes: u64,
 }
 
 /// 课程池整体状态

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::types::{format_file_size, format_speed, AppState};
+use super::types::{format_eta, format_file_size, format_speed, AppState};
 
 const PROGRESS_THRESHOLD: f32 = 0.01; // 1% 阈值
 const POLL_INTERVAL_MS: u64 = 500;
@@ -26,6 +26,8 @@ pub(super) enum PollMsg {
         progress_signal: Signal<f32>,
         speed_signal: Signal<String>,
         size_signal: Signal<String>,
+        /// 剩余时间(由 poller 根据 progress/total/speed 算好,UI 不再做反向解析)
+        eta_signal: Signal<String>,
     },
     /// 批量下载轮询：每个视频进度 + 速度
     Batch {
@@ -49,10 +51,12 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                     mut progress_signal,
                     mut speed_signal,
                     mut size_signal,
+                    mut eta_signal,
                 } => {
                     let mut last_progress = 0.0_f32;
                     let mut last_speed: u64 = 0;
                     let mut last_size: u64 = 0;
+                    let mut last_eta: u64 = u64::MAX;
                     loop {
                         tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
                         if !state.read().is_downloading {
@@ -74,6 +78,20 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                         if total != last_size && total > 0 {
                             size_signal.set(format_file_size(total));
                             last_size = total;
+                        }
+                        // ETA: (剩余字节 / 当前速度) 秒,3 项都已知时才算
+                        // 阈值 1s 减少 UI 抖动 (剩余时间常在 ±1s 浮动)
+                        if speed > 0 && total > 0 && percent > 0.0 && percent < 1.0 {
+                            let remaining_bytes =
+                                ((1.0_f64 - percent as f64) * total as f64) as u64;
+                            let eta_secs = remaining_bytes / speed;
+                            if eta_secs.abs_diff(last_eta) >= 1 || last_eta == u64::MAX {
+                                eta_signal.set(format_eta(eta_secs));
+                                last_eta = eta_secs;
+                            }
+                        } else if percent >= 1.0 && last_eta != 0 {
+                            eta_signal.set(String::new());
+                            last_eta = 0;
                         }
                         if percent >= 1.0 {
                             break;
@@ -113,10 +131,12 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                                 .map(|it| it.speed_arc.clone())
                                 .collect()
                         };
+                        let mut agg_speed_bytes: u64 = 0;
                         for (i, speed_arc_opt) in speed_arcs.iter().enumerate() {
                             if let Some(arc) = speed_arc_opt {
                                 let speed = arc.load(Ordering::Relaxed);
                                 per_item[i].1 = format_speed(speed);
+                                agg_speed_bytes = agg_speed_bytes.saturating_add(speed);
                             }
                         }
                         // 单写事务
@@ -124,6 +144,8 @@ pub(super) fn use_progress_poller(mut state: Store<AppState>) -> Coroutine<PollM
                             let mut s = state.write();
                             let total = (total_count as f32).max(1.0);
                             s.batch_state.progress = total_progress / total;
+                            // 聚合速度:所有 active 项之和 (saturating 避免溢出)
+                            s.batch_state.aggregate_speed = format_speed(agg_speed_bytes);
                             for (i, (percent, speed)) in per_item.into_iter().enumerate() {
                                 if let Some(item) = s.batch_state.items.get_mut(i) {
                                     item.progress = percent;
