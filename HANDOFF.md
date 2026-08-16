@@ -351,6 +351,11 @@ cargo test --bin x-video-downloader -- --ignored \
 | 加 gitignore | `.codegraph/` `SkillOpt/` `.skillopt-sleep/` `.agents/` `.rtk/` `.understand-anything/` | 防 6.4 MB codegraph.db + 残留临时文件入库 |
 | 重写 | `README.md` (149 → 327 行) | 反映 Dioxus+Drisson 真实架构,加 CodeGraph 视图附录 |
 
+## 文档归档 (2026-08-16)
+
+- **`docs/HANDOFF.md` 已删除** — 281 行 stale 副本(07-08 era 起未 commit,working tree 留 08-09 写的重复 Session 08-13/08-09)
+- **Single source of truth**: `/HANDOFF.md` (root)。新文档只写 root,不再保留 docs/ 副本。
+
 ## 记忆入口
 
 - 跨项目决策/偏好 → `~/memory/`
