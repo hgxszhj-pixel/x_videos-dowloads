@@ -1,8 +1,9 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-16 (进度条 UX 重构 — 顶部 ETA + 批量聚合速度 + 课程池 per-row 速度/大小;**课程池跳过已下载文件**)
-**上次**: 2026-08-16 (GUI 课程池/批量进度 UI 卡在 pending 修复 — Dioxus Store 字段订阅)
-**再上次**: 2026-08-13 (GUI 响应瓶颈 P0/P1/P2 + runtime 升级 multi_thread)
+**更新**: 2026-08-16 (P1 enum 重构 + 2 个 bug 修复:课程池不进历史 / 进度条假 56%)
+**上次**: 2026-08-16 (进度条 UX 重构 — 顶部 ETA + 批量聚合速度 + 课程池 per-row 速度/大小;**课程池跳过已下载文件**)
+**再上次**: 2026-08-16 (GUI 课程池/批量进度 UI 卡在 pending 修复 — Dioxus Store 字段订阅)
+**更早**: 2026-08-13 (GUI 响应瓶颈 P0/P1/P2 + runtime 升级 multi_thread)
 **更早**: 2026-08-09 (小鹅通端到端下载 6 节课 8.5GB 验证通过 + 流水线转 .mp4)
 
 ---
@@ -22,6 +23,45 @@
 **当前 LR 数量**: 7 条 (`learning-records/0001-` ~ `0007-`)
 
 **原则**: HANDOFF 写"做了什么",teach 写"学到了什么"。
+
+---
+
+## Session: 2026-08-16 — P1 enum 重构 + 2 个用户反馈的 bug 修复
+
+### 改动 1: P1 — `set_status` + `slot_status_to_str` 并行 switch → `CourseItemStatus` 枚举
+
+`handlers.rs::set_status(&str)` 与 `app_course_pool.rs::slot_status_to_str(u8)` 之前是两个独立的 `match`,任一处漏写新 status 就会导致 "写 6 但 UI 永远显示 pending" 的隐性 bug。
+
+**改动**: 新增 `CourseItemStatus` 枚举 (7 variants: Pending / Resolving / Downloading / Completed / Failed / Skipped / Exists) + `as_str` / `as_u8` / `from_u8` / `FromStr` impls。`set_status` 签名改为 `&CourseItemStatus` — 编译器强制覆盖所有 variants。`slot_status_to_str` 委托给 `CourseItemStatus::from_u8 + .as_str()`,共享同一枚举。
+
+**8 个 caller 全部迁移**: handlers.rs Skipped/Exists/Resolving/Failed/Downloading/Completed 各 1 次,Failed 多次。
+
+### 改动 2: Bug — 课程池新下的视频不进 "下载历史" 面板
+
+用户截图反馈:课程池跑完后 item 6 ✅ 已完成 但 "下载历史" 显示 "暂无下载记录"。
+
+**根因**: `add_completed_download(title, url, path)` 在单视频 (`app.rs:456`) 与批量 (CLI `commands/download`) 路径都调用,但 `course_download_pool_impl::download_resolved_concurrently` 完成后没调。
+
+**修复**: handlers.rs Ok 分支追加 `add_completed_download(title.clone(), page_url.clone(), None)` (Exists 不记,避免与历史重复);`app_course_pool.rs` pool 完成后 `state.write().history = get_history_items()` 立即刷新 HistoryPanel (否则要等下次 reload)。
+
+### 改动 3: Bug — 底部进度条在解析阶段显示虚假 56%
+
+用户截图:8 项 exists (✓ 已下载) + 1 项 🔍 解析中 + 0 项真在 Downloading,底部 "下载中… 56%"。
+
+**根因**: polling task 聚合把全部 9 项取平均 — 5 × 100% (exists) + 4 × 0% (resolving/pending) = 500 / 9 ≈ 55.5% ≈ 56%。数学正确但语义错位 (item 6 还没开始下载)。
+
+**修复**: 提取 `aggregate_course_progress(snapshot: &[(u32, u8, u64, u64)]) -> Option<f32>` helper,只统计 active 状态 (`Downloading` / `Completed` / `Failed`)。`Pending` / `Resolving` / `Skipped` / `Exists` 不计入。无 active → `None` → 进度条保持 0%。同次顺手:
+- 加 `CourseItemStatus::is_terminal()` 方法,polling 退出守卫 `(3..=6).contains(st)` → `is_some_and(is_terminal)` 去掉 magic 数字
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/gui_dioxus/handlers.rs` | `CourseItemStatus` 枚举 + 4 个 impl + `set_status` 改签名 + `add_completed_download` 调用 + `is_terminal()` 方法 + 5 个 enum 测试 + 1 个 is_terminal 测试 |
+| `src/gui_dioxus/app_course_pool.rs` | `slot_status_to_str` 委托 enum + 新增 `aggregate_course_progress` helper + 5 个聚合测试 + 移除 `(3..=6)` magic + pool 完成后刷新 history |
+| `HANDOFF.md` | (本文件) |
+
+**验证**: `cargo build` ✅ | `cargo clippy --all-targets` ✅ 0 warning | `cargo test` ✅ **256 passed, 0 failed, 19 ignored** (本会话 250 → 256, +6 个新测试:5 个聚合 + 1 个 is_terminal)
 
 ---
 
@@ -176,35 +216,20 @@ decrypt_ego_lite_cookies_for_vip() (Keychain + PBKDF2 + AES-128-CBC v10)
 
 ---
 
-## 最近 commits (2026-08-09)
+**已落地的最近 commits** (今日,按时间倒序):
 
-本会话全部改动**尚未提交**(统一一个大型 working tree):
+| Commit | 主题 |
+|---|---|
+| `12eca70` | `fix(gui): course-pool aggregation excludes pending/parsing/exists` |
+| `fef948f` | `fix(gui): record course-pool downloads to global history` |
+| `58b0b6f` | `refactor(gui): replace parallel status switches with CourseItemStatus enum` |
+| `661fab8` | `test(gui): add unit tests for new code (P0)` |
+| `192ba2d` | `fix(gui): hide misleading "0 B" size column` |
+| `0e80ce4` | `fix(gui): unified status display with emoji icons (P2)` |
+| `ede263a` | `perf(gui): per-row progress/speed/size for course pool` |
+| `4a25dc9` | `feat(gui): skip already-downloaded lessons (skip-existing)` |
 
-**代码修改**:
-- `src/hls/parser.rs` — `extract_base_url` 保留 m3u8 目录路径 (`+` 修复 #1)
-- `src/drission_client.rs` — 临时 profile + ego-lite cookie 解密 + 流水线转 .mp4 + diag-fastpath helper (`+` 修复 #2,3,5)
-- `src/platform/tulingpython.rs` — reqwest-fastpath + diag-fastpath + 5 个 fixture 测试 `#[ignore]` (`+` 修复 #4,5)
-- `src/gui_dioxus/app_course_pool.rs` — 进度/状态 polling task (`+` 修复 #6)
-- `src/gui_dioxus/app.rs` — 清空按钮单事务写 + 主题色样式修复
-
-**配置 / 文档**:
-- `Cargo.toml` — 2 个 `[[bench]]` 注释 (`benches/` 已删)
-- `README.md` — 重写 (Dioxus+Drission 真实架构 + CodeGraph 视图附录)
-- `docs/HANDOFF.md` — 状态时间戳 + Unlimited-OCR 行更新
-- `docs/ONTOLOGY_INTEGRATION.md` — 删 `track_quality.sh` 引用 + 文件树
-- `scripts/README_intent_lock.md` — 删 `spec_contract.py` 引用 + 错误消息对照表
-
-**删除**:
-- `benches/hls_concurrency.rs` + `hls_parse.rs` (旧 benchmark,源码不在)
-- `tests/fixtures/*.json` 4 个 (`tuling_course_real.json` / `tuling_course_nav_real.json` / `tuling_column_items_real.json` / `tuling_channel_real.json`) — 10 GB 清理中误删,对应 5 个单元测试加 `#[ignore]`
-- `scripts/track_quality.sh` (2.3K) — 无人调用
-- `scripts/spec_contract.py` (4.0K) — `specs/` 不存在,pre-commit 静默跳过
-- `scripts/unlimited_ocr_{api,cli,mscope}.py` (5.6K) — "⏸️ 等 torch 2.4+" 从未完工
-- `.git/hooks/pre-commit` (528) — 依赖已删的 `spec_contract.py`
-
-**gitignore 加**: `.codegraph/` `SkillOpt/` `.skillopt-sleep/` `.agents/` `.rtk/` `.understand-anything/` (防 6.4 MB codegraph.db + 残留临时文件入库)
-
-**已落地的最近 commits** (本会话前):
+**再之前的 commits**:
 
 | Commit | 主题 |
 |---|---|
@@ -298,9 +323,9 @@ cargo test --bin x-video-downloader -- --ignored \
 
 | 检查 | 结果 |
 |------|------|
-| `cargo test` | ✅ **234 passed, 0 failed, 19 ignored** (含 4 个 drission_client 诊断测试 + 5 个 tulingpython fixture 测试 `#[ignore]`) |
-| `cargo fmt --check` | ✅ 0 diff (本会话 working tree 全部 fmt-clean) |
-| `cargo clippy --all-targets` | ✅ 0 warning (本会话修了 GUI 5 + drission_client.rs 5,均未 commit) |
+| `cargo test` | ✅ **256 passed, 0 failed, 19 ignored** (含 4 个 drission_client 诊断测试 + 5 个 tulingpython fixture 测试 `#[ignore]`;今日 +6 个新测试:5 个聚合 + 1 个 is_terminal) |
+| `cargo fmt --check` | ✅ 0 diff (今日 working tree 全部 fmt-clean) |
+| `cargo clippy --all-targets` | ✅ 0 warning (今日修了 GUI 5 + drission_client.rs 5 + 课程池聚合 magic 数字,均已 commit) |
 
 ## 已知问题
 
