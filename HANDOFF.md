@@ -1,211 +1,296 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-05（rustfmt 配置 + 90 文件格式化 + HLS per-segment 进度 + 课程池解析离线化 + STUN 注释清理 + 7 文档归档,232 tests pass）
+**更新**: 2026-08-16 (进度条 UX 重构 — 顶部 ETA + 批量聚合速度 + 课程池 per-row 速度/大小;**课程池跳过已下载文件**)
+**上次**: 2026-08-16 (GUI 课程池/批量进度 UI 卡在 pending 修复 — Dioxus Store 字段订阅)
+**再上次**: 2026-08-13 (GUI 响应瓶颈 P0/P1/P2 + runtime 升级 multi_thread)
+**更早**: 2026-08-09 (小鹅通端到端下载 6 节课 8.5GB 验证通过 + 流水线转 .mp4)
 
 ---
 
-## 📜 最近 commits (2026-08-05)
+## 教学 workspace 维护约定 (`.teach/`,gitignored)
 
-| Commit | 主题 | 改动文件 |
-|---|---|---|
-| `3029c23` | `test(tulingpython): extract parse_channel_items for offline E2E coverage` | `src/platform/tulingpython.rs` (抽离纯函数 + 3 测试 9→12) + `src/drission_client.rs` (E2E 注释指向离线覆盖) |
-| `241365d` | `docs(collaboration): clarify STUN flow in team handler comments` | `src/collaboration/server/handler.rs` (两处 TODO → 准确机制说明) |
-| `ef4bad3` | `feat(hls): per-segment progress callback with throttling` | `src/hls/downloader.rs` (per-segment 回调 + ≤50 次节流,经验 #26) |
-| `bda810b` | `docs(plans): mark tuling course pool design as implemented + archive README` | `docs/plans/2026-07-27-*.md` 状态更新 + `docs/plans/archive/README.md` 归档原则 |
-| `59e4bea` | `chore(fmt): add rustfmt.toml + apply cargo fmt across workspace` | `rustfmt.toml` (新) + 80+ 个 .rs 纯格式改动 + 7 docs/plans 归档到 archive/ |
-| `95b1fbb` | `fix(downloader): TempDir 改 OS temp + merge atomic rename 杜绝 .tmpXXX/ 孤儿` | `src/downloader/parallel.rs` + `src/downloader/merge.rs` + `src/types.rs` |
-| `853ae12` | `fix(drission): Keychain service 名是 "ego safe storage" 不是 "ego lite Safe Storage"` | `src/drission_client.rs` |
-| `609e265` | `fix(drission): macOS 用 SQLite+Keychain 解密 ego-lite cookies` | `Cargo.toml` + `src/drission_client.rs` |
-| `d6cd948` | `feat(platform): 切换 Scrapling → Drission CDP` | `Cargo.toml` + `src/main.rs` + `src/drission_client.rs` + `src/platform/*` |
+`.teach/` 是项目**经验沉淀区**,不是 session 日志。
 
-> 全部 commit 含 `Intent: <一句话>` (`.git/hooks/commit-msg` 强制)。`SkillOpt/` 是 gitbutler workspace 残留。
+**写 LR 当** | **写 HANDOFF session 当** (二选一,不要两写)
+---|---
+编译错误反复出现才搞懂 | 改了 N 个 bug
+反汇编依赖源码才懂 | 配置 X → Y
+跨 2+ 文件复用模式 | 性能改进 N%
+用户说"我懂了" | milestone 达成
 
-> 全部 commit 含 `Intent: <一句话>` (`.git/hooks/commit-msg` 强制)。`SkillOpt/` 是 gitbutler workspace 残留。
+**格式与触发器**: `.teach/HOWTO-WRITE-LR.md`
+**当前 LR 数量**: 7 条 (`learning-records/0001-` ~ `0007-`)
+
+**原则**: HANDOFF 写"做了什么",teach 写"学到了什么"。
+
+---
+
+## Session: 2026-08-16 — 进度条 UX 重构 + 跳过已下载文件
+
+### 改动 1: 进度条详细化 (用户反馈"没有实时下载速度详细信息")
+
+3 个具体缺口:课程池 per-row 无速度/大小、顶部单下载无 ETA、批量头部无聚合速度。**全量覆盖**:
+
+| 区域 | 新增字段 |
+|------|---------|
+| 顶部单下载 | + ETA (`poller` 算好写入 `eta_signal: Signal<String>`) |
+| 批量头部 | + 聚合速度 (所有 active 项 `saturating_add` → `format_speed`) |
+| 批量每行 | 已显示速度 (P3-3 早就写了 `item.speed`) |
+| 课程池每行 | + 速度 + 已下载/总字节 (`format_size_fraction`) |
+
+**新增 helpers** (`types.rs`):
+- `format_eta(seconds)` — `"5s"` / `"2m 5s"` / `"1h 2m"`
+- `format_size_fraction(downloaded, total)` — `"5.00 MB / 5.32 GB"`
+
+**扩展 slot 字段**: `CourseItemSlot { speed: AtomicU64, total_bytes: AtomicU64 }`,`progress_cb` 同步写入。
+
+### 改动 2: 课程池跳过已下载文件 (用户反馈"应检查下载目录避免重复下载")
+
+新增 status `6 = exists` (`slot_status_to_str` + `set_status` 双向映射)。`resolve_items_serially` 在 CDP 解析前检查 `output_path` 大小 > 0 → 设 slot `status=exists` + `progress=10000` + `total_bytes=文件大小` → 跳过解析 + 下载。UI 标 `✓ 已下载`,M7 summary 显示 `"N 新下 + M 已存在"`。
+
+**0 字节占位文件视为不存在**(正常下载)。不做 size / hash 校验 → 损坏/截断的文件会被误判为"已下载",留作未来 UI 加"强制重下"按钮的扩展点。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/gui_dioxus/types.rs` | + `format_eta` / `format_size_fraction`;扩展 `BatchState.aggregate_speed` + `CourseItemDisplay.{speed,downloaded_bytes,total_bytes}` |
+| `src/gui_dioxus/handlers.rs` | `CourseItemSlot` 加字段 + `progress_cb` 写入 + `set_status("exists")` + `resolve_items_serially` 加 exists 检查 |
+| `src/gui_dioxus/poller.rs` | ETA 计算 + 聚合速度 (`saturating_add`) |
+| `src/gui_dioxus/app.rs` | `eta_signal` + 顶部 UI ETA 显示 |
+| `src/gui_dioxus/app_course_pool.rs` | per-row 速度/大小 + UI `✓ 已下载` + polling 终态 `(3..=6)` |
+| `src/gui_dioxus/app_batch_progress.rs` | 头部聚合速度 |
+| `src/gui_dioxus/app_batch_video.rs` | `BatchState` literal 补 `aggregate_speed` |
+
+**验证**: `cargo build` ✅ | `cargo clippy --all-targets` ✅ 0 warning | `cargo test --quiet` ✅ 234 passed / 0 failed / 19 ignored (与之前一致)
+
+**rsx! 限制再次遇到** (LR0006): `{}` 内不支持 `if`,inline 条件显示需提为 helper (`status_display()`)。
+
+---
+
+## Session: 2026-08-16 — Dioxus Store 字段级订阅修复
+
+**症状**: 课程池 (📚) 选中全部课节 → 点 ▶ 开始下载 → 后端在跑、`/tmp/x-video-downloader.log` 看到进度推 50%/100%,但 UI 卡在 `pending`,从不刷新到 `resolving / downloading / completed`。批量下载面板 (📚 批量下载) 同样症状。
+
+**根因**: 旧代码 `state.read().batch_state.items.iter()` 走 `Vec::iter()` 返回 `&BatchItemState` 快照 —— Dioxus `Store<Vec<T>>::iter()` **只跟踪 Vec 长度**(shallow track),字段变化不触发 sub-render。polling task 写到 `items[i].progress = ...` 是有效的,但 UI 永远不刷新。
+
+**修复模式 (3 个文件统一)**:
+```rust
+// 在 rsx! 外提一个 reactive sub-store(避免 let binding)
+let items_store = state.course_collection_state().items();  // 或 batch_state().items() / batch_video_state().items()
+
+for idx in 0..items_store.len() {
+    // items_store.index(idx) 拿 Store<T, IndexWrite<usize, _>> —— 每个 idx 自己的 signal
+    // 字段访问器 (.selected() / .title() / .progress() / .status() / .visible()) 返回 sub-store
+    // rsx! attribute/text 位置走 IntoAttributeValue/IntoDynNode 自动 cloned
+    // if 条件 / 算术表达式需要 .visible()() 双括号调用 (Store<T> Deref<Target = dyn Fn() -> T>)
+    div { "{items_store.index(idx).title()}" }
+    input { checked: items_store.index(idx).selected() }
+    if items_store.index(idx).visible()() { ... }
+}
+```
+
+**关键 API** (Dioxus 0.7.9):
+- `Store<T>` 实现了 `Copy` —— `state.course_collection_state().items()` 直接拿,**不要 `.clone()`**(clippy clone_on_copy)
+- 链式返回 `Store<T, MappedMutSignal<...>>` 不是默认 `Store<T, WriteSignal<T>>`,不能用 `Store<T>` 标注,让编译器推断
+- `derive(Store)` 自动生成 `<StructName>StoreExt` trait,`impl<__Lens>` 泛型覆盖所有 lens 类型
+
+**改动文件**:
+- `src/gui_dioxus/app_course_pool.rs` — 课程池列表 (33 项)
+- `src/gui_dioxus/app_batch_progress.rs` — 批量下载进度列表
+- `src/gui_dioxus/app_batch_video.rs` — 批量视频列表 (read-only, 防御性)
+
+**验证**: `cargo build` ✅ | `cargo clippy --all-targets` ✅ 0 warning | `cargo test --quiet` ✅ 234 passed / 0 failed / 19 ignored (与修复前一致)
+
+**知识沉淀 →** `.teach/` (gitignored): 7 条 learning records (`0001-` ~ `0007-`) 永久化本会话的所有 Dioxus Store reactivity 教训 + Tufte 速查表 `reference/dioxus-0.7-reactivity.html` + 项目 mission/glossary 标准化。详见 `.teach/MISSION.md` 与 `.claude/skills/teach/SKILL.md`(本项目本地 teach skill 包装,基于 mattpocock/skills teach 哲学)。
+
+**P3 UX 改进** (同步上):
+- `app_course_pool.rs` — 每条课节进度条 (active 状态时显示,terminal 隐藏);开始按钮 `disabled: is_downloading` + 文字切到 `⏳ 下载中...`
+- `app_batch_progress.rs` — 每条视频显示下载速度 (poller.rs:130 已写 `item.speed` 但 UI 从未渲染)
+- `app_batch_video.rs` — `⬇️ 全部下载` 按钮 `disabled: is_downloading` + 切到 `⏳ 下载中...`
+
+注:`{}` 内不支持 `if` 表达式 (rsx! format string parser 只接受 ident/expression),所以没法条件化 opacity/cursor —— 仅靠 `disabled` 属性 + 文字切换实现反馈。
+
+---
+
+---
+
+## Session: 2026-08-13 — GUI 性能改进 + runtime 升级
+
+**问题**: GUI 按钮点击延迟 ~500ms、进度条跳变粗糙、课程池 33 项同时下载时尤为明显。
+
+**根因**: `AppState` 单一 Store + 双 500ms polling task 写整个 store → 每次进度 tick 触发整个 AppComponent (251 行 rsx) 重渲染。
+
+**7 处改进 (按影响排序)** — 内存: `gui_dioxus-runtime-context-crash.md` (Dioxus hook 配对表 + smoke test 必要性):
+
+| # | 文件 | 改动 |
+|---|------|------|
+| P0-1 | `gui_dioxus/app.rs` (-60) | 删重复 use_effect polling task,保留新课程池 task (有聚合/退出守卫/单事务写) |
+| P0-2 | `gui_dioxus/app.rs` + `poller.rs` (+35) | 拆 3 个独立 `use_signal<f32/String>` (progress/speed/size),poller 写 Signal 不写 store,缩小重渲染范围到进度条区域 |
+| P1-1 | `gui_dioxus/app.rs` | `theme_signal` + `use_context_provider` 保留 — **components.rs 有 3 个 use_context 消费者 (ThemeSwatch/ErrorPanel/AnotherPanel),删除会 panic** |
+| P1-2 | `gui_dioxus/app.rs` + `store.rs` | `persist_theme` helper 合并 `state.theme = X` + `cfg.save()`,4 个 ThemeSwatch 共享 |
+| P1-3 | `gui_dioxus/poller.rs` | speed/size 阈值节流 (≥100 KiB/s 变化才更新) |
+| P2-1 | `main.rs` | `new_current_thread` → `new_multi_thread().worker_threads(4)`,前提: reqwest::blocking 预初始化 + GLOBAL_HISTORY 锁内无 await |
+| P2-2 | `gui_dioxus/poller.rs` | (本次未做 — Vec clone 已通过 impl Default 消除) |
+
+**新 commit**: `aefd94b perf(gui): split progress signals, upgrade multi_thread runtime, refactor theme/poller (P0/P1/P2)` (6 files / +195/-115 surgical)
+
+**working tree 残留**: `src/drission_client.rs` 仍 unstaged — 混合分支 owner ~1400 行重构 + 本会话 5 个 pre-existing clippy fix (let_unit_value × 3 + manual_range_patterns + nonminimal_bool),留给 owner 一并 commit。
+
+**教训**: `git commit -- <files>` 提交的是整个文件快照 (含 pre-existing 修改),不是 hunks。需 `git reset HEAD~1 --mixed` + `git stash` + 重 add 自有文件。
+
+---
+
+## 端到端里程碑: 小鹅通课程 → 本地 .mp4 (2026-08-09)
+
+**课程**: `https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_6a66e8d7e4b0694c35307f38`
+**结果**: 6 条课节全部下载到 `/Users/hgxszhj/Movies`,共 8.5 GB .mp4,总耗时 1125s (~19min)
+
+| 课节 | 大小 |
+|---|---|
+| js逆向01 AI逆向 - 逆向环境搭建与Agent配置-2026-7-27 | 1.5 GB |
+| JS逆向02 AI逆向 - js语法基础 - 1-2026-07-29 | 980 MB |
+| JS逆向03 AI逆向 - js语法基础 - 2-2026-07-31 | 1.4 GB |
+| JS逆向04 AI逆向 - js语法基础 - 3-2026-08-03 | 1.1 GB |
+| JS逆向05 AI逆向 - 浏览器调试技巧 - 1-2026-08-05 | 1.9 GB |
+| JS逆向06 AI逆向 - hook 技术-2026-8-7 | 1.6 GB |
+
+**6 处根因修复** (内存详记: `tulingpyton-ego-lite-cookie-injection.md`):
+
+1. **`src/hls/parser.rs::extract_base_url`** — 保留 m3u8 所在目录路径,签名 CDN 对路径敏感 (`+` 修复)
+2. **`src/drission_client.rs::capture()` 临时 profile** — `std::env::temp_dir()/xvd_diag_<pid>_<idx>` 替代项目自建 profile,防 stgw 400 字节限制 + 隔离 stale cookies
+3. **`src/drission_client.rs::diag_download_all_lessons` 流水线** — 每条课节 HLS 下载 .ts 成功后**立即** `ffmpeg -c copy` 转 .mp4 + 删 .ts
+4. **`src/platform/tulingpython.rs::list_collection_impl` reqwest-fastpath** — macOS + column_id → 先 `fetch_column_items_reqwest()` 直击 `column.items.get/2.0.0`,失败 fallback Drission (40+ 并发 POST 触发 WebSocket 重置修复)
+5. **`src/platform/tulingpython.rs::get_video_info` diag-fastpath** — macOS + `live_pc/pc/l_*` URL → 调 `fetch_m3u8_via_diag(player_url, idx)` (临时 profile + 12 cookies 注入 + 8 轮 JS 触发 play),失败 fallback Drission
+6. **`src/gui_dioxus/app_course_pool.rs` 进度/状态 polling task** — 500ms 读所有 slot 原子值 → 写 store (单项进度/状态);同时累加聚合 → 写 `state.download_progress` 驱动底部进度条
+
+**端到端链路**:
+```
+decrypt_ego_lite_cookies_for_vip() (Keychain + PBKDF2 + AES-128-CBC v10)
+  → reqwest POST column.items.get/2.0.0 (0.43s,绕开 headless SPA)
+  → Drission headless Chromium 临时 profile + CDP set_cookies (12 cookies)
+  → 改写 jump_url → /live_pc/pc/l_xxx → tab.get + 4 轮 JS 触发 play
+  → 拦 m3u8 (xet.tech playlist_eof.m3u8 + sign)
+  → HlsDownloader 拉 m3u8 + 8 并发 .ts + 顺序合并 → ffmpeg -c copy → .mp4
+```
+
+---
+
+## 最近 commits (2026-08-09)
+
+本会话全部改动**尚未提交**(统一一个大型 working tree):
+
+**代码修改**:
+- `src/hls/parser.rs` — `extract_base_url` 保留 m3u8 目录路径 (`+` 修复 #1)
+- `src/drission_client.rs` — 临时 profile + ego-lite cookie 解密 + 流水线转 .mp4 + diag-fastpath helper (`+` 修复 #2,3,5)
+- `src/platform/tulingpython.rs` — reqwest-fastpath + diag-fastpath + 5 个 fixture 测试 `#[ignore]` (`+` 修复 #4,5)
+- `src/gui_dioxus/app_course_pool.rs` — 进度/状态 polling task (`+` 修复 #6)
+- `src/gui_dioxus/app.rs` — 清空按钮单事务写 + 主题色样式修复
+
+**配置 / 文档**:
+- `Cargo.toml` — 2 个 `[[bench]]` 注释 (`benches/` 已删)
+- `README.md` — 重写 (Dioxus+Drission 真实架构 + CodeGraph 视图附录)
+- `docs/HANDOFF.md` — 状态时间戳 + Unlimited-OCR 行更新
+- `docs/ONTOLOGY_INTEGRATION.md` — 删 `track_quality.sh` 引用 + 文件树
+- `scripts/README_intent_lock.md` — 删 `spec_contract.py` 引用 + 错误消息对照表
+
+**删除**:
+- `benches/hls_concurrency.rs` + `hls_parse.rs` (旧 benchmark,源码不在)
+- `tests/fixtures/*.json` 4 个 (`tuling_course_real.json` / `tuling_course_nav_real.json` / `tuling_column_items_real.json` / `tuling_channel_real.json`) — 10 GB 清理中误删,对应 5 个单元测试加 `#[ignore]`
+- `scripts/track_quality.sh` (2.3K) — 无人调用
+- `scripts/spec_contract.py` (4.0K) — `specs/` 不存在,pre-commit 静默跳过
+- `scripts/unlimited_ocr_{api,cli,mscope}.py` (5.6K) — "⏸️ 等 torch 2.4+" 从未完工
+- `.git/hooks/pre-commit` (528) — 依赖已删的 `spec_contract.py`
+
+**gitignore 加**: `.codegraph/` `SkillOpt/` `.skillopt-sleep/` `.agents/` `.rtk/` `.understand-anything/` (防 6.4 MB codegraph.db + 残留临时文件入库)
+
+**已落地的最近 commits** (本会话前):
+
+| Commit | 主题 |
+|---|---|
+| `aefd94b` | `perf(gui): split progress signals, upgrade multi_thread runtime, refactor theme/poller (P0/P1/P2)` |
+| `df7c488` | `feat(core): honor HTTP Retry-After in parallel download retry` |
+| `e2791d1` | `feat(hls): honor HTTP Retry-After header in segment retry backoff` |
+| `aab6233` | `fix(clippy): drop redundant closure in spawn_blocking call` |
+| `3029c23` | `test(tulingpython): extract parse_channel_items for offline E2E coverage` |
+| `33c8e6f` | `docs(handoff): reflect 5 new commits + drop resolved fmt issue + add 经验 #33-34` |
+
+> 全部 commit 含 `Intent:` 行 (`.git/hooks/commit-msg` 强制)。
 
 ---
 
 ## 快速开始
 
 ```bash
-cargo run -- "URL"              # CLI
-cargo run -- --gui              # GUI (Dioxus 0.7.9)
+cargo run -- "URL"                              # CLI
+cargo run -- --gui                              # GUI (Dioxus 0.7.9)
 cargo test --quiet && cargo clippy --quiet --all-targets
-# GUI 日志: tail -f /tmp/x-video-downloader.log
+tail -f /tmp/x-video-downloader.log             # GUI 日志
+
+# 小鹅通端到端 (需 ego-lite 已登录)
+cargo test --bin x-video-downloader -- --ignored \
+  drission_client::tests::diag_download_all_lessons --nocapture
+
+# 单课程课节列表 smoke test (0.6s 验证 reqwest-fastpath)
+cargo test --bin x-video-downloader -- --ignored \
+  drission_client::tests::diag_reqwest_new_url --nocapture
 ```
 
 ---
 
-## 模块路径 (绝对)
+## 模块路径
 
-| 模块 | 路径 |
-|------|------|
-| 入口 | `/Users/hgxszhj/x_videos-dowloads/src/main.rs` |
-| GUI | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/` |
-| 下载 | `/Users/hgxszhj/x_videos-dowloads/src/downloader/` |
-| HLS | `/Users/hgxszhj/x_videos-dowloads/src/hls/` (parser, downloader, crypto) |
-| 解析 | `/Users/hgxszhj/x_videos-dowloads/src/platform/` (ResolverRegistry singleton) |
-| 下载命令 | `/Users/hgxszhj/x_videos-dowloads/src/commands/download/` |
-| URL 工具 | `/Users/hgxszhj/x_videos-dowloads/src/utils/url_matcher.rs` |
-| CDP 浏览器 + 登录检测 | `/Users/hgxszhj/x_videos-dowloads/src/drission_client.rs` |
-| 配置 | `/Users/hgxszhj/x_videos-dowloads/src/config.rs` |
-| 持久化 | `/Users/hgxszhj/x_videos-dowloads/src/history.rs` |
-
-## GUI 子模块
-
-| 文件 | 路径 |
-|------|------|
-| App 入口 + TopBar + hooks | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app.rs` |
-| 单视频卡片 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_video_card.rs` |
-| 批量视频列表 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_batch_video.rs` |
-| 批量进度面板 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_batch_progress.rs` |
-| 课程池面板 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_course_pool.rs` |
-| 设置面板 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_settings.rs` |
-| 历史记录 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/app_history.rs` |
-| 公共组件 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/components.rs` |
-| 业务逻辑 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/handlers.rs` |
-| 进度轮询 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/poller.rs` |
-| 状态/Store | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/store.rs` |
-| 类型 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/types.rs` |
-| 主题 | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/theme.rs` |
-| 事件 Action | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/actions.rs` |
-| 拖放 URL bridge | `/Users/hgxszhj/x_videos-dowloads/src/gui_dioxus/bridge.rs` |
-
----
+| 模块 | 绝对路径 |
+|------|----------|
+| 入口 | `src/main.rs` |
+| GUI 根 | `src/gui_dioxus/` (app, app_video_card, app_batch_video, app_batch_progress, app_course_pool, app_settings, app_history, components, handlers, poller, store, types, theme, actions, bridge) |
+| 下载 | `src/downloader/` (mod, config, parallel, merge) + `src/core/segment.rs` |
+| HLS | `src/hls/` (mod, parser, downloader, crypto) |
+| 解析 | `src/platform/` (ResolverRegistry singleton) |
+| 命令 | `src/commands/download/` (mod, dispatch, history_writer, strategy_direct/native/ytdlp) |
+| CDP 浏览器 + 登录检测 | `src/drission_client.rs` |
 
 ## 解析器
 
-| 域名 | 解析器 | 课程池 | 文件 |
-|------|--------|-------|------|
-| x.com / twitter.com | FxTwitterResolver (API) | ❌ | `src/platform/fxtwitter.rs` |
-| tiktok.com | TikTokResolver (需 msToken) | ❌ | `src/platform/tiktok.rs` |
-| douyin.com | DouYinResolver (需 msToken) | ❌ | `src/platform/douyin.rs` |
-| bilibili.com | BilibiliResolver (yt-dlp) | ❌ | `src/platform/bilibili.rs` |
-| **vip.tulingpyton.cn / tulingpyton.cn** | **TulingPythonResolver (Drission CDP + 持久 profile)** | **✅ 递归 list_collection** | `src/platform/tulingpyton.rs` + `src/platform/tulingpython.rs` |
-| nnyy.in | NnyyResolver | ❌ | `src/platform/nnyy.rs` |
-| youtube.com | YouTubeResolver | ❌ | `src/platform/youtube.rs` |
-| 其他 | YtDlpResolver (fallback) | ❌ | `src/platform/ytdlp.rs` |
+| 域名 | 解析器 | 课程池 |
+|------|--------|-------|
+| x.com / twitter.com | FxTwitterResolver (API) | ❌ |
+| tiktok.com | TikTokResolver (需 msToken) | ❌ |
+| douyin.com | DouYinResolver (需 msToken) | ❌ |
+| bilibili.com | BilibiliResolver (yt-dlp) | ❌ |
+| **vip.tulingpyton.cn** | TulingPythonResolver (Drission CDP) | ✅ 递归 |
+| nnyy.in | NnyyResolver | ❌ |
+| youtube.com | YouTubeResolver | ❌ |
+| 其他 | YtDlpResolver (fallback) | ❌ |
+
+**智学云 (`kc.zhixueyun.com`) 解析器已存在但未启用** — 文件 `src/platform/zhixueyun.rs` (748 行) + `src/platform/zhixueyun_token/mod.rs` (94 行),设计为 SSO + Bearer__token 直击 API + 课程章节递归。详见 `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/zhixueyun-*.md`。
 
 ---
 
-## 小鹅通课程池 (Drission CDP)
+## 小鹅通课程池 — 关键路径
 
-### 入口
-- GUI: `course_action.call(url)` → `fetch_course_collection_impl` (`src/gui_dioxus/handlers.rs:221`)
+- GUI 入口: `course_action.call(url)` → `fetch_course_collection_impl` (`src/gui_dioxus/handlers.rs:221`)
 - 登录窗口: `open_tuling_login(url)` (`src/gui_dioxus/handlers.rs:285`)
-
-### 登录态检测 (macOS SQLite+Keychain + Drission fallback)
-```
-1. macOS:is_logged_in_via_ego_lite()
-   → decrypt_ego_lite_cookies_for_vip() — rusqlite 读 ~/Library/Application Support/Citro Labs/ego lite/Default/Cookies
-   → security find-generic-password -s "ego safe storage" -w 拿 Keychain 密码
-   → PBKDF2-HMAC-SHA1(password, "saltysalt", 1003, 16) 派生 AES-128 密钥
-   → AES-128-GCM 解密 v10 cookies (Cookie value)
-   → reqwest 带这些 cookies 打 xe.micro_page.common.public.data.get → 读 user_info.user_id
-2. fallback (非 macOS / ego-lite 未开 / SQLite 失败): is_logged_in()
-   → check_login_at(project_profile, url) — Drission headless 启动 + 拦 common.public.data.get
-```
-
-### profile 目录 (2026-08-01 第三次重构)
-```
-~/Library/Caches/com.xvd.x-video-downloader/tulingpyton_profile/   ← 唯一,仅 Drission 使用
-```
-**不再复用**系统浏览器 (ego-lite / Chrome) profile — 跨浏览器 Keychain "<ProductName> Safe Storage" 加密密钥不匹配,服务端 Code:2506。
-
-### 关键实现 (`src/drission_client.rs`)
-| 功能 | 行/函数 |
-|------|---------|
-| `default_profile_dir()` | 永远返回项目自建 profile (系统浏览器 profile 已被放弃) |
-| `is_profile_dir_in_use()` | SingletonLock / SingletonCookie 探测 |
-| `LoginStatus` enum | `LoggedIn` / `SessionExpired` / `NotLoggedIn` |
-| `is_logged_in(url)` | macOS 优先 SQLite+Keychain 解密 ego-lite cookies,fallback Drission headless |
-| `decrypt_ego_lite_cookies_for_vip()` (macOS) | rusqlite + security CLI + PBKDF2 + AES-GCM 解密 v10 cookies |
-| `is_logged_in_via_ego_lite()` (macOS) | 用上面 cookies 调 reqwest → user_info |
-| `check_login_at(profile, url)` | 单 URL Drission 探针 (fallback) |
-| `log_candidate_profiles()` | 扫描 Application Support 诊断 |
-| `open_login_window(url)` | macOS AppleScript 开 ego-lite;其他平台 Drission headed |
-| `open_login_window_via_ego_lite(url)` (macOS) | osascript open location |
-| 翻页 helper | `read_total_and_page_size`, `extract_pagination_params`, `build_pagination_js`, `merge_paginated_items` |
-
-### 登录态分类 (`is_logged_in_via_ego_lite` / `check_login_at`)
-- `LoggedIn`        `data.user_info.user_id` 是非空字符串
-- `SessionExpired`  msg 含 "Code:2506" / "当前用户不存在" (cookie 还在但服务端拒绝识别)
-- `NotLoggedIn`     user_info 为 null 或缺失
-
-### `src/platform/tulingpyton.rs` 关键实现
-- `list_collection(url)` 递归展开 (`visited: HashSet` 防环)
-- 字段映射: `extract_video_list` 识别 3 套别名 (spu_id/title, resource_id/resource_title, id/name)
-- `l_*` 优先保留为课节
-- `jump_url` 改写: `/v4/course/alive/l_xxx?type=2` → `/p/t_pc/live_pc/pc/l_xxx?product_id=...&app_id=...` (`extract_product_id_from_url`)
-
-### `src/platform/tulingpython.rs` 关键实现
-- CDP 抓课节 API: `drission-rs` (替代旧 Python `patchright`)
-- `capture`: 监听 `m3u8` + `xe.`，多响应时按 `l_*` / `p_*` 前缀区分优先级
-- `run_js` 注入 `video.play()` + 点 `[class*=play]`
-- column.items 翻页: `data.total > 20` 时由 `DrissionClient::capture` 自动注入 JS 调 page 2..N
-
-### 测试 (232 passed / 8 ignored)
-
-| 测试 | 文件 | 用途 |
-|------|------|------|
-| `course_api_substring_matches_real_tuling_course_endpoints` | `src/drission_client.rs` | 防 COURSE_API 拼错 |
-| `extract_video_list_handles_course_nav_spuid_and_title` | `src/platform/tulingpyton.rs` | spu_id/title 别名 |
-| `extract_video_list_handles_column_items_resource_id_and_title` | `src/platform/tulingpyton.rs` | resource_id 别名 |
-| `extract_product_id_from_url_recognises_both_keys` | `src/platform/tulingpyton.rs` | jump_url 改写前提 |
-| `canonicalize_url_strips_query_and_fragment` | `src/platform/tulingpyton.rs` | 防环 visited key |
-| `read_total_and_page_size_handles_both_field_names` | `src/drission_client.rs` | 翻页 total 字段兼容 |
-| `extract_pagination_params_reads_jump_url_or_fallback` | `src/drission_client.rs` | column_id 提取 |
-| `build_pagination_js_emits_correct_fetch_calls` | `src/drission_client.rs` | 翻页 JS 模板 |
-| `test_profile_dir_returns_self_built_under_project_cache` | `src/drission_client.rs` | 验证 default_profile_dir 走项目自建 |
-| `integration_course_pool` | `tests/` | 真实 E2E 递归拉课节 |
-| `integration_diag_lesson_player` | `tests/` | 课节页深度诊断 |
-| `single_video_download_e2e` | `tests/` | A/B/C 三模式 (A=小鹅通, B=BYPASS_LOGIN, C=USE_PUBLIC_TEST) |
-| `integration_login_and_capture` | `tests/` | 交互式 headed 登录 |
-| `test_build_title_*` (5) | `src/fxtwitter/` | FxTwitter 标题回退链 4 级 |
-| `test_recommended_segments_for_size` | `src/website_profile.rs` | 文件大小 3 分桶 |
-| `test_error_display_label_*` (3) | `src/gui_dioxus/types.rs` | ErrorDisplay 标签 |
-| `test_escape_applescript_string_*` (3) | `src/gui_dioxus/bridge.rs` | AppleScript 注入防御 |
-| `diag_is_logged_in_real_profile` | `src/drission_client.rs` | 隔离诊断 is_logged_in |
+- 登录态检测: `is_logged_in(url)` (`src/drission_client.rs`)
+  - macOS: SQLite + Keychain 解密 ego-lite cookies (`decrypt_ego_lite_cookies_for_vip`)
+  - fallback: Drission headless (`check_login_at`)
+- 3 态返回: `LoggedIn` / `SessionExpired` / `NotLoggedIn`
+- **临时 profile** (每条课节独立): `std::env::temp_dir()/xvd_diag_<pid>_<idx>` —— 防 stgw 400 + 隔离 stale cookies
+- 翻页 helper: `read_total_and_page_size`, `extract_pagination_params`, `build_pagination_js`, `merge_paginated_items` (`src/drission_client.rs`)
 
 ---
 
-## 关键实现经验
+## HLS 下载关键实现 — `src/hls/`
 
-| # | 规则 | 文件 |
-|---|------|------|
-| 1 | URL 匹配用精确域名: `host_lower == p \|\| host_lower.ends_with(&format!(".{}", p))` | `src/utils/url_matcher.rs` |
-| 2 | 错误消息净化: 移除 token/session/msToken/csrf/sig | `src/commands/download/history_writer.rs` |
-| 3 | 进度阈值过滤: ≥ 1% 才回调 UI | `src/downloader/mod.rs` |
-| 4 | Cookie 文件权限 0o600 (`#[cfg(unix)]` + `Permissions::from_mode(0o600)`) | `src/platform/*.rs` |
-| 5 | 分段失败不回退,直接报错 | `src/hls/downloader.rs` |
-| 6 | Mutex poison 自动重建: `unwrap_or_else(\|err\| err.into_inner())` + `tracing::warn!` | 全局 |
-| 7 | m3u8 签名 TTL 不缓存,逐项实时拦截 | `src/platform/tulingpython.rs` |
-| 8 | CDP profile 单实例 → 解析串行,下载可并发 (Semaphore) | `src/gui_dioxus/handlers.rs:311` |
-| 9 | Dioxus Store 非 Sync → 跨 task 进度用原子 slot + `use_effect` 500ms 轮询 | `src/gui_dioxus/poller.rs` |
-| 10 | 路径安全: 复用 `crate::types::sanitize_filename` 防路径遍历 | `src/gui_dioxus/handlers.rs:481` |
-| 11 | CDP 监听过宽 → 数据 list 重复: 多响应按 `l_` / `p_` 前缀区分优先级 | `src/platform/tulingpython.rs` |
-| 12 | CDP 解析跳板: 优先 `jump_url` 而非 `page_url+resource_id` (后者触发登录跳转) | `src/platform/tulingpyton.rs` |
-| 13 | 媒体专属推文无文字 → title 回退链 `text → @screen_id → x_tweet_id → x_video` | `src/fxtwitter/` |
-| 14 | EMA 50/50 权重: 同会话第 2 次下载即反映新测速 (旧公式收敛太慢) | `src/website_profile.rs` |
-| 15 | 按文件大小分段: `<50MB→1段 / 50-500MB→4段 / >500MB→max`;`video.twimg.com` 锁 `max_threads=1` | `src/downloader/mod.rs` |
-| 16 | `VideoDownloader::download` 改 `&mut self` → 5 个 call site 必须加 `let mut` | 全局 |
-| 17 | Dioxus hook placement: `use_drop` 必须在 render 期注册,Signal 桥接是推荐模式 | `src/gui_dioxus/app.rs` |
-| 18 | mount-once guard: 读 state 的 use_effect 会重跑,需 component-scoped `Signal<bool>` | `src/gui_dioxus/poller.rs` |
-| 19 | canonical `is_downloading` flag: `AppState.is_downloading` 是 poller gate,批量按钮必须同步 | `src/gui_dioxus/app.rs` |
-| 20 | bounds check 一次到位: `get_mut(idx)` 单次检查 + 单次写入 | `src/gui_dioxus/app_batch_progress.rs` |
-| 21 | AppleScript 注入防御: 先反斜杠再双引号 (反之重复 escape),控制字符 → 空格 | `src/gui_dioxus/bridge.rs` |
-| 22 | 结构化错误标签: ErrorPanel 硬编码字符串违反 GUI 规则,6 个类型 + fallback | `src/gui_dioxus/types.rs` |
-| 23 | dead_code 精确注解: 14 处 `#[allow(dead_code)]` 逐项 + 注释保留原因 | 全局 |
-| 24 | app.rs 按 feature 拆分: 7 个 < 200 行子组件 + app.rs 651 行 (-45%) | `src/gui_dioxus/app.rs` |
-| 25 | 死代码字段清理: 14 处 L12 注解中 11 处安全删除 (KEEP 3 处: speed/speed_arc/cancel_flag) | `src/gui_dioxus/types.rs` |
-| 26 | `is_logged_in(url)` 必须用调用方传入的 URL (SPA 首页不触发 user_info API → 误判未登录) | `src/gui_dioxus/handlers.rs:234` + `src/drission_client.rs:101` |
-| 27 | macOS app profile 路径 ≠ Bundle ID: ego-lite 真实路径是 `~/Library/Application Support/Citro Labs/ego lite/` (父目录是发行公司 Citro Labs) | `src/drission_client.rs:57-82` |
-| 28 | LoginStatus 必须 3 态: LoggedIn / SessionExpired / NotLoggedIn。Code:2506 ≠ NotLoggedIn (cookie 还在但服务端不认),GUI 需分别给"重扫码"和"打开登录窗口"指引 | `src/drission_client.rs` + `src/gui_dioxus/handlers.rs` |
-| 29 | macOS Chromium cookie 加密密钥 = Keychain entry "<ProductName> Safe Storage"(ego-lite 实测是 **"ego safe storage"** 小写)。跨浏览器互解不出对方 cookies → 服务端 Code:2506。**唯一可靠方案**: 直接读 ego-lite SQLite + Keychain 解密出 cookies,再 reqwest 直发 API — 不切 profile、不开新浏览器、不靠 AppleScript(ego-lite 字典无 execute javascript) | `src/drission_client.rs` (`decrypt_ego_lite_cookies_for_vip`) |
-| 30 | `tracing` subscriber 必须在实际跑日志的代码路径上 init。`cli.gui → run_gui()` 早 return 时,main() 里的 init 是 dead code — GUI 日志全丢。**位置**: `src/gui_dioxus/mod.rs::run_gui()` 顶部 | `src/main.rs` + `src/gui_dioxus/mod.rs` |
-| 31 | LoginStatus 判定必须严格:`user_id` 是 **非空字符串** 才算登录。`user_id: null` (Code:2506 响应常见) 用 `is_some()` 误判 true。Code: `uid = ui.get("user_id").and_then(\|v\| v.as_str()).filter(\|s\| !s.is_empty())` | `src/drission_client.rs` (`is_logged_in_via_ego_lite` + `check_login_at`) |
-| 32 | **`TempDir::new_in(user_dir)` 是泄漏的反模式**: `Drop` 不保证跑 (`kill -9` / 信号 / GUI 强制退出),必在用户目录留 `.tmpXXX/` 孤儿。**两条根治路径**: ① `TempDir::new()` 走 OS temp (推荐,简单);② merge 阶段写到 `<output>.tmp` + `std::fs::rename()` atomic rename 到 `<output>` (POSIX `rename(2)` 同 FS 原子)。后者同时保证 merge 中断 → 残留 `*.mp4.tmp` 而不是半截 `<output>` | `/Users/hgxszhj/x_videos-dowloads/src/downloader/parallel.rs` (`TempDir::new()`) + `/Users/hgxszhj/x_videos-dowloads/src/downloader/merge.rs` (`append_tmp_suffix` + atomic rename) + `/Users/hgxszhj/x_videos-dowloads/src/types.rs` (`validate_output_path` 标 dead_code) |
-| 33 | per-segment 回调节流: 1000+ 分段视频会触发回调风暴,按 `max(1, total/50)` 取模节流 (≤50 次) + GUI 端 500ms 轮询二次吃掉 | `src/hls/downloader.rs` |
-| 34 | 网络耦合代码离线测试: 抽离 `parse_channel_items(json) -> Option<(Vec, Vec)>` 纯函数,网络路径用 Option=None 表示"非该路径",消除 `#[ignore]` E2E 留下的解析盲点 | `src/platform/tulingpython.rs` |
+| 机制 | 函数 / 位置 |
+|------|------|
+| 并发限流 | `Semaphore::new(self.config.max_concurrent)` |
+| 分段重试 | `download_segment_with_retry` (exponential backoff + Retry-After 优先) |
+| 取消标志 | `cancel_flag: Arc<AtomicBool>` |
+| 进度回调 | per-segment 节流 ≤50 次,累计字节 + 起始时间算 speed |
+| 顺序合并 | 不读所有分段到内存,逐段 read + write |
+| 加密 (AES-128-CBC) | `decrypt_segment` (大段 ≥1MB 走 `spawn_blocking`) |
+| **`extract_base_url`** | **保留 m3u8 所在目录路径,签名 CDN 对路径敏感** |
 
 ---
 
@@ -213,66 +298,36 @@ cargo test --quiet && cargo clippy --quiet --all-targets
 
 | 检查 | 结果 |
 |------|------|
-| `cargo test` | ✅ 232 passed, 8 ignored (2026-08-05 rustfmt + 离线 E2E 覆盖) |
-| `cargo check` | ✅ 0 warnings |
-| `cargo clippy --all-targets` | ✅ 0 warnings |
+| `cargo test` | ✅ **234 passed, 0 failed, 19 ignored** (含 4 个 drission_client 诊断测试 + 5 个 tulingpython fixture 测试 `#[ignore]`) |
+| `cargo fmt --check` | ✅ 0 diff (本会话 working tree 全部 fmt-clean) |
+| `cargo clippy --all-targets` | ✅ 0 warning (本会话修了 GUI 5 + drission_client.rs 5,均未 commit) |
 
 ## 已知问题
 
-| 问题 | 处理 |
-|------|------|
-| 抖音 "Fresh cookies needed" | 导出 Netscape 格式 Cookie |
-| TikTok 403/HTML | 配置 msToken |
-| tokio shutdown panic | `2>/dev/null` 抑制 stderr |
-| 小鹅通未登录 → "内容暂无法观看" | GUI 启动 AppleScript 打开 ego-lite (macOS) 或 Drission headed (其他平台),让用户扫码 |
-| 小鹅通登录过期 (Code:2506) | is_logged_in 返回 SessionExpired,GUI 提示"重扫码" |
-| Chrome SingletonLock 残留 | `is_profile_dir_in_use` (`src/drission_client.rs:80`) 拦截 |
-| `~/Movies/.tmpXXX/` 历史 37 个孤儿 (2026-08-04 前) | 用户手动删,保留 `.tmpYtWA2P/`。代码侧已根治 (2026-08-04 commit 95b1fbb),新下载不会再产生 |
+- 抖音 "Fresh cookies needed" → 导出 Netscape 格式 Cookie
+- TikTok 403/HTML → 配置 msToken
+- tokio shutdown panic → `2>/dev/null` 抑制 stderr
+- 小鹅通未登录 → "内容暂无法观看",GUI 启动 AppleScript/Drission headed 让用户扫码
+- 小鹅通登录过期 (Code:2506) → `is_logged_in` 返回 `SessionExpired`
+- Chrome SingletonLock 残留 → `is_profile_dir_in_use` 拦截
+- **5 个 tulingpython 单元测试 `#[ignore]`** → `tests/fixtures/` 4 个 JSON 在 10 GB 清理中误删,需重新抓取真实登录响应后取消 ignore
+- **2 个 [[bench]] 已注释** → `benches/` 目录已删,后续如需 benchmark 重新建 `benches/` 后恢复
 
-## 调试
+## 本会话清理记录 (2026-08-09)
 
-```bash
-RUST_LOG=debug cargo run -- "URL" 2>/dev/null
+| 操作 | 文件 / 行数 | 原因 |
+|------|------------|------|
+| 删除 | `track_quality.sh` (2.3K) | 无人调用 |
+| 删除 | `spec_contract.py` (4.0K) | `specs/` 不存在,pre-commit 静默跳过 |
+| 删除 | `unlimited_ocr_{api,cli,mscope}.py` (5.6K) | "⏸️ 等 torch 2.4+" 从未完工 |
+| 删除 | `.git/hooks/pre-commit` (528) | 依赖已删的 `spec_contract.py` |
+| 删除 | `tests/fixtures/*.json` 4 个 | 10 GB 清理中误删 (已转 `#[ignore]`) |
+| 删除 | `benches/hls_concurrency.rs` + `hls_parse.rs` | 旧 benchmark,源码不在 |
+| 加 gitignore | `.codegraph/` `SkillOpt/` `.skillopt-sleep/` `.agents/` `.rtk/` `.understand-anything/` | 防 6.4 MB codegraph.db + 残留临时文件入库 |
+| 重写 | `README.md` (149 → 327 行) | 反映 Dioxus+Drisson 真实架构,加 CodeGraph 视图附录 |
 
-# 真实课节 E2E (模式 A: 已登录)
-SINGLE_VIDEO_URL='https://vip.tulingpyton.cn/.../l_xxx' \
-  cargo test single_video_download_e2e -- --ignored --nocapture
-# 模式 C: 完全跳过小鹅通,验证 HLS 下载链路
-USE_PUBLIC_TEST=1 cargo test single_video_download_e2e -- --ignored --nocapture
-
-# 交互式 headed 登录
-cargo test integration_login_and_capture -- --ignored --nocapture
-
-# 隔离诊断 is_logged_in (2026-08-01 加)
-cargo test diag_is_logged_in_real_profile -- --ignored --nocapture
-
-# GUI 日志
-tail -f /tmp/x-video-downloader.log
-
-# ego-lite profile 路径探测
-ls ~/Library/Application\ Support/ | grep -i ego
-
-# AppleScript 手动验证 (复制粘贴到 Script Editor)
-osascript -e 'tell application "ego lite"
-    activate
-    set URL of active tab of front window to "https://vip.tulingpyton.cn"
-    delay 2
-    set jsResult to (execute javascript "
-        var xhr = new XMLHttpRequest();
-        xhr.open("'"'"'POST'"'"'", "https://vip.tulingpyton.cn/xe.micro_page.common.public.data.get/1.0.0", false);
-        xhr.setRequestHeader("'"'"'Content-Type'"'"'", "application/json");
-        xhr.send(JSON.stringify({type: "pc"}));
-        xhr.responseText;
-    ")
-    return jsResult
-end tell'
-```
-
----
-
-## 项目记忆
+## 记忆入口
 
 - 跨项目决策/偏好 → `~/memory/`
 - 当日流水 → `~/memory/daily/{YYYY-MM-DD}.md`
-- "复盘" → 手动提炼到 preferences / decisions / projects
 - Agent 自动记忆索引 → `/Users/hgxszhj/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/MEMORY.md`
