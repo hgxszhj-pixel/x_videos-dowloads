@@ -14,6 +14,7 @@ use dioxus::prelude::*;
 
 use super::components::{CardShadow, CloseButton, WhiteCard};
 use super::handlers::{course_download_pool_impl, CourseItemSlot, CourseItemStatus};
+use super::store::get_history_items;
 use super::theme::{BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY};
 use super::types::{
     format_size_fraction, format_speed, AppState, AppStateStoreExt,
@@ -344,6 +345,9 @@ pub(super) fn CoursePoolPanel(
                                 (s, f, e) => format!("课程池下载结束: {s} 新下 / {f} 失败 / {e} 已存在。首条失败: {}", first_failure.as_deref().unwrap_or("")),
                             };
                             state_for_task.write().is_downloading = false;
+                            // 刷新下载历史 — course_download_pool_impl 内已 add_completed_download,
+                            // 这里拉一次让 HistoryPanel 立刻看到新课程项(否则要等下次 reload 才出现)
+                            state_for_task.write().history = get_history_items();
                             state_for_task.write().status_message = summary;
                         });
                     },

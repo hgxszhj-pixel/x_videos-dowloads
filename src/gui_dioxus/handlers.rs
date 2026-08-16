@@ -16,6 +16,8 @@ use crate::platform::{
 use crate::types::sanitize_filename;
 use crate::types::{DownloadProgress, DownloadRequest};
 
+use super::store::add_completed_download;
+
 use super::types::{
     format_file_size, CourseCollectionState, CourseItemDisplay, ErrorDisplay, VideoFormatDisplay,
     VideoInfoDisplay,
@@ -610,6 +612,7 @@ async fn download_resolved_concurrently(
         };
         let title = item.title.clone();
         let id = item.id.clone();
+        let page_url = item.page_url.clone();
         let slot = slots.get(i).cloned();
         let progress_cb: Arc<dyn Fn(crate::types::DownloadProgress) + Send + Sync> =
             Arc::new(move |dp: crate::types::DownloadProgress| {
@@ -634,6 +637,10 @@ async fn download_resolved_concurrently(
                         s.progress.store(10000, Ordering::Relaxed);
                         s.set_status(CourseItemStatus::Completed);
                     }
+                    // 记录到全局下载历史 (与单视频 app.rs:456 一致),
+                    // 否则课程池新下的视频不会出现在 "下载历史" 面板。
+                    // Exists (复用旧文件) 不记录 — 文件本身就在,留作未来用户清除重下时再记
+                    add_completed_download(title.clone(), page_url.clone(), None);
                     (id, "completed".into())
                 }
                 Err(msg) => {
