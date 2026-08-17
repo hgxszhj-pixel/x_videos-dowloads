@@ -105,6 +105,8 @@
 - **`~/.omo/omo.jsonc` 已统一到 grok-4.5**(2026-08-17 本会话续):12 个 builtin agents + 8 个 categories 全部走 `wuzuapi-grok/grok-4.5`;清掉 Antigravity/opencode-gpt-5.x/kimi 等失效引用;`opencode run` 默认 sisyphus 已确认走 grok-4.5
 - **`grok-4.5` 真实 context 上限未实测** — wuzuapi 标 "grok-4.5" 但 xAI 官方无此模型,实测 200K payload 时上游再次挂,未能确认 256K 是否保守。如出现频繁超限,可下调至 128K
 - **oh-my-opencode v3.4.0 → v4.19.4 有可用更新** — 暂不升级(避免 schema 变更破坏 omo.jsonc),需要时再说
+- **wuzuapi Anthropic 通道 forbidden**(2026-08-17 实测):curl 拿到 `Upstream access forbidden, please contact administrator` (HTTP 502, 3.77s)。与 Grok 通道的 `temporarily unavailable` 是不同错误——Anthropic 通道在该账户下未开通或无权限,需登录 wuzuapi 后台确认/开通
+- **`maxRetries:0` + `timeout:30000` 只作用于 SDK 层,OpenCode TUI 流式层不生效**(2026-08-17 实测):Anthropic 跑 128 秒才报错(curl 仅 3.77s)。fail-fast 在 curl 隔离测试时有效,OpenCode 内仍需 ~2 分钟。如要更激进 fail-fast,需查 OpenCode 是否有 TUI 层 timeout 配置或 plugin 层 retry 开关
 
 ---
 
