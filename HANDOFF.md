@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 — grok 设为默认 + gitleaks pre-commit 拦截密钥)
+**更新**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper)
 **上次**: 2026-08-16 (P1 enum 重构 + 2 个 bug 修复:课程池不进历史 / 进度条假 56%)
 **再上次**: 2026-08-16 (P1 重构 + 进度条 UX + Dioxus Store 修复三件事,见下文合并章节)
 **更早**: 2026-08-13 (GUI 响应瓶颈 P0/P1/P2 + runtime 升级 multi_thread)
@@ -150,16 +150,7 @@ WUZUAPI_NO_PROBE=1 WUZUAPI_BASE_URL=https://wuzuapi.xyz/v1 opencode ...
 - **`maxRetries:0` + `timeout:30000` 只作用于 SDK 层,OpenCode TUI 流式层不生效**(2026-08-17 实测):Anthropic 跑 128 秒才报错(curl 仅 3.77s)。fail-fast 在 curl 隔离测试时有效,OpenCode 内仍需 ~2 分钟。如要更激进 fail-fast,需查 OpenCode 是否有 TUI 层 timeout 配置或 plugin 层 retry 开关
 - **wrapper 探测增加 ~3s 启动延迟**(主域通时):对长时间 TUI 会话可忽略;若在意可走 `WUZUAPI_NO_PROBE=1` 路径
 - **failover 仅覆盖"某域名被墙/DNS 污染/边缘节点局部故障"**:wuzuapi 后端整体挂掉时两域名同时不可用,wrapper 会 exit 1,无更深 fallback
-
----
-
-- **`wuzuapi-grok` provider `apiKey` 仍明文存储在 `opencode.json`**(同其他 provider 风格,且 `.opencode/auth.json` 已在 `~/.gitignore_global`);若未来纳入 dotfiles 仓库需统一移到 `.env` + 环境变量插值
-- **未启用 GPG commit 签名** (`commit.gpgsign`) — 需要时再说
-- **`~/.omo/omo.jsonc` 已统一到 grok-4.5**(2026-08-17 本会话续):12 个 builtin agents + 8 个 categories 全部走 `wuzuapi-grok/grok-4.5`;清掉 Antigravity/opencode-gpt-5.x/kimi 等失效引用;`opencode run` 默认 sisyphus 已确认走 grok-4.5
-- **`grok-4.5` 真实 context 上限未实测** — wuzuapi 标 "grok-4.5" 但 xAI 官方无此模型,实测 200K payload 时上游再次挂,未能确认 256K 是否保守。如出现频繁超限,可下调至 128K
-- **oh-my-opencode v3.4.0 → v4.19.4 有可用更新** — 暂不升级(避免 schema 变更破坏 omo.jsonc),需要时再说
-- **wuzuapi Anthropic 通道 forbidden**(2026-08-17 实测):curl 拿到 `Upstream access forbidden, please contact administrator` (HTTP 502, 3.77s)。与 Grok 通道的 `temporarily unavailable` 是不同错误——Anthropic 通道在该账户下未开通或无权限,需登录 wuzuapi 后台确认/开通
-- **`maxRetries:0` + `timeout:30000` 只作用于 SDK 层,OpenCode TUI 流式层不生效**(2026-08-17 实测):Anthropic 跑 128 秒才报错(curl 仅 3.77s)。fail-fast 在 curl 隔离测试时有效,OpenCode 内仍需 ~2 分钟。如要更激进 fail-fast,需查 OpenCode 是否有 TUI 层 timeout 配置或 plugin 层 retry 开关
+- **wrapper 启用需要 shell alias** (`alias opencode='~/bin/opencode-failover.sh opencode'` 写到 `~/.zshrc` 即可);没加 alias 时仍走 `~/.zshrc` 默认值,只是少了自动切换能力
 
 ---
 
