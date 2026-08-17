@@ -1,8 +1,8 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-16 (P1 enum 重构 + 2 个 bug 修复:课程池不进历史 / 进度条假 56%)
-**上次**: 2026-08-16 (进度条 UX 重构 — 顶部 ETA + 批量聚合速度 + 课程池 per-row 速度/大小;**课程池跳过已下载文件**)
-**再上次**: 2026-08-16 (GUI 课程池/批量进度 UI 卡在 pending 修复 — Dioxus Store 字段订阅)
+**更新**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 — grok 设为默认 + gitleaks pre-commit 拦截密钥)
+**上次**: 2026-08-16 (P1 enum 重构 + 2 个 bug 修复:课程池不进历史 / 进度条假 56%)
+**再上次**: 2026-08-16 (P1 重构 + 进度条 UX + Dioxus Store 修复三件事,见下文合并章节)
 **更早**: 2026-08-13 (GUI 响应瓶颈 P0/P1/P2 + runtime 升级 multi_thread)
 **更早**: 2026-08-09 (小鹅通端到端下载 6 节课 8.5GB 验证通过 + 流水线转 .mp4)
 
@@ -26,132 +26,134 @@
 
 ---
 
-## Session: 2026-08-16 — P1 enum 重构 + 2 个用户反馈的 bug 修复
+## Session: 2026-08-17 — OpenCode 多 provider 配置 + 全局 git 安全防御
 
-### 改动 1: P1 — `set_status` + `slot_status_to_str` 并行 switch → `CourseItemStatus` 枚举
+### 改动 1: OpenCode 1.18.18 接入 wuzuapi.com 多模型代理
 
-`handlers.rs::set_status(&str)` 与 `app_course_pool.rs::slot_status_to_str(u8)` 之前是两个独立的 `match`,任一处漏写新 status 就会导致 "写 6 但 UI 永远显示 pending" 的隐性 bug。
+合并参考文档 `/Users/hgxszhj/Documents/wuzuapi.txt` 到 `~/.config/opencode/opencode.json`:
 
-**改动**: 新增 `CourseItemStatus` 枚举 (7 variants: Pending / Resolving / Downloading / Completed / Failed / Skipped / Exists) + `as_str` / `as_u8` / `from_u8` / `FromStr` impls。`set_status` 签名改为 `&CourseItemStatus` — 编译器强制覆盖所有 variants。`slot_status_to_str` 委托给 `CourseItemStatus::from_u8 + .as_str()`,共享同一枚举。
+| Provider | SDK 包 | 模型 |
+|---|---|---|
+| `anthropic` (必须此名) | `@ai-sdk/anthropic` | claude-fable-5, opus-5, sonnet-5, haiku-4-5 |
+| `wuzuapi-grok` (改名) | `@ai-sdk/openai-compatible` | grok-4.5(裁剪后仅 1 个) |
 
-**8 个 caller 全部迁移**: handlers.rs Skipped/Exists/Resolving/Failed/Downloading/Completed 各 1 次,Failed 多次。
+**SDK 命名约束**(反向工程经验,已写入 `~/.claude/projects/.../memory/opencode-ai-sdk-provider-key-constraints.md`):
+- `@ai-sdk/anthropic` 硬编码 provider key 必须叫 `anthropic`,改名后模型注册为空
+- `@ai-sdk/openai-compatible` 允许任意名
 
-### 改动 2: Bug — 课程池新下的视频不进 "下载历史" 面板
+**清理 Antigravity**(`opencode-antigravity-auth@1.6.0` 插件 + 5 个 `antigravity-*` 模型条目)。删后原生 google 模型仍由 OpenCode 内置自动注册,保留 `provider.google` 空块维持 schema 合法。
 
-用户截图反馈:课程池跑完后 item 6 ✅ 已完成 但 "下载历史" 显示 "暂无下载记录"。
+**缓存清理** 释放 ~507M:`~/.cache/opencode/` (models.json + packages)、`antigravity-accounts.json`、`oh-my-opencode.json.bak.2026-01-24*`。
 
-**根因**: `add_completed_download(title, url, path)` 在单视频 (`app.rs:456`) 与批量 (CLI `commands/download`) 路径都调用,但 `course_download_pool_impl::download_resolved_concurrently` 完成后没调。
+**全局默认模型**: `wuzuapi-grok/grok-4.5`(`opencode.json` 顶层 `model` 字段)。
 
-**修复**: handlers.rs Ok 分支追加 `add_completed_download(title.clone(), page_url.clone(), None)` (Exists 不记,避免与历史重复);`app_course_pool.rs` pool 完成后 `state.write().history = get_history_items()` 立即刷新 HistoryPanel (否则要等下次 reload)。
+**当前 `~/.local/share/opencode/auth.json` 共 9 个 provider**:`wuzuapi-grok`、`google`(OAuth)、`deepseek`、`openrouter`、`zai-coding-plan`、`zhipuai-coding-plan`、`minimax-cn`、`minimax-cn-coding-plan`、`anthropic`(本会话后续从 `opencode.json` 迁移,见改动 3)。
 
-### 改动 3: Bug — 底部进度条在解析阶段显示虚假 56%
+### 改动 2: 全局 git 安全防御
 
-用户截图:8 项 exists (✓ 已下载) + 1 项 🔍 解析中 + 0 项真在 Downloading,底部 "下载中… 56%"。
+**a. 装 gitleaks 8.30.1**(`brew install gitleaks`)
 
-**根因**: polling task 聚合把全部 9 项取平均 — 5 × 100% (exists) + 4 × 0% (resolving/pending) = 500 / 9 ≈ 55.5% ≈ 56%。数学正确但语义错位 (item 6 还没开始下载)。
+**b. 扩展 `~/.gitignore_global`**:加 14 个密钥文件名 glob(`*.pem`、`*.key`、`*.p12`、`*.pfx`、`*.p8`、`*.keystore`、`service-account*.json`、`*-credentials.json`、`.aws/credentials`、`.gcp/credentials`、`id_rsa`/`id_ed25519`/`id_ecdsa`/`id_dsa`、`.opencode/auth.json`)。保留用户原有 3 条(`*~`、`.DS_Store`、`**/.claude/settings.local.json`)。
 
-**修复**: 提取 `aggregate_course_progress(snapshot: &[(u32, u8, u64, u64)]) -> Option<f32>` helper,只统计 active 状态 (`Downloading` / `Completed` / `Failed`)。`Pending` / `Resolving` / `Skipped` / `Exists` 不计入。无 active → `None` → 进度条保持 0%。同次顺手:
-- 加 `CourseItemStatus::is_terminal()` 方法,polling 退出守卫 `(3..=6).contains(st)` → `is_some_and(is_terminal)` 去掉 magic 数字
+**踩坑** — 第一版用 `*secret*`/`*credentials*` 宽 glob,导致 smoke test 时含 "secret" 的正常文件名被 git 忽略 → gitleaks 扫不到东西。修正为**只匹配具体文件名**,不匹配路径关键字。
 
-### 改动文件
+**c. 改 `~/.git-hooks/pre-commit-user`**(用户原有的 Rust clippy 脚本;GitButler 管理的 `pre-commit` 不动):在顶部插入 gitleaks 扫描,**所有仓库生效**(不只 Rust)。检测到 secret → exit 1 阻止 commit。Smoke test 通过:
+- 干净文件 → exit 0
+- 含 `sk-proj-...` / `ghp_...` / `AKIA...` → exit 1 拦截
 
-| 文件 | 改动 |
-|------|------|
-| `src/gui_dioxus/handlers.rs` | `CourseItemStatus` 枚举 + 4 个 impl + `set_status` 改签名 + `add_completed_download` 调用 + `is_terminal()` 方法 + 5 个 enum 测试 + 1 个 is_terminal 测试 |
-| `src/gui_dioxus/app_course_pool.rs` | `slot_status_to_str` 委托 enum + 新增 `aggregate_course_progress` helper + 5 个聚合测试 + 移除 `(3..=6)` magic + pool 完成后刷新 history |
-| `HANDOFF.md` | (本文件) |
+**链路**: `git commit` → GitButler `pre-commit` → `pre-commit-user` → gitleaks protect --staged → (Rust 仓库) cargo clippy + cargo test
 
-**验证**: `cargo build` ✅ | `cargo clippy --all-targets` ✅ 0 warning | `cargo test` ✅ **256 passed, 0 failed, 19 ignored** (本会话 250 → 256, +6 个新测试:5 个聚合 + 1 个 is_terminal)
+**d. 备份**(便于回退):
+- `~/.gitconfig.bak.2026-08-17T06-46-44`
+- `~/.config/opencode/opencode.json.bak.2026-08-17T06-07-52` (合并 wuzuapi 前)
+- `~/.config/opencode/opencode.json.bak.rename.2026-08-17T06-47-49` (provider 改名前)
+- `~/.local/share/opencode/auth.json.bak.rename.2026-08-17T06-47-49` (provider 改名前)
+
+### 改动 3: 失败快速修复 + grok-4.5 context 上限校验
+
+**问题**: `opencode run -m wuzuapi-grok/grok-4.5 "ping"` 挂起 **308 秒**,TUI 只显示 `Sisyphus online` 横幅(oh-my-openagent 启动信息),"ping" 从未被处理。
+
+**根因链**(诊断套路已写入 memory `opencode-wuzuapi-upstream-silent-retry.md`):
+1. wuzuapi 把上游 Grok 失败伪装成 OpenAI 兼容 `{"type":"upstream_error"}` → 反而触发 AI SDK 自动重试
+2. `@ai-sdk/openai-compatible` 默认 `maxRetries: 2` + 指数 backoff(~10s)
+3. OpenCode TUI 额外重试层 + 流式 socket hang → 累计 ~5 分钟
+
+**隔离测试**: curl 直接打 wuzuapi,6.79s 拿到 `upstream_error` (HTTP 502),确认非网络/Key 问题。
+
+**修复**(3 处配置改动):
+| 文件 | 字段 | 变更 |
+|------|------|------|
+| `opencode.json` | `provider.wuzuapi-grok.options.maxRetries` | `0`(不重试 upstream_error) |
+| `opencode.json` | `provider.wuzuapi-grok.options.timeout` | `30000`(单请求最多 30s) |
+| `opencode.json` | `provider.anthropic.options` | 同步加 `maxRetries: 0` + `timeout: 30000`(预防 anthropic 上游挂同样挂起) |
+| `opencode.json` | `provider.wuzuapi-grok.models.grok-4.5.limit.context` | `500000 → 256000`(对齐官方 Grok-4 256K,避免超限被截断) |
+| `auth.json` | 新增 `anthropic.key` | 从 `opencode.json.provider.anthropic.options.apiKey` 迁移(消除双存储分裂,与 8 个其他 provider 一致) |
+| `opencode.json` | 删除 `provider.anthropic.options.apiKey` | 见上行 |
+
+**效果**: `opencode run -m wuzuapi-grok/grok-4.5 "ping"` 从 **308s → 41.6s (7.4x 提速)**,响应正常。上游挂时 fail-fast 应在 ~30s 内报错。
+
+**备份**:
+- `opencode.json.bak.failfast.2026-08-17T08-28-43`
+- `opencode.json.bak.context-fix.2026-08-17T08-41-47`
+- `opencode.json.bak.sync-anthropic.2026-08-17T08-46-43`
+- `auth.json.bak.sync-anthropic.2026-08-17T08-46-43`
+
+### 已知风险 / 未做
+
+- **`wuzuapi-grok` provider `apiKey` 仍明文存储在 `opencode.json`**(同其他 provider 风格,且 `.opencode/auth.json` 已在 `~/.gitignore_global`);若未来纳入 dotfiles 仓库需统一移到 `.env` + 环境变量插值
+- **未启用 GPG commit 签名** (`commit.gpgsign`) — 需要时再说
+- **`~/.omo/omo.jsonc` 已统一到 grok-4.5**(2026-08-17 本会话续):12 个 builtin agents + 8 个 categories 全部走 `wuzuapi-grok/grok-4.5`;清掉 Antigravity/opencode-gpt-5.x/kimi 等失效引用;`opencode run` 默认 sisyphus 已确认走 grok-4.5
+- **`grok-4.5` 真实 context 上限未实测** — wuzuapi 标 "grok-4.5" 但 xAI 官方无此模型,实测 200K payload 时上游再次挂,未能确认 256K 是否保守。如出现频繁超限,可下调至 128K
+- **oh-my-opencode v3.4.0 → v4.19.4 有可用更新** — 暂不升级(避免 schema 变更破坏 omo.jsonc),需要时再说
 
 ---
 
-## Session: 2026-08-16 — 进度条 UX 重构 + 跳过已下载文件
+## Session: 2026-08-16 — P1 重构 + 进度条 UX + Dioxus Store 修复(三件事合并)
 
-### 改动 1: 进度条详细化 (用户反馈"没有实时下载速度详细信息")
+### 1. P1: `set_status` 改用 `CourseItemStatus` 枚举 + 2 个用户反馈 bug
 
-3 个具体缺口:课程池 per-row 无速度/大小、顶部单下载无 ETA、批量头部无聚合速度。**全量覆盖**:
+`CourseItemStatus` 7 variants (Pending/Resolving/Downloading/Completed/Failed/Skipped/Exists),`set_status(&str)` 改 `&CourseItemStatus` 签名,编译器强制覆盖所有 case。
+
+- **Bug 1** — 课程池新下载不进历史 → `add_completed_download` 在 `course_download_pool_impl::download_resolved_concurrently` 完成后补调 + `state.write().history = get_history_items()` 立即刷新 HistoryPanel
+- **Bug 2** — 底部进度条假 56%(5×100% exists + 4×0% pending 平均)→ 新增 `aggregate_course_progress` helper 只统计 active 状态 + `is_terminal()` 方法去掉 `(3..=6)` magic
+
+### 2. 进度条 UX 详细化 + 跳过已下载
 
 | 区域 | 新增字段 |
-|------|---------|
-| 顶部单下载 | + ETA (`poller` 算好写入 `eta_signal: Signal<String>`) |
-| 批量头部 | + 聚合速度 (所有 active 项 `saturating_add` → `format_speed`) |
-| 批量每行 | 已显示速度 (P3-3 早就写了 `item.speed`) |
+|---|---|
+| 顶部单下载 | + ETA (`eta_signal: Signal<String>`) |
+| 批量头部 | + 聚合速度 (active 项 `saturating_add`) |
 | 课程池每行 | + 速度 + 已下载/总字节 (`format_size_fraction`) |
 
-**新增 helpers** (`types.rs`):
-- `format_eta(seconds)` — `"5s"` / `"2m 5s"` / `"1h 2m"`
-- `format_size_fraction(downloaded, total)` — `"5.00 MB / 5.32 GB"`
+新增 helpers: `format_eta(seconds)`、`format_size_fraction(d, t)`。新增 `status=6 = exists`:`resolve_items_serially` 在 CDP 解析前检查 `output_path` 大小 > 0 → 跳过解析+下载,UI 标 `✓ 已下载`(0 字节占位文件视为不存在,损坏文件留作"强制重下"扩展点)。
 
-**扩展 slot 字段**: `CourseItemSlot { speed: AtomicU64, total_bytes: AtomicU64 }`,`progress_cb` 同步写入。
+### 3. Dioxus Store 字段级订阅修复(根因级)
 
-### 改动 2: 课程池跳过已下载文件 (用户反馈"应检查下载目录避免重复下载")
+**症状**: 后端进度推 50%/100%,UI 卡在 `pending` 不刷新(课程池 + 批量下载都中招)。
 
-新增 status `6 = exists` (`slot_status_to_str` + `set_status` 双向映射)。`resolve_items_serially` 在 CDP 解析前检查 `output_path` 大小 > 0 → 设 slot `status=exists` + `progress=10000` + `total_bytes=文件大小` → 跳过解析 + 下载。UI 标 `✓ 已下载`,M7 summary 显示 `"N 新下 + M 已存在"`。
+**根因**: `state.read().batch_state.items.iter()` 走 `Vec::iter()` 快照 — Dioxus `Store<Vec<T>>::iter()` **只跟踪 Vec 长度**(shallow track),字段变化不触发 sub-render。
 
-**0 字节占位文件视为不存在**(正常下载)。不做 size / hash 校验 → 损坏/截断的文件会被误判为"已下载",留作未来 UI 加"强制重下"按钮的扩展点。
-
-### 改动文件
-
-| 文件 | 改动 |
-|------|------|
-| `src/gui_dioxus/types.rs` | + `format_eta` / `format_size_fraction`;扩展 `BatchState.aggregate_speed` + `CourseItemDisplay.{speed,downloaded_bytes,total_bytes}` |
-| `src/gui_dioxus/handlers.rs` | `CourseItemSlot` 加字段 + `progress_cb` 写入 + `set_status("exists")` + `resolve_items_serially` 加 exists 检查 |
-| `src/gui_dioxus/poller.rs` | ETA 计算 + 聚合速度 (`saturating_add`) |
-| `src/gui_dioxus/app.rs` | `eta_signal` + 顶部 UI ETA 显示 |
-| `src/gui_dioxus/app_course_pool.rs` | per-row 速度/大小 + UI `✓ 已下载` + polling 终态 `(3..=6)` |
-| `src/gui_dioxus/app_batch_progress.rs` | 头部聚合速度 |
-| `src/gui_dioxus/app_batch_video.rs` | `BatchState` literal 补 `aggregate_speed` |
-
-**验证**: `cargo build` ✅ | `cargo clippy --all-targets` ✅ 0 warning | `cargo test --quiet` ✅ 234 passed / 0 failed / 19 ignored (与之前一致)
-
-**rsx! 限制再次遇到** (LR0006): `{}` 内不支持 `if`,inline 条件显示需提为 helper (`status_display()`)。
-
----
-
-## Session: 2026-08-16 — Dioxus Store 字段级订阅修复
-
-**症状**: 课程池 (📚) 选中全部课节 → 点 ▶ 开始下载 → 后端在跑、`/tmp/x-video-downloader.log` 看到进度推 50%/100%,但 UI 卡在 `pending`,从不刷新到 `resolving / downloading / completed`。批量下载面板 (📚 批量下载) 同样症状。
-
-**根因**: 旧代码 `state.read().batch_state.items.iter()` 走 `Vec::iter()` 返回 `&BatchItemState` 快照 —— Dioxus `Store<Vec<T>>::iter()` **只跟踪 Vec 长度**(shallow track),字段变化不触发 sub-render。polling task 写到 `items[i].progress = ...` 是有效的,但 UI 永远不刷新。
-
-**修复模式 (3 个文件统一)**:
+**修复模式**(3 文件统一):
 ```rust
-// 在 rsx! 外提一个 reactive sub-store(避免 let binding)
-let items_store = state.course_collection_state().items();  // 或 batch_state().items() / batch_video_state().items()
-
+let items_store = state.course_collection_state().items();  // Store<T> 实现 Copy,不要 .clone()
 for idx in 0..items_store.len() {
-    // items_store.index(idx) 拿 Store<T, IndexWrite<usize, _>> —— 每个 idx 自己的 signal
-    // 字段访问器 (.selected() / .title() / .progress() / .status() / .visible()) 返回 sub-store
-    // rsx! attribute/text 位置走 IntoAttributeValue/IntoDynNode 自动 cloned
-    // if 条件 / 算术表达式需要 .visible()() 双括号调用 (Store<T> Deref<Target = dyn Fn() -> T>)
-    div { "{items_store.index(idx).title()}" }
-    input { checked: items_store.index(idx).selected() }
-    if items_store.index(idx).visible()() { ... }
+    let item = items_store.index(idx);
+    div { "{item.title()}" }                                    // 自动 cloned
+    if item.visible()() { ... }                                 // 条件需双括号调用
 }
 ```
 
-**关键 API** (Dioxus 0.7.9):
-- `Store<T>` 实现了 `Copy` —— `state.course_collection_state().items()` 直接拿,**不要 `.clone()`**(clippy clone_on_copy)
-- 链式返回 `Store<T, MappedMutSignal<...>>` 不是默认 `Store<T, WriteSignal<T>>`,不能用 `Store<T>` 标注,让编译器推断
-- `derive(Store)` 自动生成 `<StructName>StoreExt` trait,`impl<__Lens>` 泛型覆盖所有 lens 类型
+`derive(Store)` 自动生成 `<StructName>StoreExt` trait;链式返回 `Store<T, MappedMutSignal<...>>` 让编译器推断。P3 同步:课程池/批量每行下载速度、全部下载按钮 disabled 反馈。
 
-**改动文件**:
-- `src/gui_dioxus/app_course_pool.rs` — 课程池列表 (33 项)
-- `src/gui_dioxus/app_batch_progress.rs` — 批量下载进度列表
-- `src/gui_dioxus/app_batch_video.rs` — 批量视频列表 (read-only, 防御性)
+### 改动文件(7 个)
 
-**验证**: `cargo build` ✅ | `cargo clippy --all-targets` ✅ 0 warning | `cargo test --quiet` ✅ 234 passed / 0 failed / 19 ignored (与修复前一致)
+`handlers.rs` (`CourseItemStatus` + impl + `set_status` + `add_completed_download` + `is_terminal()` + 6 测试) · `app_course_pool.rs` (`slot_status_to_str` + `aggregate_course_progress` + 5 测试 + pool 完成后刷新 + 字段订阅) · `app_batch_progress.rs` (头部聚合 + 每行速度 + 字段订阅) · `app_batch_video.rs` (`BatchState.aggregate_speed` + 按钮 disabled + 字段订阅) · `types.rs` (`format_eta` + `format_size_fraction` + `CourseItemDisplay.{speed,downloaded_bytes,total_bytes}`) · `poller.rs` (ETA + 聚合速度 + 阈值节流) · `app.rs` (`eta_signal` + 顶部 UI)
 
-**知识沉淀 →** `.teach/` (gitignored): 7 条 learning records (`0001-` ~ `0007-`) 永久化本会话的所有 Dioxus Store reactivity 教训 + Tufte 速查表 `reference/dioxus-0.7-reactivity.html` + 项目 mission/glossary 标准化。详见 `.teach/MISSION.md` 与 `.claude/skills/teach/SKILL.md`(本项目本地 teach skill 包装,基于 mattpocock/skills teach 哲学)。
+**验证**: `cargo build` ✅ | `cargo clippy --all-targets` ✅ 0 warning | `cargo test` ✅ **256 passed, 0 failed, 19 ignored**(本会话 +12 测试:6 enum/is_terminal + 5 聚合 + 1 单元)
 
-**P3 UX 改进** (同步上):
-- `app_course_pool.rs` — 每条课节进度条 (active 状态时显示,terminal 隐藏);开始按钮 `disabled: is_downloading` + 文字切到 `⏳ 下载中...`
-- `app_batch_progress.rs` — 每条视频显示下载速度 (poller.rs:130 已写 `item.speed` 但 UI 从未渲染)
-- `app_batch_video.rs` — `⬇️ 全部下载` 按钮 `disabled: is_downloading` + 切到 `⏳ 下载中...`
+**rsx! 限制**(LR0006): `{}` 内不支持 `if`,inline 条件显示需提为 helper。
 
-注:`{}` 内不支持 `if` 表达式 (rsx! format string parser 只接受 ident/expression),所以没法条件化 opacity/cursor —— 仅靠 `disabled` 属性 + 文字切换实现反馈。
-
----
+**知识沉淀 →** `.teach/` (gitignored): 7 条 learning records (`0001-` ~ `0007-`) + Tufte 速查表 `reference/dioxus-0.7-reactivity.html` + 项目 mission/glossary 标准化。详见 `.teach/MISSION.md`。
 
 ---
 
@@ -229,18 +231,7 @@ decrypt_ego_lite_cookies_for_vip() (Keychain + PBKDF2 + AES-128-CBC v10)
 | `ede263a` | `perf(gui): per-row progress/speed/size for course pool` |
 | `4a25dc9` | `feat(gui): skip already-downloaded lessons (skip-existing)` |
 
-**再之前的 commits**:
-
-| Commit | 主题 |
-|---|---|
-| `aefd94b` | `perf(gui): split progress signals, upgrade multi_thread runtime, refactor theme/poller (P0/P1/P2)` |
-| `df7c488` | `feat(core): honor HTTP Retry-After in parallel download retry` |
-| `e2791d1` | `feat(hls): honor HTTP Retry-After header in segment retry backoff` |
-| `aab6233` | `fix(clippy): drop redundant closure in spawn_blocking call` |
-| `3029c23` | `test(tulingpython): extract parse_channel_items for offline E2E coverage` |
-| `33c8e6f` | `docs(handoff): reflect 5 new commits + drop resolved fmt issue + add 经验 #33-34` |
-
-> 全部 commit 含 `Intent:` 行 (`.git/hooks/commit-msg` 强制)。
+**再之前的 commits**: 见 `git log --oneline -20`(全部 commit 含 `Intent:` 行,`.git/hooks/commit-msg` 强制)。
 
 ---
 
@@ -340,21 +331,11 @@ cargo test --bin x-video-downloader -- --ignored \
 
 ## 本会话清理记录 (2026-08-09)
 
-| 操作 | 文件 / 行数 | 原因 |
-|------|------------|------|
-| 删除 | `track_quality.sh` (2.3K) | 无人调用 |
-| 删除 | `spec_contract.py` (4.0K) | `specs/` 不存在,pre-commit 静默跳过 |
-| 删除 | `unlimited_ocr_{api,cli,mscope}.py` (5.6K) | "⏸️ 等 torch 2.4+" 从未完工 |
-| 删除 | `.git/hooks/pre-commit` (528) | 依赖已删的 `spec_contract.py` |
-| 删除 | `tests/fixtures/*.json` 4 个 | 10 GB 清理中误删 (已转 `#[ignore]`) |
-| 删除 | `benches/hls_concurrency.rs` + `hls_parse.rs` | 旧 benchmark,源码不在 |
-| 加 gitignore | `.codegraph/` `SkillOpt/` `.skillopt-sleep/` `.agents/` `.rtk/` `.understand-anything/` | 防 6.4 MB codegraph.db + 残留临时文件入库 |
-| 重写 | `README.md` (149 → 327 行) | 反映 Dioxus+Drisson 真实架构,加 CodeGraph 视图附录 |
+8 项删除(`track_quality.sh` / `spec_contract.py` / 3 个 unlimited_ocr / 旧 pre-commit / 4 个 fixtures / 2 个 benches) + 6 项 gitignore(`.codegraph/` 等防 6.4 MB codegraph.db 入库) + README 重写(149 → 327 行)。
 
 ## 文档归档 (2026-08-16)
 
-- **`docs/HANDOFF.md` 已删除** — 281 行 stale 副本(07-08 era 起未 commit,working tree 留 08-09 写的重复 Session 08-13/08-09)
-- **Single source of truth**: `/HANDOFF.md` (root)。新文档只写 root,不再保留 docs/ 副本。
+**Single source of truth**: `/HANDOFF.md` (root)。`docs/HANDOFF.md` 281 行 stale 副本已删除,新文档不再保留 docs/ 副本。
 
 ## 记忆入口
 
