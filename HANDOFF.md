@@ -98,7 +98,60 @@
 - `opencode.json.bak.sync-anthropic.2026-08-17T08-46-43`
 - `auth.json.bak.sync-anthropic.2026-08-17T08-46-43`
 
+### 改动 4: wuzuapi 双域名 failover (主域不可达时自动切 .xyz 镜像)
+
+**问题**: 国内访问 `www.wuzuapi.com` 海外主域偶发 DNS / 网络不通;`wuzuapi.xyz` 是同机房镜像,可用作 backup。
+
+**前置调研**(curl 3 轮 × 2 域名对比,Grok-4.5 同 prompt):两域名同 IP 段 `198.18.8.0/24`(差 1,同 LB)、同 prompt_tokens=2430 恒等、平均延迟 6.38s vs 7.11s(噪声级)。**两域名实质同后端,failover 只在"某域名被墙/DNS 污染"或"边缘节点局部故障"时生效**,机房整体挂掉时两个域名同时不可用。
+
+**实现**(3 处改动):
+
+| 文件 | 改动 |
+|------|------|
+| `~/.config/opencode/opencode.json` | 两个 provider (`wuzuapi-grok` + `anthropic`) 的 `baseURL` 改为 `"{env:WUZUAPI_BASE_URL}"` |
+| `~/.zshrc` | 新增 `export WUZUAPI_BASE_URL="https://www.wuzuapi.com/v1"` (直跑 opencode 的 fallback 默认值) |
+| `~/bin/opencode-failover.sh` | 新建 — 启动前探测两域名,选可达的覆盖 env var,`exec opencode "$@"`(详见 wrapper 内嵌注释) |
+
+**OpenCode env 替换规则**(实测):
+- ✅ 支持 `{env:VAR}` 字面替换
+- ❌ **不支持** `{env:VAR:-default}` 默认值语法(返回空字符串)
+- 必须由外部(env / wrapper)保证 `WUZUAPI_BASE_URL` 总是已设,否则 baseURL 变空 → opencode 静默挂
+
+**wrapper 探测逻辑** (`opencode-failover.sh`):
+- `WUZUAPI_NO_PROBE=1` → 跳过探测,用现有 `WUZUAPI_BASE_URL`(调试 / 强制场景)
+- 否则 → curl `https://{host}/v1/models`,3s 超时;`2xx/4xx` 视为可达(只有 DNS/网络/TLS 错误算不可达)
+- 主域 OK 选主域;主域失败选 backup;都失败 → exit 1 不启动 opencode
+
+**用法**:
+```bash
+# 推荐 — alias 一劳永逸
+alias opencode='~/bin/opencode-failover.sh opencode'
+
+# 临时直接调用
+~/bin/opencode-failover.sh opencode
+
+# 强制走某域名(跳过探测)
+WUZUAPI_NO_PROBE=1 WUZUAPI_BASE_URL=https://wuzuapi.xyz/v1 opencode ...
+```
+
+**验证**:
+- `opencode run --model wuzuapi-grok/grok-4.5 "ping"` → 收到 `pong`(Test O-fixed-2 直跑 e2e 通过)
+- wrapper `K/L/M` 测试:探测逻辑 + no-probe + fatal 路径全过
+- `~/.zshrc` 默认值 + opencode env 替换直跑链路 ✓
+
 ### 已知风险 / 未做
+
+- **`wuzuapi-grok` provider `apiKey` 仍明文存储在 `opencode.json`**(同其他 provider 风格,且 `.opencode/auth.json` 已在 `~/.gitignore_global`);若未来纳入 dotfiles 仓库需统一移到 `.env` + 环境变量插值
+- **未启用 GPG commit 签名** (`commit.gpgsign`) — 需要时再说
+- **`~/.omo/omo.jsonc` 已统一到 grok-4.5**(2026-08-17 本会话续):12 个 builtin agents + 8 个 categories 全部走 `wuzuapi-grok/grok-4.5`;清掉 Antigravity/opencode-gpt-5.x/kimi 等失效引用;`opencode run` 默认 sisyphus 已确认走 grok-4.5
+- **`grok-4.5` 真实 context 上限未实测** — wuzuapi 标 "grok-4.5" 但 xAI 官方无此模型,实测 200K payload 时上游再次挂,未能确认 256K 是否保守。如出现频繁超限,可下调至 128K
+- **oh-my-opencode v3.4.0 → v4.19.4 有可用更新** — 暂不升级(避免 schema 变更破坏 omo.jsonc),需要时再说
+- **wuzuapi Anthropic 通道 forbidden**(2026-08-17 实测):curl 拿到 `Upstream access forbidden, please contact administrator` (HTTP 502, 3.77s)。与 Grok 通道的 `temporarily unavailable` 是不同错误——Anthropic 通道在该账户下未开通或无权限,需登录 wuzuapi 后台确认/开通
+- **`maxRetries:0` + `timeout:30000` 只作用于 SDK 层,OpenCode TUI 流式层不生效**(2026-08-17 实测):Anthropic 跑 128 秒才报错(curl 仅 3.77s)。fail-fast 在 curl 隔离测试时有效,OpenCode 内仍需 ~2 分钟。如要更激进 fail-fast,需查 OpenCode 是否有 TUI 层 timeout 配置或 plugin 层 retry 开关
+- **wrapper 探测增加 ~3s 启动延迟**(主域通时):对长时间 TUI 会话可忽略;若在意可走 `WUZUAPI_NO_PROBE=1` 路径
+- **failover 仅覆盖"某域名被墙/DNS 污染/边缘节点局部故障"**:wuzuapi 后端整体挂掉时两域名同时不可用,wrapper 会 exit 1,无更深 fallback
+
+---
 
 - **`wuzuapi-grok` provider `apiKey` 仍明文存储在 `opencode.json`**(同其他 provider 风格,且 `.opencode/auth.json` 已在 `~/.gitignore_global`);若未来纳入 dotfiles 仓库需统一移到 `.env` + 环境变量插值
 - **未启用 GPG commit 签名** (`commit.gpgsign`) — 需要时再说
