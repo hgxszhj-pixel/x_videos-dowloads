@@ -1,9 +1,9 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3)
-**上次**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper)
-**再上次**: 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复,见下文合并章节)
-**更早**: 2026-08-13 (GUI 响应瓶颈 P0/P1/P2 + runtime 升级 multi_thread) · 2026-08-09 (小鹅通端到端 6 节课 8.5GB 验证通过)
+**更新**: 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复 + skill 环境收尾)
+**上次**: 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3)
+**再上次**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper)
+**更早**: 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
 
 ---
 
@@ -22,6 +22,40 @@
 **当前 LR 数量**: 7 条 (`learning-records/0001-` ~ `0007-`)
 
 **原则**: HANDOFF 写"做了什么",teach 写"学到了什么"。
+
+---
+
+## Session: 2026-08-22 — darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 修复 + skill 环境收尾
+
+> 本 session 改动均不在本 repo,落在 `~/.claude/skills` 仓库与环境配置,此处记档供交接。
+
+### 1. darwin-skill 优化 web-protocol-recovery(repo: `~/.claude/skills`,已合并 master `b3e3435`)
+
+| 轮次 | 维度 | 改动 | 分数 |
+|---|---|---|---|
+| 基线 | — | full_test 双盲评 | 93.2 |
+| R1 `ea30625` | dim8 实测表现 | 非触发场景改**静默降级**:边界判定内部化,不再向用户叙述 skill 范围/路由分类学 | 94.4 |
+| R2 `84bb0e1` | dim4 检查点 | 🔴 CHECKPOINT · 🛑 STOP 显性标记 2→4 处(writeback 双确认 + shape 扩容) | 95.0 |
+
+- 全程 full_test:6 runner + 8 盲评 judge(每轮双 judge、A/B 反向映射、结论一致);HL-4 触顶(Δ+1.2/+0.6)停止
+- R1 修的盲评回归:skill 原文要求非触发时"state that the request is outside..." → agent 向用户解释 skill 机制(7.5 vs 基线 9),修后反超 9 vs 8。**通用教训:skill 的非触发出口不应要求向用户解释 skill 机制**
+- 成果卡片: `~/.claude/skills/darwin-skill/results/result-card-wpr.png`
+- GLM 包月 429(5 小时上限)会打死新 spawn 的子 agent(主循环仍活)→ darwin `pending_full_test` 状态 + 到点续跑即可
+
+### 2. playwright 截图链修复(darwin 成果卡片生成依赖)
+
+根因 3 层:darwin `scripts/screenshot.mjs:18` **硬编码了技能作者机器路径**(`/Users/alchain/.../playwright-core`,已改 `require('playwright-core')` 并提交);`~/node_modules/playwright` 野包缺 playwright-core(Trash 备份后 npm pack 重装 1.52.0);缺浏览器二进制(chromium headless shell v1169)。
+
+用法: `node <darwinRoot>/scripts/screenshot.mjs "<绝对路径.html#theme>" "<绝对路径.png>"`(theme ∈ swiss/terminal/newspaper;file:// 不认相对路径)。`which playwright` 是 pyenv shim(camoufox Python 版,勿动)。
+
+### 3. skill 环境收尾
+
+- **`~/.claude/skills` 已 git init**:优化全程提交(baseline→R1→R2→merge);全局 hooks(Intent Lock + gitleaks)对该仓库生效
+- **孤儿插件清理**:`~/.claude/settings.json` 死 marketplace 引用 + `installed_plugins.json` 双死 4.3.1 条目 + 6.2.0 孤儿缓存(均有备份)
+- **skill-creator 验证**:早已通过 symlink 安装(`~/.claude/skills/skill-creator → ~/.agents/skills/skill-creator`,2026-03 起、内容 7/27 课程版);一次 rsync 穿透链接经验证零损伤(0 文件重写、递归 diff 零差异)。课程三件套 analyzer/darwin/skill-creator 齐备
+- **symlink 模式**(易踩):`~/.claude/skills` 约 20 条目是 symlink → `~/.agents/skills/*`,git 只跟踪链接对象(mode 120000);装 skill 前必须 `ls -l` 查重
+
+**记忆**: `darwin-optimize-web-protocol-recovery.md` + `claude-skills-symlink-pattern.md`(项目 memory 目录)
 
 ---
 
@@ -147,37 +181,20 @@
 - ❌ **不支持** `{env:VAR:-default}` 默认值语法(返回空字符串)
 - 必须由外部(env / wrapper)保证 `WUZUAPI_BASE_URL` 总是已设,否则 baseURL 变空 → opencode 静默挂
 
-**wrapper 探测逻辑** (`opencode-failover.sh`):
-- `WUZUAPI_NO_PROBE=1` → 跳过探测,用现有 `WUZUAPI_BASE_URL`(调试 / 强制场景)
-- 否则 → curl `https://{host}/v1/models`,3s 超时;`2xx/4xx` 视为可达(只有 DNS/网络/TLS 错误算不可达)
-- 主域 OK 选主域;主域失败选 backup;都失败 → exit 1 不启动 opencode
+**wrapper 探测逻辑** (`opencode-failover.sh`):`WUZUAPI_NO_PROBE=1` 跳过探测用现有值;否则 curl `/v1/models` 3s 超时,`2xx/4xx` 算可达(仅 DNS/网络/TLS 错误算不可达);主域败选 backup,双败 exit 1 不启动。
 
-**用法**:
-```bash
-# 推荐 — alias 一劳永逸
-alias opencode='~/bin/opencode-failover.sh opencode'
+**用法**: `alias opencode='~/bin/opencode-failover.sh opencode'` 一劳永逸;强制走某域名 `WUZUAPI_NO_PROBE=1 WUZUAPI_BASE_URL=https://wuzuapi.xyz/v1 opencode ...`。
 
-# 临时直接调用
-~/bin/opencode-failover.sh opencode
-
-# 强制走某域名(跳过探测)
-WUZUAPI_NO_PROBE=1 WUZUAPI_BASE_URL=https://wuzuapi.xyz/v1 opencode ...
-```
-
-**验证**:
-- `opencode run --model wuzuapi-grok/grok-4.5 "ping"` → 收到 `pong`(Test O-fixed-2 直跑 e2e 通过)
-- wrapper `K/L/M` 测试:探测逻辑 + no-probe + fatal 路径全过
-- `~/.zshrc` 默认值 + opencode env 替换直跑链路 ✓
+**验证**: `opencode run --model wuzuapi-grok/grok-4.5 "ping"` 收到 pong;wrapper 探测/no-probe/fatal 三路径全过;`~/.zshrc` 默认值直跑链路 ✓
 
 ### 已知风险 / 未做
 
 - **`wuzuapi-grok` provider `apiKey` 仍明文存储在 `opencode.json`**(同其他 provider 风格,且 `.opencode/auth.json` 已在 `~/.gitignore_global`);若未来纳入 dotfiles 仓库需统一移到 `.env` + 环境变量插值
 - **未启用 GPG commit 签名** (`commit.gpgsign`) — 需要时再说
-- **`~/.omo/omo.jsonc` 已重写**(2026-08-21):现仅含 `agents.sisyphus.model = anthropic/glm-5.3`(8-17 的"12 agents 统一 grok"版本已不存在,其余 agent 走插件默认 fallback 链)
-- **`grok-4.5` 真实 context 上限未实测** — wuzuapi 标 "grok-4.5" 但 xAI 官方无此模型,实测 200K payload 时上游再次挂,未能确认 256K 是否保守。如出现频繁超限,可下调至 128K
+- **`~/.omo/omo.jsonc` 已重写**(2026-08-21):现仅含 `agents.sisyphus.model = anthropic/glm-5.3`,其余 agent 走插件默认 fallback 链
+- **`grok-4.5` 真实 context 上限未实测** — 实测 200K payload 时上游再次挂;如频繁超限,可下调至 128K
 - **oh-my-opencode v3.4.0 → v4.19.4 有可用更新** — 暂不升级(避免 schema 变更破坏 omo.jsonc),需要时再说
-- ~~wuzuapi Anthropic 通道 forbidden~~ **已绕开**(2026-08-21):opencode 的 `anthropic` provider 已改指智谱 GLM Coding Plan,wuzuapi 仅剩 `wuzuapi-grok` 通道在用
-- **`maxRetries:0` + `timeout:30000` 只作用于 SDK 层,OpenCode TUI 流式层不生效**(2026-08-17 实测):Anthropic 跑 128 秒才报错(curl 仅 3.77s)。fail-fast 在 curl 隔离测试时有效,OpenCode 内仍需 ~2 分钟。如要更激进 fail-fast,需查 OpenCode 是否有 TUI 层 timeout 配置或 plugin 层 retry 开关
+- **`maxRetries:0` + `timeout:30000` 只作用于 SDK 层,OpenCode TUI 流式层不生效**(2026-08-17 实测):Anthropic 跑 128 秒才报错(curl 仅 3.77s)。如要更激进 fail-fast,需查 TUI 层 timeout 配置或 plugin 层 retry 开关
 - **wrapper 探测增加 ~3s 启动延迟**(主域通时):对长时间 TUI 会话可忽略;若在意可走 `WUZUAPI_NO_PROBE=1` 路径
 - **failover 仅覆盖"某域名被墙/DNS 污染/边缘节点局部故障"**:wuzuapi 后端整体挂掉时两域名同时不可用,wrapper 会 exit 1,无更深 fallback
 - **wrapper 启用需要 shell alias** (`alias opencode='~/bin/opencode-failover.sh opencode'` 写到 `~/.zshrc` 即可);没加 alias 时仍走 `~/.zshrc` 默认值,只是少了自动切换能力
