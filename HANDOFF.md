@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-24 (skill 生态调研落地: antfu 安装 + composio 方法论移植 → wpr 三项增强)
+**更新**: 2026-08-24 (skill 生态: antfu 安装 + composio 方法论移植 → wpr 三项增强 + 全量审计批量更新 17 个)
 **上次**: 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复 + skill 环境收尾)
 **再上次**: 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3)
 **更早**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper) · 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
@@ -9,17 +9,7 @@
 
 ## 教学 workspace 维护约定 (`.teach/`,gitignored)
 
-`.teach/` 是项目**经验沉淀区**,不是 session 日志。
-
-**写 LR 当** | **写 HANDOFF session 当** (二选一,不要两写)
----|---
-编译错误反复出现才搞懂 | 改了 N 个 bug
-反汇编依赖源码才懂 | 配置 X → Y
-跨 2+ 文件复用模式 | 性能改进 N%
-用户说"我懂了" | milestone 达成
-
-**格式与触发器**: `.teach/HOWTO-WRITE-LR.md`
-**当前 LR 数量**: 7 条 (`learning-records/0001-` ~ `0007-`)
+`.teach/` 是项目**经验沉淀区**,不是 session 日志 —— 写 LR / 写 HANDOFF session 的判据表见 CLAUDE.md「教学 workspace 维护」节(同文不双份)。格式与触发器: `.teach/HOWTO-WRITE-LR.md`;当前 7 条(`learning-records/0001-`~`0007-`)。
 
 **原则**: HANDOFF 写"做了什么",teach 写"学到了什么"。
 
@@ -57,6 +47,16 @@ antfu vendored 文档 `vueuse-functions/references/useJwt.md:21` 的 JWT 示例 
 `wpr-dual-copy-and-agents-md.md`(新建: 双拷贝权威性 + 改 router 后 build_agents → preflight → 同步镜像的工作流)+ `claude-skills-symlink-pattern.md`(补 skills CLI 用法)。
 
 **悬置**: 镜像目录同步文件落在其 WIP 分支 `refactor/cleanup-baseline` 未 commit(与该分支未竟工作混在一起,留给 owner);write-a-skill 编辑位于 `~/.agents`(非 git repo),无需 commit。
+
+### 6. 全量 skill 版本审计 + 批量更新(同日晚)
+
+- **审计**: 读 skills CLI 锁文件 `~/.agents/.skill-lock.json`(57 个受管 skill / 20 上游仓库),逐个对比上游 per-path 最新 commit 日期 → **26 有更新 / 30 已最新 / 1 失联**(getsentry/skills 仓库 API 不可达)
+- **批量更新 25 个**(跳过 skill-creator 防降级、security-review 失联): **17 成功**(锁文件 `updatedAt` 复核,UTC 14:54~15:08);1 临时失败(git-hooks-automation,GitHub API 配额耗尽,`pnpx skills update git-hooks-automation -g -y` 重试即可);6 个上游已删 —— mattpocock 清掉了 diagnose / to-issues / to-prd / zoom-out / caveman / write-a-skill,`update -y` 非交互模式跳过删除,本地原样保留
+- **write-a-skill 自此是本地自治 fork**:上游删除 + 本地含当日手改 Content Discipline 节(sha `80130fe7` 未动,另有备份 `~/.agents/write-a-skill.bak.20260824`),后续 update 不会再碰它
+- **CLI 行为规律**:add 装真实拷贝、update 收敛为 symlink → `~/.agents/skills/*`;本次 8 个实体目录被转换,`~/.claude/skills` 提交 `43c7021`(60 删 + 8 链接对象)
+- remotion-best-practices 日期启发式误报:CLI 按内容哈希判定与上游一致,无需更新
+- 顺带查 Rust:本机 1.95.0 → 官方最新 stable 1.98.0(2026-08-18),**未升级**(待用户决定)
+- 记忆:`claude-skills-symlink-pattern.md` 增补 update 行为规律 + fork 警示
 
 ---
 
