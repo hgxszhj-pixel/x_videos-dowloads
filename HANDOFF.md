@@ -1,9 +1,9 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复 + skill 环境收尾)
-**上次**: 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3)
-**再上次**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper)
-**更早**: 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
+**更新**: 2026-08-24 (skill 生态调研落地: antfu 安装 + composio 方法论移植 → wpr 三项增强)
+**上次**: 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复 + skill 环境收尾)
+**再上次**: 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3)
+**更早**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper) · 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
 
 ---
 
@@ -22,6 +22,41 @@
 **当前 LR 数量**: 7 条 (`learning-records/0001-` ~ `0007-`)
 
 **原则**: HANDOFF 写"做了什么",teach 写"学到了什么"。
+
+---
+
+## Session: 2026-08-24 — skill 生态调研落地: antfu 安装 + composio 方法论移植 → wpr 三项增强
+
+> 本 session 改动均不在本 repo,落在 `~/.claude/skills` 仓库与 `~/develop_software/skills`,此处记档供交接。
+
+### 1. web-protocol-recovery 两张 ELI5 可视化页
+
+`~/develop_software/skills/web-protocol-recovery-eli5.html`(功能全景: 4 shapes / 6 gate 族 / 9 providers / 22 案例清单)+ `web-protocol-recovery-eli5-use-cases.html`(8 大类应用清单 A~H,🗣️你说→⚙️它做→📦你得到 卡片 + 非触发清单 + prompt 技巧)。数据全部取自 `registry.json`(22 案例,README 原写 21 是漏数)/`test-prompts.json`(37 条真实测试 prompt)。
+
+### 2. antfu/skills 调研 + 19 个 skill 安装(commit `784cf12`,607 files)
+
+`pnpx skills add antfu/skills -g -s '*' -a claude-code -y`(vercel-labs skills CLI;`-l` 列表,`pnpx skills update -g -y` 批量更新)。其三层管线(手写核心 + git submodule 文档 SHA 锚定增量生成 + vendored SYNC.md)与"为 agent 重写、剔除 LLM 已知内容"纪律是本次方法论来源之一。
+
+### 3. composio skills 调研 → 方法论移植到自有 skill(3 项)
+
+| # | 落地(均在权威版 `~/.claude/skills/web-protocol-recovery`) | 来源 |
+|---|------|------|
+| 1 | `references/reference-router.md` 加 **Impact Tiers**:🔴 first-impact 16 条 / 🟡 second-impact,只排序不扩 read-budget(commit `4f9b6b9`) | composio 前缀规则文件分级 |
+| 2 | `scripts/build_agents.py` 生成单文件 `AGENTS.md`(32KB = SKILL.md + router,剥 frontmatter;`--check` 可当 CI 校验;只打包 always-load 层,references 不内联) | composio 双格式分发(SKILL.md + AGENTS.md) |
+| 3 | write-a-skill 加 **Content Discipline** 节 + 2 条 checklist(源文档必须为 agent 重写,剔除安装步骤/intro/框架基础) | antfu 排除 LLM 已知内容 |
+
+- preflight.py 改前改后双 PASS(failures=0);镜像 `~/develop_software/skills/web-protocol-recovery` 已同步三件套(SKILL.md / router / build_agents.py),AGENTS.md 两侧再生成零差异
+- commit `da996c4` 为 gitleaks 放行配置(见下)
+
+### 4. gitleaks 误报处理(未用 --no-verify)
+
+antfu vendored 文档 `vueuse-functions/references/useJwt.md:21` 的 JWT 示例 token 触发默认规则拦截 → 建 `~/.claude/skills/.gitleaks.toml`(`[extend] useDefault = true` + 该 path allowlist),复扫干净后才 commit。
+
+### 5. 记忆更新
+
+`wpr-dual-copy-and-agents-md.md`(新建: 双拷贝权威性 + 改 router 后 build_agents → preflight → 同步镜像的工作流)+ `claude-skills-symlink-pattern.md`(补 skills CLI 用法)。
+
+**悬置**: 镜像目录同步文件落在其 WIP 分支 `refactor/cleanup-baseline` 未 commit(与该分支未竟工作混在一起,留给 owner);write-a-skill 编辑位于 `~/.agents`(非 git repo),无需 commit。
 
 ---
 
@@ -127,22 +162,13 @@
 
 **链路**: `git commit` → GitButler `pre-commit` → `pre-commit-user` → gitleaks protect --staged → (Rust 仓库) cargo clippy + cargo test
 
-**d. 备份**(便于回退):
-- `~/.gitconfig.bak.2026-08-17T06-46-44`
-- `~/.config/opencode/opencode.json.bak.2026-08-17T06-07-52` (合并 wuzuapi 前)
-- `~/.config/opencode/opencode.json.bak.rename.2026-08-17T06-47-49` (provider 改名前)
-- `~/.local/share/opencode/auth.json.bak.rename.2026-08-17T06-47-49` (provider 改名前)
+**d. 备份**(便于回退): `~/.gitconfig`、opencode 的 `opencode.json` ×2(合并 wuzuapi 前 / provider 改名前)、`auth.json`(改名前)各原路径旁 `*.bak.2026-08-17T*` 留档。
 
 ### 改动 3: 失败快速修复 + grok-4.5 context 上限校验
 
-**问题**: `opencode run -m wuzuapi-grok/grok-4.5 "ping"` 挂起 **308 秒**,TUI 只显示 `Sisyphus online` 横幅(oh-my-openagent 启动信息),"ping" 从未被处理。
+**问题**: `opencode run -m wuzuapi-grok/grok-4.5 "ping"` 挂起 **308 秒**,TUI 只显示 `Sisyphus online` 横幅,"ping" 从未被处理。
 
-**根因链**(诊断套路已写入 memory `opencode-wuzuapi-upstream-silent-retry.md`):
-1. wuzuapi 把上游 Grok 失败伪装成 OpenAI 兼容 `{"type":"upstream_error"}` → 反而触发 AI SDK 自动重试
-2. `@ai-sdk/openai-compatible` 默认 `maxRetries: 2` + 指数 backoff(~10s)
-3. OpenCode TUI 额外重试层 + 流式 socket hang → 累计 ~5 分钟
-
-**隔离测试**: curl 直接打 wuzuapi,6.79s 拿到 `upstream_error` (HTTP 502),确认非网络/Key 问题。
+**根因**(详记 memory `opencode-wuzuapi-upstream-silent-retry.md`):wuzuapi 把上游失败伪装成 OpenAI 兼容 `{"type":"upstream_error"}` → 触发 AI SDK 默认 `maxRetries: 2` + 指数 backoff,TUI 再叠一层重试累计 ~5 分钟;curl 直打 6.79s 得 502,确认非网络/Key 问题。
 
 **修复**(3 处配置改动):
 | 文件 | 字段 | 变更 |
@@ -154,19 +180,13 @@
 | `auth.json` | 新增 `anthropic.key` | 从 `opencode.json.provider.anthropic.options.apiKey` 迁移(消除双存储分裂,与 8 个其他 provider 一致) |
 | `opencode.json` | 删除 `provider.anthropic.options.apiKey` | 见上行 |
 
-**效果**: `opencode run -m wuzuapi-grok/grok-4.5 "ping"` 从 **308s → 41.6s (7.4x 提速)**,响应正常。上游挂时 fail-fast 应在 ~30s 内报错。
-
-**备份**:
-- `opencode.json.bak.failfast.2026-08-17T08-28-43`
-- `opencode.json.bak.context-fix.2026-08-17T08-41-47`
-- `opencode.json.bak.sync-anthropic.2026-08-17T08-46-43`
-- `auth.json.bak.sync-anthropic.2026-08-17T08-46-43`
+**效果**: `opencode run -m wuzuapi-grok/grok-4.5 "ping"` 从 **308s → 41.6s (7.4x 提速)**,响应正常。上游挂时 fail-fast 应在 ~30s 内报错。备份: 同目录 `*.bak.{failfast,context-fix,sync-anthropic}.2026-08-17T*` 4 份留档。
 
 ### 改动 4: wuzuapi 双域名 failover (主域不可达时自动切 .xyz 镜像)
 
 **问题**: 国内访问 `www.wuzuapi.com` 海外主域偶发 DNS / 网络不通;`wuzuapi.xyz` 是同机房镜像,可用作 backup。
 
-**前置调研**(curl 3 轮 × 2 域名对比,Grok-4.5 同 prompt):两域名同 IP 段 `198.18.8.0/24`(差 1,同 LB)、同 prompt_tokens=2430 恒等、平均延迟 6.38s vs 7.11s(噪声级)。**两域名实质同后端,failover 只在"某域名被墙/DNS 污染"或"边缘节点局部故障"时生效**,机房整体挂掉时两个域名同时不可用。
+**前置调研**(curl 3 轮 × 2 域名,Grok-4.5 同 prompt):两域名同 IP 段 `198.18.8.0/24` 同后端,延迟 6.38s vs 7.11s 属噪声级 → **failover 只救"某域名被墙/DNS 污染/边缘局部故障",机房整体挂时两域名同灭**。
 
 **实现**(3 处改动):
 
@@ -311,20 +331,7 @@ decrypt_ego_lite_cookies_for_vip() (Keychain + PBKDF2 + AES-128-CBC v10)
 
 ---
 
-**已落地的最近 commits** (今日,按时间倒序):
-
-| Commit | 主题 |
-|---|---|
-| `12eca70` | `fix(gui): course-pool aggregation excludes pending/parsing/exists` |
-| `fef948f` | `fix(gui): record course-pool downloads to global history` |
-| `58b0b6f` | `refactor(gui): replace parallel status switches with CourseItemStatus enum` |
-| `661fab8` | `test(gui): add unit tests for new code (P0)` |
-| `192ba2d` | `fix(gui): hide misleading "0 B" size column` |
-| `0e80ce4` | `fix(gui): unified status display with emoji icons (P2)` |
-| `ede263a` | `perf(gui): per-row progress/speed/size for course pool` |
-| `4a25dc9` | `feat(gui): skip already-downloaded lessons (skip-existing)` |
-
-**再之前的 commits**: 见 `git log --oneline -20`(全部 commit 含 `Intent:` 行,`.git/hooks/commit-msg` 强制)。
+**commit 历史**: 2026-08-16 GUI 批次共 8 个 commit(`4a25dc9`~`12eca70`,skip-existing / 状态枚举 / 历史记录 / 聚合修复等,与上方 session 记录一一对应);更早见 `git log --oneline -20`。全部 commit 含 `Intent:` 行,`.git/hooks/commit-msg` 强制。
 
 ---
 
