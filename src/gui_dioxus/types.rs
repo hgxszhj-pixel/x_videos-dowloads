@@ -359,10 +359,7 @@ mod tests {
     fn test_format_size_fraction_total_zero() {
         // 未知 total 时只显示 downloaded,UI 端单独 hide 该列(避免"0 B"误导)
         assert_eq!(format_size_fraction(0, 0), "0 B");
-        assert_eq!(
-            format_size_fraction(5 * 1024 * 1024, 0),
-            "5.00 MB"
-        );
+        assert_eq!(format_size_fraction(5 * 1024 * 1024, 0), "5.00 MB");
     }
 
     #[test]

@@ -641,11 +641,9 @@ async fn download_resolved_concurrently(
                 if let Some(s) = slot.as_ref() {
                     s.progress
                         .store((dp.percent * 10000.0) as u32, Ordering::Relaxed);
-                    s.speed
-                        .store(dp.speed as u64, Ordering::Relaxed);
+                    s.speed.store(dp.speed as u64, Ordering::Relaxed);
                     if dp.total_bytes > 0 {
-                        s.total_bytes
-                            .store(dp.total_bytes, Ordering::Relaxed);
+                        s.total_bytes.store(dp.total_bytes, Ordering::Relaxed);
                     }
                 }
             });
@@ -733,10 +731,13 @@ pub(super) async fn file_is_already_downloaded(
     title: &str,
 ) -> Option<u64> {
     let output_path = build_output_path(output_dir, title);
-    tokio::fs::metadata(&output_path)
-        .await
-        .ok()
-        .and_then(|m| if m.len() > 0 { Some(m.len()) } else { None })
+    tokio::fs::metadata(&output_path).await.ok().and_then(|m| {
+        if m.len() > 0 {
+            Some(m.len())
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -772,7 +773,11 @@ mod skip_existing_tests {
             .write_all(&payload)
             .expect("write");
         let size = file_is_already_downloaded(dir.path(), "lesson_03").await;
-        assert_eq!(size, Some(1024), "1 KiB file should be skipped with exact size");
+        assert_eq!(
+            size,
+            Some(1024),
+            "1 KiB file should be skipped with exact size"
+        );
     }
 
     /// 标题中的特殊字符经过 `sanitize_filename` 后路径可能变化 —
@@ -786,6 +791,10 @@ mod skip_existing_tests {
         let path = dir.path().join(format!("{sanitized_title}.mp4"));
         std::fs::write(&path, vec![1u8; 16]).expect("write");
         let size = file_is_already_downloaded(dir.path(), "lesson / special?").await;
-        assert_eq!(size, Some(16), "sanitized title must map to the same path as download_one");
+        assert_eq!(
+            size,
+            Some(16),
+            "sanitized title must map to the same path as download_one"
+        );
     }
 }

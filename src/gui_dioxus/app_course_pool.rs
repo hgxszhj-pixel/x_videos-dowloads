@@ -7,8 +7,8 @@
 //! 包含 M7 修复:课程池下载完成后聚合成功/失败数 + 首条失败原因。
 //! M11 修复在 handlers.rs course_download_pool_impl 内部(JoinError 可见)。
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use dioxus::prelude::*;
 
@@ -17,8 +17,8 @@ use super::handlers::{course_download_pool_impl, CourseItemSlot, CourseItemStatu
 use super::store::get_history_items;
 use super::theme::{BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY};
 use super::types::{
-    format_size_fraction, format_speed, AppState, AppStateStoreExt,
-    CourseCollectionStateStoreExt, CourseItemDisplayStoreExt,
+    format_size_fraction, format_speed, AppState, AppStateStoreExt, CourseCollectionStateStoreExt,
+    CourseItemDisplayStoreExt,
 };
 
 /// 把 atomic slot status (u8) 翻译回 CourseItemDisplay.status 字符串。
@@ -48,9 +48,7 @@ fn aggregate_course_progress(snapshot: &[(u32, u8, u64, u64)]) -> Option<f32> {
         // 排除非 active 状态(未启动 / 已退出本会话)
         if !matches!(
             st,
-            CourseItemStatus::Downloading
-                | CourseItemStatus::Completed
-                | CourseItemStatus::Failed
+            CourseItemStatus::Downloading | CourseItemStatus::Completed | CourseItemStatus::Failed
         ) {
             continue;
         }
