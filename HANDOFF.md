@@ -1,9 +1,9 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-24 (skill 生态: antfu 安装 + composio 方法论移植 → wpr 三项增强 + 全量审计批量更新 17 个)
-**上次**: 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复 + skill 环境收尾)
-**再上次**: 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3)
-**更早**: 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper) · 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
+**更新**: 2026-08-29 (8-25 暂存变更集验证补全落库 `c7b0fe4` + 两 bench 存量断裂修复 `deb54c3`;全局侧 12 条规则文章 3 边际项)
+**上次**: 2026-08-28 (全局 Claude Code 配置机械兜底改造:5 hooks 接线 + 15 deny + statusline 修复 + 死脚本归档;项目侧 gui_dioxus fmt 修复 commit ab2febd)
+**再上次**: 2026-08-25 (douyin-mp4-download skill v1 + 同日 URL 实测:v1 验出"jingxuan?modal_id= URL yt-dlp 不识别" + "/video/{id} 需 fresh cookies",v1+yt-dlp 组合为推荐方案)
+**更早**: 2026-08-25 (xiaoe-m3u8-download skill v3.2: setTimeout 5000ms→8000ms 防时序 false negative,爬虫基础2626期 15/15 端到端) · 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复) · 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3) · 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper) · 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
 
 ---
 
@@ -12,6 +12,55 @@
 `.teach/` 是项目**经验沉淀区**,不是 session 日志 —— 写 LR / 写 HANDOFF session 的判据表见 CLAUDE.md「教学 workspace 维护」节(同文不双份)。格式与触发器: `.teach/HOWTO-WRITE-LR.md`;当前 7 条(`learning-records/0001-`~`0007-`)。
 
 **原则**: HANDOFF 写"做了什么",teach 写"学到了什么"。
+
+---
+
+## Session: 2026-08-29 — 8-25 暂存变更集落库 + bench 存量断裂修复
+
+> 起因: 挂账"40+ 暂存文件处置" — 只读分析定性(内聚单主题)后验证、补全、分两 commit 落库。
+
+### 1. commit `c7b0fe4`(47 文件): 8-25 的 dead_code 迁移 + unwrap 收敛 + feature 门控
+
+- 暂存集自带 `[lints.clippy] unwrap_used=warn`(HEAD 无此段),点亮 3 处清扫漏网: drission_client `as_chunks::<16>` 消 chunks_exact+try_into unwrap ×2 / tulingpython regex 捕组 `and_then` ×1 —— 补扫后暂存 HANDOFF"双组合 0 告警"声称才为真
+- 门禁: clippy 默认 + `--all-features` 双 0 告警;`cargo test` 217/0/8(较 8-25 基线 256 少是因为 44 个协作测试已移入 `--features collaboration`,默认集即此数)
+
+### 2. commit `deb54c3`: 两 bench 修复
+
+- `hls_concurrency` 的 stub types(旧字段版 DownloadProgress)与 types 演进脱节 → `DownloadStatus` 缺失 + `new()` 不存在,`--all-targets` 编译失败数月无人察觉(历次门禁只跑默认 + --all-features,不构建 bench)→ 原样拷贝当前真实定义(去 Serialize 派生,附同步注释)
+- 两 bench 文件级 `#![allow(clippy::unwrap_used)]`(bench 函数不被 allow-unwrap-in-tests 覆盖)
+- 验证: 两 bench 实跑正常(concurrency 6 档 116-1782ms 曲线;parse 正常出数);`--all-targets --all-features` 硬门禁计数 0
+- 顺带浮出: hls_parse 实验数据 **bumpalo 版 parser 比现行快 ~62%**(50/200/500 段三档一致),既有实验未采纳,待决定
+
+### 3. 全局侧一行
+
+头条"12 条规则"文章内容已 100% 在 `~/.claude/CLAUDE.md`,仅 3 边际项落地: 规则 6 改上下文相对预算 / 规则数冻结 13(>14 遵从率悬崖)/ karpathy 死引用清理。
+
+**待用户决定**: 未跟踪目录处置(`.claude/` `.omo/` `docs/diagrams/`;`.teach/` 文首称 gitignored 但实际 `??` 未跟踪,矛盾待澄清)。
+
+---
+
+## Session: 2026-08-28 — 全局 Claude Code 配置机械兜底改造(改动在 ~/.claude/,记档供交接)
+
+> 起因: 头条"Claude Code 自纠错配置"文章差距分析 → 发现大量"文件在、接线断"的假安全 → 用户授权执行。备份: `~/.claude/settings.json.bak-20260828`。
+
+### 1. settings.json:5 hooks + 15 deny(全链路实测生效)
+
+- **PreToolUse** `rtk-rewrite.sh`(死文件复活,Bash 命令自动改写省 token)
+- **PostToolUse** `rust-fmt-posttool.sh`(新写,.rs 编辑即 rustfmt,语法错 exit 2 反馈)
+- **Stop×2** `stop-fmt-gate.sh`(cargo fmt --check 终点质检,stop_hook_active 防死循环)+ `obsidian-memory-journal.sh`(死文件复活,session_id dedup)
+- **SessionStart** 追加 `obsidian-memory-prelude.sh`(死文件复活,自动注入 ~/memory 摘要 ~6.4KB)
+- **deny×15**: 敏感文件读(.env*/pem/key/id_rsa*/id_ed25519/credentials)+ `Edit(**/.env*)` 写拦截 + git push --force/-f(含 rtk 变体)+ curl|bash + rm -rf/-fr
+- 验证: 本会话热加载(PostToolUse/Stop 落账/Bash-deny)+ 嵌套新会话探针(Read-deny 拦 .env/rtk 改写介入/记忆注入生效)
+- **坑**: 文件写拦截必须写 `Edit(**/.env*)`,`Write()` 形式不被文件权限检查匹配(Claude Code 2.1.250 启动警告)
+
+### 2. 顺手修复
+
+- statusline: settings 指向的 `~/.claude/statusline.sh` 原本**不存在**(状态栏静默失败)→ 薄壳 `exec node claude-hud-statusline.js`,实测渲染正常
+- gui_dioxus 3 文件 8 处 fmt 漂移(Stop 质检首战抓到)→ **commit `ab2febd`**(pathspec 外科提交,未动 40+ staged 文件)
+- `~/.claude/hooks/` 清理: 10 个无引用死脚本(omc/ecc/claude-hud/context-mode 散装拷贝)+ ECC 模板 + pre-tool-use 声明式 JSON(意图已由 deny 落地)归档 `unwired/`(附 README)
+- `~/.claude/CLAUDE.md`: 规则 13 有限重试;记忆读取规则改为"hook 已自动注入,按需读 projects/{name}.md"
+
+**对本项目后续 session 的影响**: Bash 输出被 rtk 压缩;编辑 .rs 自动 rustfmt;Stop 时 fmt 质检 + daily 落账;新会话自动带 ~/memory 摘要;`.env`/force push/rm -rf 被硬拦。
 
 ---
 
@@ -57,6 +106,233 @@ antfu vendored 文档 `vueuse-functions/references/useJwt.md:21` 的 JWT 示例 
 - remotion-best-practices 日期启发式误报:CLI 按内容哈希判定与上游一致,无需更新
 - 顺带查 Rust:本机 1.95.0 → 官方最新 stable 1.98.0(2026-08-18)—— 已于 8-24 晚升级(`rustc --version` 实证 1.98.0,toolchains 目录 mtime 22:03)
 - 记忆:`claude-skills-symlink-pattern.md` 增补 update 行为规律 + fork 警示
+
+---
+
+## Session: 2026-08-25 — tulingvip-m3u8-download skill 大重构 + 端到端 17/17 验证
+
+> 本 session 改进全部落在 `~/Downloads/tulingvip-m3u8-download/`(6 文件 → 7 文件,加 `urls-sample.txt`)。`js-reverse-mcp` 本机未配置 → 用 `camoufox-reverse` 同源引擎替代(都是 Camoufox/anti-detect browser)做端到端验证,实测 17/17 m3u8 全抓到。
+
+### 1. Skill 12 项改进(从 plan 到落地)
+
+| 优先级 | 改进 | 文件 | 状态 |
+|---|---|---|---|
+| P0.1 | YAML description:trigger 关键词 + DO NOT use 段;修 ASCII 冒号 parse bug | SKILL.md | ✅ |
+| P0.2 | README 文件清单修复(2 → 6 → 7 文件) | README.md | ✅ |
+| P0.3 | Step 2 column_id 硬编码 → `${COLUMN_ID}` 占位符 | SKILL.md | ✅ |
+| P0.4 | ts_directory 警告从括号注提升到 Step 6 顶部 ⚠️ | SKILL.md | ✅ |
+| P3.1 | **URL 类型判断 Step 1.5**:支持大专栏 `/middle_page/p_xxx` | SKILL.md | ✅ |
+| P3.2 | 登录态严格校验(已登录/匿名/过期 三态) | SKILL.md | ✅ |
+| P1.6 | Step 3 进度输出 `[i/N] 标题 (resource_id) 第 X/3 次` | SKILL.md | ✅ |
+| P1.7 | Step 3 单节重试 max_retries=3 | SKILL.md | ✅ |
+| P1.8 | 断点续传 `.tulingvip-progress.json` 实时落盘 | SKILL.md | ✅ |
+| P1.9 | Step 5 文件名净化 `sanitize_filename()` | SKILL.md | ✅ |
+| P0.5 | 端到端冒烟测试(带出新 2 个问题 → P3.1/P3.2) | n/a | ✅ |
+| P2.10 | CHANGELOG.md(Keep a Changelog 格式) | CHANGELOG.md | ✅ |
+
+### 2. **关键 bug 修复**:Step 2 Vue store → HTTP API
+
+**原 SKILL.md 文档**:
+```js
+window.__xe_store__.state.courseBusiness.businessGo.column.items.get({column_id})
+```
+
+- Vue 2 时代的内部 Vuex store 方法
+- 2026 年小鹅通重构后端为 Vue 3 + Vite,**完全死路**(app 实例不再暴露到 window;实测 `window.__vue_app__` / `__vueParentComponent` 全 undefined)
+
+**新实现**:
+```
+POST https://vip.tulingpyton.cn/xe.course.business_go.column.items.get/2.0.0
+Body:  {"column_id":"p_xxx","page_index":1,"page_size":50,"content_app_id":null,"sort":"desc"}
+Response: {code:0, data:{list:[{resource_id, resource_title, type, jump_url, can_view, is_try, ...}], total:N}}
+```
+
+- 浏览器原生 `fetch()` + `credentials:"include"` 自动带登录态 cookie
+- `resource_id` = `l_xxx` 格式的 lesson ID(替代旧版 `i.id`)
+- `type` 4 = 直播 / 6 = 直播回看
+- `can_view=0` 标记用户无权限,Step 3 应跳过
+
+### 3. 端到端真实 URL 验证(17/17 成功)
+
+**输入**:`https://vip.tulingpyton.cn/p/t_pc/course_pc_detail/column/p_6a4f88e6e4b0694c5be6f46d?product_id=p_6a4f88e6e4b0694c5be6f46d`(核心编程2630期)
+
+**用户**:张华军, `u_6620d34440eea_WoE2tJZGyg`
+
+| 阶段 | 结果 |
+|---|---|
+| 登录(camoufox headed 扫码) | ✅ `pc_user_key` + `userInfo` + XIAOEID 三件套 |
+| Step 1.5 URL 检测 | ✅ Type A(登录后直链,非大专栏 redirect) |
+| Step 2 HTTP API | ✅ 17 节课含 `resource_id` + `title` + `jump_url` |
+| Step 3 批量抓 m3u8 | ✅ **17/17 全部抓到**(7 节 DRM + 10 节普通加密) |
+| Step 4 curl 验证 | ✅ HD 1080p + AES-128 + sign 鉴权 + `.ts` 切片有效 |
+
+**m3u8 CDN 分布**(实测):
+- `v-vod-k.xiaoeknow.com` × 11(drm/main.m3u8,DRM 加密)
+- `encrypt-k-vod.xet.tech` × 4(playlist_eof.m3u8 + drm/v.f146750.m3u8)
+- `v-tos-k.xiaoeknow.com` × 2(playlist_eof.m3u8)
+
+时长分布:35 min(核心17) ~ 98 min(核心16),总课程时长估计 12+ 小时。
+
+**踩到的坑**:**Lesson 11 ID 手抄漏 `6a6` 前缀**(`l_6c8571e4b0694c5bf2a3d8` → 404 "该课程未找到",正确 `l_6a6c8571e4b0694c5bf2a3d8`)。暴露 skill 缺 lesson ID 完整性校验,**下版本必加** redirect-to-404 立即 abort。
+
+**反面教训**:`/v4/course/alive/l_xxx?type=2&...` 这个**新 URL pattern**(从 API `jump_url` 字段取)打开后显示"暂无内容",**不能用**。Step 3 必须用旧 `/p/t_pc/live_pc/pc/l_xxx` 才能加载 xgplayer。反直觉,已写进 SKILL.md 警示。
+
+### 4. 文档与打包
+
+- `CHANGELOG.md` 新建,Keep a Changelog 格式:
+  - **Unreleased**(2026-08-25):12 项改动 + 端到端验证证据 + 2 个反向坑
+  - **2026-08-24**:Initial Release
+- `demo.md` `2:30 屏幕显示` 段重写,反映新 Step 2 fetch API 流程 + 加 "Vue store 那段没了" 旁白
+- `urls-sample.txt` 新增(5.7 KB,17 行真实 m3u8 + 文件名),作为 skill 端到端工作样例输出
+- `~/Downloads/tulingvip-m3u8-download.zip` 重新打包(24 KB,7 文件),可发给同事
+
+### 5. 测试环境 / 替代方案
+
+- `js-reverse-mcp` 本机未配置 → **用 `camoufox-reverse` 同源引擎替代**(都是 Camoufox/anti-detect browser)
+- Camoufox headed 模式用户扫码登录,profile 临时保存
+- ⚠️ **关浏览器后登录态丢失**,需要重新扫码(不持久化)
+- 下个测试需重扫码 → skill 改进项里加"持久化登录态到独立 profile dir"(参考 chrome 9223 的 `--user-data-dir` 模式)
+
+### 6. 未做 / 下版本建议加
+
+| 优先级 | 项 | 说明 |
+|---|---|---|
+| P1 | lesson ID 完整性校验 | 跳到 404 / `该课程未找到` 立即 abort(本次踩坑直接原因) |
+| P1 | 登录态持久化 | 用独立 user-data-dir,避免每次重扫码 |
+| P2 | Step 4 自动化 | fetch 403(sign 过期)自动回 Step 3 重抓 |
+| P2 | 并发抓取 | 12 节从 72s 压到 ~24s(风控风险待评估) |
+| P3 | dry-run 模式 | 不真下,只跑 Step 1-5 验流程 |
+| P3 | 更多 URL 形态 | `/detail/l_xxx/4` 等 |
+
+### 7. 记忆(可能同步到 `.teach/LR/`)
+
+- `tulingvip-skill-vue-store-api-deprecation.md`(新建):Vue 2 内部 store → Vue 3 + Vite 隔离 app 实例到 window 之外的踩坑;印证"先实测再信文档"原则
+- `tulingvip-lesson-id-typo-bug.md`(新建):手动抄录 16+ 字符串 ID 极容易漏字符,应全链路用 API 字段直接填入,禁止人类手抄 ID
+
+### 8. v3.1 实测改进(同日下午,端到端跑完后的代码加固)
+
+> 在 #6(改名 + 通用化)和 #7(33/33 端到端)之后又跑了一轮内部 demo,发现几个真问题,做了 P0.1 / P0.2 / P1.5 三件小但有用的事。
+
+| # | 项 | 改动位置 | 价值 |
+|---|----|---------|------|
+| **P0.1** | Lesson ID 失效检查 | `SKILL.md` Step 3 evaluate_js 加 8 个错误关键词正则(`该课程未找到|无访问权限|...`)| 命中后 `error: 'lesson_unavailable'` 立即 return,主循环 abort。**避免 Lesson 11 typo 那次浪费 4 分钟**错误导航 |
+| **P0.2** | can_view 字段文档化 | `SKILL.md` Step 2 JS 加"⚠️ 经验值:可访问课程恒为 0;不要做 `i.can_view !== 0` 过滤" | 防止后人写错过滤条件把 33 节全滤光 |
+| **P1.5** | 已知限制 / 未来增强 段 | `SKILL.md` 新增 6 行表格(并发抓取 MCP 限制 / 登录态不持久化 / can_view 字段语义 / SPA hydrate 延迟 / `live-ex-speed` 短链 / lesson ID 降级) | 文档化"先实测再信文档"原则,后人少踩 80% 坑 |
+
+**v3.1 没做(故意)**:
+- 并发抓取(MCP 暂不支持多 tab, 33 节 4 分钟可接受,没到必须修的地步)
+- 登录态持久化(用户用 Chrome 9223 模式自己 `--user-data-dir` 即可,skill 不需加)
+- lesson ID 完整性校验(虽然 P0.1 简化了错误处理,但 typo bug 仍可能发生 → 计划加 redirect 404 自动 abort)
+
+**最终交付**:
+- `~/Downloads/xiaoe-m3u8-download.zip` (30 KB, 9 文件)
+  - 含 v3.0(改名 + 通用化)+ v3.1(P0.1 + P0.2 + P1.5)全部改动
+  - CHANGELOG v3.1 段 4 条改动完整记录
+  - 2 个 urls-sample.txt(核心编程 17 节 + JS逆向 33 节)做下游下载参考
+
+### 9. v3.2 第三次测试(同日傍晚,新 URL `p_6a4f8e20e4b0694c5be6f622` 爬虫基础2626期,15 节课)
+
+> 用户连续测了 3 个不同课程,确认 v3/v3.1 在不同 batch/频道/类型下都稳。爬虫基础2626期是**直接可访问的独立课**(不跳 middle_page,Type A),验证了"非大专栏子课也 work"。
+
+| 阶段 | 结果 |
+|---|---|
+| Step 1.5 URL 检测 | ✅ Type A 直链(15 节课,total 字段正确) |
+| Step 2 HTTP API | ✅ 15 节课,`resource_type=4`(标准直播) |
+| Step 3 批量抓 m3u8 | ✅ **15/15 全部成功**(0 失败) |
+| P0.1 lesson_unavailable 短路 | ✅ 写了但未触发(都是合法课) |
+
+**P3.5 改进(setTimeout 5000ms → 8000ms)**:
+- **触发原因**:Lesson 5(爬虫基础11)第一次 navigate 后 m3u8=null,重新 navigate 后抓到
+- **根因**:5s wait 不够,player 还没加载 m3u8,evaluate_js 太早检查 `performance.getEntriesByType('resource')`
+- **修复**:`SKILL.md` Step 3.1 evaluate_js 的 `setTimeout(..., 5000)` 改为 `setTimeout(..., 8000)`
+- **效果**:预期减少同类时序 false negative 90%+
+- **进一步改进(未做,v4 候选)**:如果 8000ms 仍不够,需要 `time.sleep(N) + re-navigate` 循环
+
+**v3.1 vs v3.2 触发场景区分**:
+- v3.1 P0.1:真 invalid 课程(`该课程未找到` 等 8 个关键词)→ 短路不重试
+- v3.2 P3.5:慢加载课程(页面合法但 player 还没好)→ 8000ms 长一点等
+
+**产物**:`urls-pachong-sample.txt`(5KB,15 行真实 m3u8)
+
+**端到端 15/15 CDN 分布**:
+- `v-vod-k.xiaoeknow.com` (DRM × 8)
+- `encrypt-k-vod.xet.tech` (DRM + 普通 × 6)
+- `v-tos-k.xiaoeknow.com` (普通 × 1)
+
+**测试方法论教训(很重要,写进 skill 文档)**:
+1. m3u8=null → **不要直接标记失败**,先 re-navigate 再试(本次 lesson 5 验证)
+2. 区分**真 invalid 页面**(关键词检测)和**慢加载页面**(v3.1 + v3.2 互补处理)
+3. 端到端成功率从 14/15 → 15/15(只靠 re-navigate)
+
+### 10. douyin-mp4-download v1 创建(2026-08-25 同日下午,抖音支持)
+
+> 用户在 v1 验完后问"我的 skill 能下抖音吗",确认 `xiaoe-m3u8-download` 不适用(小鹅通专属),故新写 `douyin-mp4-download` skill。**实际 30 分钟写 scaffold + 1 小时写代码,真正 v2 X-Bogus 逆向需 3-5 天**。
+
+**v1 文件结构**(`~/Downloads/douyin-mp4-download/`,6 文件,13 KB zip):
+- `SKILL.md` (8.5 KB) — 7 步工作流 + v1 实测限制
+- `README.md` (3.1 KB) — 同事 5 分钟上手
+- `CHANGELOG.md` (2.0 KB) — v1.0 + 实测结果
+- `demo.md` (3.5 KB) — 3 分钟视频脚本
+- `setup.sh` (3.1 KB) — macOS/Linux 安装
+- `setup.ps1` (3.6 KB) — Windows 安装
+
+**v1 实测结果**(URL `https://www.douyin.com/jingxuan?modal_id=7651991412489178420`):
+- ✅ Step 1 URL 解析 work — camoufox navigate 自动 follow redirect
+- ✅ Step 2 视频信息提取 work — 4 个 `<video>`,`v[1].currentSrc` = `https://v26-webf.douyinvod.com/.../video/tos/cn/.../?a=6383&br=2418&bt=2418&...` 真实 CDN URL(duration=480s,8 分钟)
+- ❌ Step 3 下载不 work — 三个 path 全失败:
+  - `ffmpeg -i URL` → 403 Forbidden(X-Bogus 签名校验)
+  - `curl + 浏览器头` → 403(签名在 URL query 里,curl 算不出)
+  - 浏览器内 `fetch(URL)` → CORS(CDN 不返 `access-control-allow-origin`)
+
+**v1 已知限制 / v2 候选**:
+1. X-Bogus 签名逆向(2-3 天)— v2 必修
+2. a-bogus(2024 年后切换,1 天逆向)
+3. CORS 拦截(同源策略)
+4. MediaSource blob 字节不可读(`<video>.currentSrc` 是 `blob:` 内部,JS 拿不到字节)
+5. cookie 不持久化(camoufox 关闭 = 登录态丢)
+6. 多 tab 并发(camoufox 暂不支持)
+7. 抖音风控严(单视频 ≥ 3 秒间隔,别高频)
+8. 用户主页批量(关注列表)— X-Bogus 修了才能拉 API
+
+**v1 现实意义**:**只解析前端 + 暴露 URL,实际下载需外部工具**。最佳实践:
+
+```bash
+pip install yt-dlp
+yt-dlp "https://v.douyin.com/xxx"  # yt-dlp 维护了抖音 X-Bogus
+```
+
+**v1 + yt-dlp 组合是社区标准做法**,skill v1 负责"找到 URL",yt-dlp 负责"实际下完"。
+
+**教训**(写进下次做类似 skill 的备忘):
+1. v1 设计假设"有可下载 URL 就能 ffmpeg",对抖音不成立 — 抖音 CDN 比小鹅通严一档
+2. 写 skill 前先验目标平台防爬强度(小鹅通可走 ffmpeg,抖音/快手/B 站都不行)
+3. v1 的存在价值:可作为"URL 提取前端"集成到工作流,实际下载交给 yt-dlp 之类专业工具
+
+### 10.1 v1 + 用户 URL 实测(同日傍晚,`https://www.douyin.com/jingxuan?modal_id=7651991412489178420`)
+
+> 用户说"测试你生成的 skill"并提供此 URL。直接交给 yt-dlp 试,两个发现:
+
+**发现 1 — URL 形态问题**:
+- `yt-dlp "https://www.douyin.com/jingxuan?modal_id=7651991412489178420"` → `ERROR: Unsupported URL`
+- `yt-dlp "https://www.douyin.com/video/7651991412489178420"` → `ERROR: Fresh cookies (not necessarily logged in) are needed`
+- `/jingxuan?modal_id=...` 是抖音"精选"页 modal(嵌入),不是直接视频 URL — yt-dlp 不识别
+- `/video/{aweme_id}` 直链需要登录态 cookies — yt-dlp 默认不读 camoufox 的 cookies
+
+**发现 2 — 选 A 方案的最终路径**:
+- v1(浏览器路径)只解 URL,**真下要靠 yt-dlp 或 v2**
+- 抖音 v1 不像小鹅通 v3.1 可以纯 ffmpeg 端到端,因 X-Bogus 签名校验在 ffmpeg 算不出
+- 实用推荐:`v1` 拿 URL → `yt-dlp --cookies ~/cookies.txt URL` 实际下(用户手动从浏览器 DevTools 导 cookies)
+
+**对应小鹅通 v3.1 的差异**(对比表):
+
+| 平台 | 能否纯 ffmpeg 端到端 | 原因 |
+|------|------|------|
+| 小鹅通 m3u8 | ✅ 能 | m3u8 URL 直接给 ffmpeg,sign 在 URL query 里 |
+| 抖音 m3u8 / mp4 | ❌ 不能 | 需 X-Bogus 实时算签名,ffmpeg 没这能力 |
+
+**v1 的真实价值** = URL 提取前端,实际下载 = yt-dlp(v1+yt-dlp = 社区标准组合)。
+
+**启动 v2 X-Bogus 逆向指令**(单独发):"启动 v2" — 逆向 `webmssdk.js` 找签名算法(2-3 天工程),完成后 v1 可替代 yt-dlp。
 
 ---
 
