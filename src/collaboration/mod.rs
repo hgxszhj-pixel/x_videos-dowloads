@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// 创建协作服务器
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub async fn start_server(addr: &str, db_path: &Path) -> Result<()> {
     let db = Arc::new(Database::open(db_path)?);
     let handler = Arc::new(MessageHandler::new(db));

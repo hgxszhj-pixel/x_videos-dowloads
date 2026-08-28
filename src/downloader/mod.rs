@@ -7,7 +7,7 @@
 //! - [`parallel`] - 分段并行下载
 //! - [`merge`]    - 分段合并
 
-#![allow(dead_code)]
+#![expect(dead_code)]
 
 mod config;
 mod merge;

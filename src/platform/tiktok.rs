@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// TikTok 解析器
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct TikTokResolver {
     tokens: HashMap<String, String>,
     token_manager: Option<Arc<Mutex<crate::platform::TokenManager>>>,
@@ -30,14 +30,13 @@ impl TikTokResolver {
     }
 
     /// 设置 tokens
-    #[allow(dead_code)]
     pub fn with_tokens(mut self, tokens: HashMap<String, String>) -> Self {
         self.tokens = tokens;
         self
     }
 
     /// 设置 TokenManager 用于自动token生成
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::platform::TokenManager>>) -> Self {
         self.token_manager = Some(tm);
         self

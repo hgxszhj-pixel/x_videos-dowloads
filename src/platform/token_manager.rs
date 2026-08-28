@@ -13,11 +13,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// XOR obfuscation key - simple obfuscation, not real encryption
-#[allow(dead_code)]
+#[expect(dead_code)]
 const XOR_KEY: &[u8] = b"x_video_downloader_v1";
 
 /// Obfuscate data using XOR with repeating key
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn obfuscate(data: &[u8]) -> Vec<u8> {
     data.iter()
         .enumerate()
@@ -26,7 +26,7 @@ fn obfuscate(data: &[u8]) -> Vec<u8> {
 }
 
 /// Deobfuscate data using XOR (same as obfuscate, XOR is symmetric)
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn deobfuscate(data: &[u8]) -> Vec<u8> {
     obfuscate(data)
 }
@@ -53,16 +53,16 @@ pub struct PlatformTokens {
 }
 
 /// Token 管理器
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct TokenManager {
     tokens: PlatformTokens,
     token_file: PathBuf,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl TokenManager {
     /// 创建新的 TokenManager
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn new(data_dir: &Path) -> Self {
         let token_file = data_dir.join("tokens.json");
         let tokens = if token_file.exists() {
@@ -82,7 +82,7 @@ impl TokenManager {
     }
 
     /// 保存 tokens 到文件 (使用 XOR obfuscation)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn save(&self) -> anyhow::Result<()> {
         if let Some(parent) = self.token_file.parent() {
             std::fs::create_dir_all(parent)?;

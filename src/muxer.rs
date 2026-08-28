@@ -2,7 +2,7 @@
 //!
 //! 使用 FFmpeg 将视频和音频流合并
 
-#![allow(dead_code)]
+#![expect(dead_code)]
 
 use anyhow::{Context, Result};
 use std::path::Path;

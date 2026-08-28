@@ -50,7 +50,7 @@ const MAX_BACKOFF_SECS: u64 = 30;
 ///     "My Device"
 /// ).await?;
 /// ```
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct CollaborationClient {
     device_id: Uuid,
     team_id: Uuid,
@@ -92,7 +92,7 @@ impl ConnectionState {
 ///
 /// 整合 CollaborationClient、ChunkedDownloader 和 FileServer，
 /// 自动处理文件下载请求
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct CollaborationClientWithFileHandler {
     client: CollaborationClient,
     downloader: Arc<crate::collaboration::transfer::downloader::ChunkedDownloader>,
@@ -100,7 +100,7 @@ pub struct CollaborationClientWithFileHandler {
     download_dir: PathBuf,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl CollaborationClient {
     /// Connect to a collaboration server
     ///
@@ -125,7 +125,6 @@ impl CollaborationClient {
     ///     "My Device"
     /// ).await?;
     /// ```
-    #[allow(dead_code)]
     pub async fn connect(
         server_url: &str,
         team_id: Uuid,
@@ -436,7 +435,7 @@ impl CollaborationClient {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl CollaborationClientWithFileHandler {
     /// Create a file-handling client with a new file server
     ///

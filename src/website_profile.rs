@@ -481,6 +481,22 @@ pub struct WebsiteProfileStore {
     store_path: PathBuf,
 }
 
+/// 取 RwLock 读锁；锁中毒时恢复 guard（profile 为非关键缓存，不应级联 panic 中断下载）
+fn read_lock<T: ?Sized>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|err| {
+        warn!("RwLock 锁中毒，恢复读锁: {err}");
+        err.into_inner()
+    })
+}
+
+/// 取 RwLock 写锁；中毒恢复语义同 [`read_lock`]
+fn write_lock<T: ?Sized>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(|err| {
+        warn!("RwLock 锁中毒，恢复写锁: {err}");
+        err.into_inner()
+    })
+}
+
 impl WebsiteProfileStore {
     /// 创建新的存储器
     pub fn new(store_path: PathBuf) -> Self {
@@ -494,13 +510,13 @@ impl WebsiteProfileStore {
 
     /// 获取网站特征
     pub fn get(&self, domain: &str) -> Option<WebsiteProfile> {
-        self.profiles.read().unwrap().get(domain).cloned()
+        read_lock(&self.profiles).get(domain).cloned()
     }
 
     /// 获取或创建特征（懒加载方式）- 使用双检查锁定避免 TOCTOU 竞态
     pub fn get_or_create(&self, domain: &str) -> WebsiteProfile {
         // 先精确匹配（检查内存中是否已有）- 第一次检查
-        if let Some(profile) = self.profiles.read().unwrap().get(domain) {
+        if let Some(profile) = read_lock(&self.profiles).get(domain) {
             return profile.clone();
         }
 
@@ -509,7 +525,7 @@ impl WebsiteProfileStore {
             get_profile_for_domain(domain).unwrap_or_else(|| WebsiteProfile::from_domain(domain));
 
         // 使用写锁插入 - 第二次检查（在写锁内）
-        let mut profiles = self.profiles.write().unwrap();
+        let mut profiles = write_lock(&self.profiles);
         if let Some(existing) = profiles.get(domain) {
             return existing.clone();
         }
@@ -522,7 +538,7 @@ impl WebsiteProfileStore {
         let domain = profile.domain.clone();
         profile.last_visited = chrono_now();
 
-        let mut profiles = self.profiles.write().unwrap();
+        let mut profiles = write_lock(&self.profiles);
         profiles.insert(domain, profile);
 
         drop(profiles);
@@ -558,7 +574,7 @@ impl WebsiteProfileStore {
 
     /// 持久化到磁盘
     fn save(&self) {
-        let profiles = self.profiles.read().unwrap();
+        let profiles = read_lock(&self.profiles);
         let json = serde_json::to_string_pretty(&*profiles).unwrap_or_default();
 
         if let Err(e) = std::fs::write(&self.store_path, json) {
@@ -569,7 +585,7 @@ impl WebsiteProfileStore {
     /// 从磁盘加载
     fn load(&mut self) {
         // 初始化空 HashMap，配置将在访问时懒加载
-        *self.profiles.write().unwrap() = HashMap::new();
+        *write_lock(&self.profiles) = HashMap::new();
 
         if !self.store_path.exists() {
             info!("网站特征库为空，首次访问时将自动加载默认配置");
@@ -578,7 +594,7 @@ impl WebsiteProfileStore {
 
         if let Ok(json) = std::fs::read_to_string(&self.store_path) {
             if let Ok(profiles) = serde_json::from_str::<HashMap<String, WebsiteProfile>>(&json) {
-                let mut store = self.profiles.write().unwrap();
+                let mut store = write_lock(&self.profiles);
                 for (domain, profile) in profiles {
                     store.insert(domain, profile);
                 }
@@ -621,9 +637,7 @@ pub fn get_recommended_config(url: &str) -> (bool, u32, u32, u64) {
     let store = get_profile_store();
 
     // 使用 get_or_create 实现懒加载
-    let profile = store
-        .read()
-        .unwrap()
+    let profile = read_lock(store)
         .get(&domain)
         .or_else(|| get_profile_for_domain(&domain))
         .unwrap_or_else(|| WebsiteProfile::from_domain(&domain));
@@ -651,9 +665,9 @@ pub fn record_download_result(url: &str, success: bool, speed_bps: u64) {
     let store = get_profile_store();
 
     if success {
-        store.write().unwrap().record_success(&domain, speed_bps);
+        write_lock(store).record_success(&domain, speed_bps);
     } else {
-        store.write().unwrap().record_failure(&domain);
+        write_lock(store).record_failure(&domain);
     }
 }
 

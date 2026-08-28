@@ -127,7 +127,6 @@ fn extract_hostname(url: &str) -> Option<String> {
 ///
 /// # Returns
 /// 如果 hostname 匹配该平台则返回 `true`
-#[allow(dead_code)]
 pub fn url_matches_platform_by_host(host_lower: &str, platform: Platform) -> bool {
     for pattern in URL_PATTERNS {
         if pattern.platform == platform {

@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 /// 团队
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct Team {
     pub id: Uuid,
     pub name: String,

@@ -7,4 +7,5 @@
 pub mod download;
 pub mod history;
 pub mod path;
+#[cfg(feature = "collaboration")]
 pub mod serve;

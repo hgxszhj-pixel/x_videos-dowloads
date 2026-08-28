@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![expect(dead_code)]
 
 //! 国际化 (i18n) 模块
 //!

@@ -6,6 +6,13 @@ authors = ["X Video Downloader Team"]
 description = "A high-performance video downloader for x.com (Twitter) videos"
 license = "MIT"
 
+[features]
+default = ["zhixueyun"]
+# 协作服务器/团队模式（WIP：--start-server / --create-team / --join-team）
+collaboration = []
+# 智学云解析器（kc.zhixueyun.com，已注册；--no-default-features 可裁剪）
+zhixueyun = []
+
 [dependencies]
 # 异步运行时
 tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "rt", "sync", "net"] }
@@ -133,6 +140,10 @@ drission = { git = "https://github.com/MageGojo/drission-rs", tag = "v0.5.0", de
 [dev-dependencies]
 tempfile = "3.10"
 bumpalo = "3.16"
+
+[lints.clippy]
+# 非 test 代码 unwrap 收敛（测试豁免见 clippy.toml allow-unwrap-in-tests）
+unwrap_used = "warn"
 
 [profile.release]
 opt-level = 3

@@ -29,8 +29,18 @@ fn uuid_err_to_rusqlite(_: uuid::Error) -> rusqlite::Error {
     rusqlite::Error::InvalidParameterName("Invalid UUID in database".to_string())
 }
 
+/// 解析数据库中的 RFC3339 时间为 DateTime<Utc>（query_map 闭包内使用，坏数据转 rusqlite::Error）
+fn parse_rfc3339_to_utc(s: &str) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|_| {
+            rusqlite::Error::InvalidParameterName(
+                "Invalid RFC3339 datetime in database".to_string(),
+            )
+        })
+}
+
 /// 数据库封装
-#[allow(dead_code)]
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -99,9 +109,7 @@ impl Database {
                 id: Uuid::parse_str(&row.get::<_, String>(0)?)?,
                 name: row.get(1)?,
                 invite_code: row.get(2)?,
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: parse_rfc3339_to_utc(&row.get::<_, String>(3)?)?,
             }))
         } else {
             Ok(None)
@@ -197,9 +205,7 @@ impl Database {
                 name: row.get(2)?,
                 public_ip: row.get(3)?,
                 public_port: row.get(4)?,
-                last_seen: DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                last_seen: parse_rfc3339_to_utc(&row.get::<_, String>(5)?)?,
                 is_online: row.get::<_, i32>(6)? != 0,
             })
         })?;
@@ -235,7 +241,6 @@ impl Database {
     }
 
     /// 获取设备信息
-    #[allow(dead_code)]
     pub fn get_device(&self, device_id: Uuid) -> Result<Option<Device>> {
         let conn = self
             .conn
@@ -256,9 +261,7 @@ impl Database {
                 name: row.get(2)?,
                 public_ip: row.get(3)?,
                 public_port: row.get(4)?,
-                last_seen: DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                last_seen: parse_rfc3339_to_utc(&row.get::<_, String>(5)?)?,
                 is_online: row.get::<_, i32>(6)? != 0,
             }))
         } else {
@@ -360,19 +363,16 @@ impl Database {
                     .get::<_, Option<String>>(4)?
                     .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
                     .transpose()?,
-                claimed_at: row.get::<_, Option<String>>(5)?.map(|s| {
-                    DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&Utc)
-                }),
+                claimed_at: row
+                    .get::<_, Option<String>>(5)?
+                    .map(|s| parse_rfc3339_to_utc(&s))
+                    .transpose()?,
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
                 created_by: Uuid::parse_str(&row.get::<_, String>(9)?)
                     .map_err(uuid_err_to_rusqlite)?,
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: parse_rfc3339_to_utc(&row.get::<_, String>(10)?)?,
                 version: row.get::<_, i64>(11)? as u64,
             })
         })?;
@@ -408,19 +408,16 @@ impl Database {
                     .get::<_, Option<String>>(4)?
                     .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
                     .transpose()?,
-                claimed_at: row.get::<_, Option<String>>(5)?.map(|s| {
-                    DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&Utc)
-                }),
+                claimed_at: row
+                    .get::<_, Option<String>>(5)?
+                    .map(|s| parse_rfc3339_to_utc(&s))
+                    .transpose()?,
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
                 created_by: Uuid::parse_str(&row.get::<_, String>(9)?)
                     .map_err(uuid_err_to_rusqlite)?,
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: parse_rfc3339_to_utc(&row.get::<_, String>(10)?)?,
                 version: row.get::<_, i64>(11)? as u64,
             })
         })?;
@@ -456,19 +453,16 @@ impl Database {
                     .get::<_, Option<String>>(4)?
                     .map(|s| Uuid::parse_str(&s).map_err(uuid_err_to_rusqlite))
                     .transpose()?,
-                claimed_at: row.get::<_, Option<String>>(5)?.map(|s| {
-                    DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&Utc)
-                }),
+                claimed_at: row
+                    .get::<_, Option<String>>(5)?
+                    .map(|s| parse_rfc3339_to_utc(&s))
+                    .transpose()?,
                 progress: row.get(6)?,
                 local_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
                 file_size: row.get::<_, Option<i64>>(8)?.map(|s| s as u64),
                 created_by: Uuid::parse_str(&row.get::<_, String>(9)?)
                     .map_err(uuid_err_to_rusqlite)?,
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: parse_rfc3339_to_utc(&row.get::<_, String>(10)?)?,
                 version: row.get::<_, i64>(11)? as u64,
             })
         })?;

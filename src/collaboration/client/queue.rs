@@ -120,7 +120,10 @@ impl LocalQueue {
     /// 保存到文件
     fn save(&self) -> Result<()> {
         let json = serde_json::to_string_pretty(&self.tasks)?;
-        std::fs::create_dir_all(self.state_file.parent().unwrap())?;
+        // state_file 无父目录（如裸文件名）时 parent() 为 None，跳过建目录
+        if let Some(dir) = self.state_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         std::fs::write(&self.state_file, json)?;
         Ok(())
     }

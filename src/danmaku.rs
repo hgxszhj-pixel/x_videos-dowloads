@@ -2,7 +2,7 @@
 //!
 //! 支持 Bilibili 弹幕下载和 ASS 转换
 
-#![allow(dead_code)]
+#![expect(dead_code)]
 
 use anyhow::{Context, Result};
 use tracing::debug;

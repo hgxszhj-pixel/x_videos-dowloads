@@ -22,7 +22,6 @@ struct Session {
 ///
 /// Manages client sessions, team operations, and task distribution.
 /// Coordinates with database and hash ring for consistent task assignment.
-#[allow(dead_code)]
 pub struct MessageHandler {
     db: Arc<Database>,
     sessions: Arc<RwLock<HashMap<String, Session>>>,
@@ -115,7 +114,7 @@ impl MessageHandler {
         let json = serde_json::to_string(&message)?;
         let sessions = self.sessions.read().await;
 
-        for (_, session) in sessions.iter() {
+        for session in sessions.values() {
             if session.device_id == device_id {
                 // 忽略发送错误（客户端可能已断开）
                 let _ = session.tx.send(json.clone());
@@ -137,7 +136,7 @@ impl MessageHandler {
         let json = serde_json::to_string(&message)?;
         let sessions = self.sessions.read().await;
 
-        for (_, session) in sessions.iter() {
+        for session in sessions.values() {
             if session.team_id == team_id {
                 let _ = session.tx.send(json.clone());
             }

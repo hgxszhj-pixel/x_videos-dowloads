@@ -55,7 +55,7 @@ antfu vendored 文档 `vueuse-functions/references/useJwt.md:21` 的 JWT 示例 
 - **write-a-skill 自此是本地自治 fork**:上游删除 + 本地含当日手改 Content Discipline 节(sha `80130fe7` 未动,另有备份 `~/.agents/write-a-skill.bak.20260824`),后续 update 不会再碰它
 - **CLI 行为规律**:add 装真实拷贝、update 收敛为 symlink → `~/.agents/skills/*`;本次 8 个实体目录被转换,`~/.claude/skills` 提交 `43c7021`(60 删 + 8 链接对象)
 - remotion-best-practices 日期启发式误报:CLI 按内容哈希判定与上游一致,无需更新
-- 顺带查 Rust:本机 1.95.0 → 官方最新 stable 1.98.0(2026-08-18),**未升级**(待用户决定)
+- 顺带查 Rust:本机 1.95.0 → 官方最新 stable 1.98.0(2026-08-18)—— 已于 8-24 晚升级(`rustc --version` 实证 1.98.0,toolchains 目录 mtime 22:03)
 - 记忆:`claude-skills-symlink-pattern.md` 增补 update 行为规律 + fork 警示
 
 ---
@@ -379,7 +379,9 @@ cargo test --bin x-video-downloader -- --ignored \
 | youtube.com | YouTubeResolver | ❌ |
 | 其他 | YtDlpResolver (fallback) | ❌ |
 
-**智学云 (`kc.zhixueyun.com`) 解析器已存在但未启用** — 文件 `src/platform/zhixueyun.rs` (748 行) + `src/platform/zhixueyun_token/mod.rs` (94 行),设计为 SSO + Bearer__token 直击 API + 课程章节递归。详见 `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/zhixueyun-*.md`。
+**智学云 (`kc.zhixueyun.com`) 解析器已注册并 feature 门控 (2026-08-25)** — resolver_chain 已注册 + main 预初始化;`zhixueyun` feature **默认开** (行为不变),`--no-default-features` 可整体裁剪 (连带 `cookie_pool`)。协作模块 `collaboration/` (4.3k 行) 同批门控为 `collaboration` feature **默认关**,44 个测试随之移入 `--features collaboration`。文件 `src/platform/zhixueyun.rs` (748 行) + `src/platform/zhixueyun_token/mod.rs` (94 行),设计为 SSO + Bearer__token 直击 API + 课程章节递归。详见 `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/zhixueyun-*.md`。
+
+**死代码注解迁移 + 非 test unwrap 收敛 (2026-08-25)** — ① 132 个 dead_code 注解清理:28 个失效删除、36 个 test-only 回退 `#[allow]`、68 个真死代码转 `#[expect]`(lint 未触发即报警,自清洁);test-only 代码必须用 allow(expect 在测试构建恒报 unfulfilled)。② `[lints.clippy] unwrap_used="warn"` + `clippy.toml allow-unwrap-in-tests` 落地,默认构建 30 处生产 unwrap 清零:锁中毒→`unwrap_or_else(into_inner)`(website_profile 10 处经 read_lock/write_lock 辅助函数)、常量 header→`HeaderValue::from_static`、时钟回拨→`unwrap_or_default`、regex 捕组→`and_then` 优雅降级、runtime→`expect`。**顺手修真 bug**:scrapling `extract_video_variants` 模式 3 无捕获组却 `get(1).unwrap()` 必 panic→改 `get(0)`;模式 2 url/bitrate 组序取反 (bitrate 恒 0)→按 pi 映射。`--features collaboration` 下 14 处 unwrap 同批清零 (db×9 经新增 `parse_rfc3339_to_utc` 辅助函数转 rusqlite::Error/auth×2 时钟回拨归零/queue `parent()` 判空/serve+main runtime→`expect`) + for_kv_map×2 与默认构建 3 条既有告警 (useless borrows×2/as_chunks×1,后者顺带消掉 try_into)。clippy 默认与 `--all-features` 双组合 0 告警。测试基线 256/0/19 不变。
 
 ---
 
@@ -414,7 +416,7 @@ cargo test --bin x-video-downloader -- --ignored \
 
 | 检查 | 结果 |
 |------|------|
-| `cargo test` | ✅ **256 passed, 0 failed, 19 ignored** (含 4 个 drission_client 诊断测试 + 5 个 tulingpython fixture 测试 `#[ignore]`;今日 +6 个新测试:5 个聚合 + 1 个 is_terminal) |
+| `cargo test` | ✅ **256 passed, 0 failed, 19 ignored** (含 4 个 drission_client 诊断测试 + 5 个 tulingpython fixture 测试 `#[ignore]`;今日 +6 个新测试:5 个聚合 + 1 个 is_terminal;2026-08-25 于 Rust 1.98.0 复验,数字一致零回归) |
 | `cargo fmt --check` | ✅ 0 diff (今日 working tree 全部 fmt-clean) |
 | `cargo clippy --all-targets` | ✅ 0 warning (今日修了 GUI 5 + drission_client.rs 5 + 课程池聚合 magic 数字,均已 commit) |
 

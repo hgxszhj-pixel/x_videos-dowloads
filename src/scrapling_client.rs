@@ -38,7 +38,7 @@ pub struct ScraplingConfig {
     /// 超时秒数
     pub timeout_secs: u64,
     /// 是否使用无头模式
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub headless: bool,
 }
 
@@ -140,7 +140,7 @@ impl ScraplingClient {
         .context("Spawn blocking task failed")??;
 
         let response: ScraplingResponse = serde_json::from_str(&result)
-            .map_err(|e| anyhow!("Failed to parse JSON: {} - Output: {}", e, &result))?;
+            .map_err(|e| anyhow!("Failed to parse JSON: {} - Output: {}", e, result))?;
 
         if let Some(ref err) = response.error {
             return Err(anyhow!("Scrapling error: {}", err));

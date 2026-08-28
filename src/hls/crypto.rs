@@ -8,10 +8,10 @@ use anyhow::{anyhow, Result};
 use generic_array::GenericArray;
 
 /// AES-128-CBC 解密器
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct AesDecryptor;
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl AesDecryptor {
     /// 解密 AES-128-CBC 加密的数据 (PKCS7 padding)
     pub fn decrypt(key: &[u8; 16], iv: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8>> {
@@ -90,7 +90,7 @@ pub fn parse_iv(hex: &str) -> Result<[u8; 16]> {
 }
 
 /// 便捷函数：解密 AES-128-CBC 加密的数据
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub fn decrypt_aes128_cbc(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
     if key.len() != 16 {
         return Err(anyhow!("key must be 16 bytes"));

@@ -87,7 +87,7 @@ impl CorsAllowList {
     }
 
     /// 添加额外的允许 origin (预留 API)
-    #[allow(unknown_lints, dead_code)]
+    #[expect(dead_code)]
     fn with_extra_origins(mut self, origins: Vec<String>) -> Self {
         for origin in &origins {
             if let Ok(parsed) = origin.parse::<url::Url>() {
@@ -160,7 +160,7 @@ impl CorsAllowList {
 }
 
 /// HTTP 文件服务器
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct FileServer {
     port: u16,
     /// 绑定地址（默认 127.0.0.1 安全绑定）
@@ -170,7 +170,7 @@ pub struct FileServer {
     cors_allow_list: CorsAllowList,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl FileServer {
     /// 创建文件服务器（绑定到 127.0.0.1）
     pub fn new(port: u16) -> Self {

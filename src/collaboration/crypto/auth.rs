@@ -51,9 +51,10 @@ impl AuthToken {
     ///
     /// token = HMAC-SHA256(team_id:device_id:timestamp, shared_secret)
     pub fn generate(team_id: uuid::Uuid, device_id: uuid::Uuid) -> Self {
+        // 时钟回拨时归零（签名仍自洽，只是时间戳不新鲜）
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let message = format!("{}:{}:{}", team_id, device_id, timestamp);
@@ -101,9 +102,10 @@ impl AuthToken {
     /// - 检查签名是否匹配
     pub fn verify(&self) -> Result<(), AuthError> {
         // 验证时间戳（5分钟窗口）- 先检查过期，避免不必要的签名计算
+        // 时钟回拨时归零 → token 判为过期，认证失败而非 panic
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         if now > self.timestamp + 300 {

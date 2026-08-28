@@ -51,7 +51,6 @@ impl CookiePool {
     /// # Arguments
     /// * `ttl_hours` - Time-to-live in hours for cookie entries
     /// * `max_hits` - Maximum number of times a cookie can be retrieved before being invalidated
-    #[allow(dead_code)]
     pub fn new(ttl_hours: u64, max_hits: u32) -> Self {
         Self {
             entries: RwLock::new(Vec::new()),

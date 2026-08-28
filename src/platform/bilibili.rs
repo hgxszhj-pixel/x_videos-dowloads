@@ -9,7 +9,6 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// Bilibili 解析器
-#[allow(dead_code)]
 pub struct BilibiliResolver {
     cookies: HashMap<String, String>,
     cookie_manager: CookieFileManager,
@@ -25,7 +24,7 @@ impl BilibiliResolver {
     }
 
     /// 设置 cookies
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn with_cookies(mut self, cookies: HashMap<String, String>) -> Self {
         self.cookies = cookies;
         self

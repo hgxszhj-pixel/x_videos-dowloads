@@ -281,8 +281,8 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
                 .map_err(|e| anyhow!("AES key 初始化失败: {e}"))?;
             let mut prev = iv;
             let mut out = Vec::with_capacity(ct.len());
-            for chunk in ct.chunks_exact(16) {
-                let original_ct: [u8; 16] = chunk.try_into().unwrap();
+            for chunk in ct.as_chunks::<16>().0 {
+                let original_ct: [u8; 16] = *chunk;
                 let mut ga = GenericArray::clone_from_slice(chunk);
                 cipher.decrypt_block(&mut ga);
                 let mut plain: [u8; 16] = ga.into();

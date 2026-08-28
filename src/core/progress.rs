@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::types::{DownloadProgress, DownloadStatus};
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 /// 设置进度跟踪（用于轮询模式）
 /// 返回: (已下载总量, 下载是否进行中, 当前进度)
 pub fn setup_progress_tracking(
@@ -32,7 +32,7 @@ pub fn setup_progress_tracking(
     (total_downloaded, download_active, progress)
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 /// 设置进度跟踪（用于 channel 推送模式）
 /// 返回: (进度发送端, 下载状态, 当前进度)
 pub fn setup_channel_progress_tracking(

@@ -9,9 +9,7 @@ use uuid::Uuid;
 
 /// 一致性哈希环
 pub struct HashRing {
-    #[allow(dead_code)]
     nodes: Arc<RwLock<BTreeMap<u64, Uuid>>>, // hash -> device_id
-    #[allow(dead_code)]
     devices: Arc<RwLock<std::collections::HashMap<Uuid, Device>>>,
 }
 

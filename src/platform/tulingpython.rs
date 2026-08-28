@@ -35,8 +35,8 @@ impl TulingPythonResolver {
         ];
         for pat in &patterns {
             if let Ok(re) = regex::Regex::new(pat) {
-                if let Some(caps) = re.captures(url) {
-                    return Some(caps.get(1).unwrap().as_str().to_string());
+                if let Some(id) = re.captures(url).and_then(|caps| caps.get(1)) {
+                    return Some(id.as_str().to_string());
                 }
             }
         }

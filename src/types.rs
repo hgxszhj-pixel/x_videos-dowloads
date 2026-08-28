@@ -30,7 +30,6 @@ pub enum Platform {
 
 impl Platform {
     /// 平台显示名称（用于 UI 提示）
-    #[allow(dead_code)]
     pub fn display_name(&self) -> &'static str {
         match self {
             Platform::X => "X/Twitter",
@@ -54,7 +53,6 @@ pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) 
 /// 下载错误类型（用户友好）
 #[derive(Debug, Clone)]
 /// 预留 API：用户友好的下载错误分类（当前由 DownloadError 内部使用）
-#[allow(dead_code)]
 pub enum DownloadErrorType {
     /// 网络连接问题（超时、断开）
     Network,
@@ -365,7 +363,6 @@ impl DownloadRequest {
 
     /// 设置原始 URL（用于 yt-dlp 下载）
     /// 预留 API：备用入口，当用户提供的 URL 已被改写时记录原 URL
-    #[allow(dead_code)]
     pub fn with_original_url(mut self, original_url: String) -> Self {
         self.original_url = Some(original_url);
         self
@@ -373,7 +370,6 @@ impl DownloadRequest {
 
     /// 设置下载策略
     /// 预留 API：未来支持自定义下载策略（如 Direct/HLS/YtDlp 切换）
-    #[allow(dead_code)]
     pub fn with_strategy(mut self, strategy: DownloadStrategy) -> Self {
         self.download_strategy = strategy;
         self
@@ -381,7 +377,6 @@ impl DownloadRequest {
 
     /// 设置格式ID
     /// 预留 API：GUI 格式选择器使用（当前未完全透传到 yt-dlp）
-    #[allow(dead_code)]
     pub fn with_format_id(mut self, format_id: String) -> Self {
         self.format_id = Some(format_id);
         self
@@ -411,7 +406,7 @@ impl DownloadRequest {
 
     /// 设置Cookie文件
     /// 预留 API：未来支持浏览器 Cookie 认证下载（X/抖音需要）
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn with_cookie_file(mut self, cookie_file: PathBuf) -> Self {
         self.cookie_file = Some(cookie_file);
         self
@@ -419,7 +414,7 @@ impl DownloadRequest {
 
     /// 设置音频流 URL（用于 Merged 策略）
     /// 预留 API：未来支持 Merged 策略（视频/音频分离流合并）
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn with_audio_url(mut self, audio_url: String) -> Self {
         self.audio_url = Some(audio_url);
         self
@@ -461,7 +456,6 @@ impl DownloadResult {
 
     /// 创建失败结果
     /// 预留 API：失败结果构造函数（当前主要由测试使用）
-    #[allow(dead_code)]
     pub fn failure(output_path: PathBuf, error: String) -> Self {
         Self {
             success: false,
@@ -631,7 +625,7 @@ pub fn format_bytes(bytes: u64) -> String {
 ///
 /// 当前 downloader 内部 pipeline 已不再调用(merge_segments 走 trust-boundary-sanitized output_path),
 /// 保留给外部代码 (CLI/GUI) 在 user-input 信任边界可选调用。
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub fn validate_output_path(
     output_path: &std::path::Path,
     allowed_dir: &std::path::Path,

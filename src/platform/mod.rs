@@ -2,6 +2,7 @@
 //!
 //! 提供统一接口 `PlatformResolver`，各平台实现自己的解析逻辑
 mod bilibili;
+#[cfg(feature = "zhixueyun")]
 mod cookie_pool;
 mod cookie_utils;
 mod douyin;
@@ -12,11 +13,13 @@ mod token_manager;
 mod tulingpython;
 mod xbogus;
 mod youtube;
+#[cfg(feature = "zhixueyun")]
 mod zhixueyun;
 // Re-export 以保持 `use crate::platform::url_matcher` 调用方零改动。
 // 真正定义已迁到 `crate::utils::url_matcher`（避免 platform ↔ history 循环依赖）。
 pub use crate::utils::url_matcher;
 pub use bilibili::BilibiliResolver;
+#[cfg(feature = "zhixueyun")]
 pub use cookie_pool::CookiePool;
 pub use cookie_utils::CookieFileManager;
 pub use douyin::DouYinResolver;
@@ -26,6 +29,7 @@ pub use tiktok::TikTokResolver;
 pub use token_manager::TokenManager;
 pub use tulingpython::TulingPythonResolver;
 pub use youtube::YouTubeResolver;
+#[cfg(feature = "zhixueyun")]
 pub use zhixueyun::ZhiXueYunResolver;
 pub mod zhixueyun_token;
 use crate::history::Platform;
@@ -222,7 +226,7 @@ impl From<anyhow::Error> for ResolverError {
 /// 平台解析器 trait
 /// 所有平台解析器必须实现此接口
 #[async_trait]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub trait PlatformResolver: Send + Sync {
     /// 获取解析器对应的平台
     fn platform(&self) -> Platform;
@@ -379,7 +383,7 @@ impl ResolverRegistry {
         &*self.default_resolver
     }
     /// 尝试使用主解析器，失败时使用回退列表
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub async fn try_resolve(
         &self,
         url: &str,
@@ -408,7 +412,6 @@ impl ResolverRegistry {
     }
 
     /// 尝试所有已注册的解析器，返回第一个成功的结果
-    #[allow(dead_code)]
     pub async fn try_resolve_all(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         // 首先尝试 URL 匹配的解析器
         let primary = self.select_resolver(url);

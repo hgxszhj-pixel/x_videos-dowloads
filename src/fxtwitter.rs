@@ -22,7 +22,7 @@ struct FxTwitterResponse {
 
 /// FxTweet 数据结构
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FxTweet {
     url: String,
     id: String,
@@ -35,7 +35,7 @@ struct FxTweet {
 
 /// FxRawText
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FxRawText {
     #[serde(rename = "display_text_range")]
     display_text_range: Option<Vec<u64>>,
@@ -46,7 +46,7 @@ struct FxRawText {
 
 /// FxFacet（推文中的链接/媒体标记）
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FxFacet {
     #[serde(rename = "type")]
     facet_type: Option<String>,
@@ -59,7 +59,7 @@ struct FxFacet {
 
 /// FxAuthor
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FxAuthor {
     #[serde(rename = "screen_name")]
     screen_name: String,
@@ -70,7 +70,7 @@ struct FxAuthor {
 
 /// FxMedia
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FxMedia {
     all: Option<Vec<FxMediaItem>>,
     videos: Option<Vec<FxMediaItem>>,
@@ -78,7 +78,7 @@ struct FxMedia {
 
 /// FxMediaItem
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FxMediaItem {
     id: Option<String>,
     url: Option<String>,
@@ -97,7 +97,6 @@ struct FxMediaItem {
 #[derive(Debug, Deserialize)]
 struct FxFormat {
     url: Option<String>,
-    #[allow(dead_code)]
     container: Option<String>,
     codec: Option<String>,
     bitrate: Option<u64>,
@@ -105,7 +104,6 @@ struct FxFormat {
 
 /// FxVariant
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct FxVariant {
     url: Option<String>,
     bitrate: Option<u64>,

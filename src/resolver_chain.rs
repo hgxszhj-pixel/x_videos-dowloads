@@ -11,9 +11,11 @@ use crate::cli::Cli;
 use crate::config::AppConfig;
 use crate::fxtwitter::FxTwitterResolver;
 use crate::platform::{
-    BilibiliResolver, CookiePool, DouYinResolver, NnyyResolver, ResolverError, ResolverRegistry,
-    TikTokResolver, TulingPythonResolver, YouTubeResolver, ZhiXueYunResolver,
+    BilibiliResolver, DouYinResolver, NnyyResolver, ResolverError, ResolverRegistry,
+    TikTokResolver, TulingPythonResolver, YouTubeResolver,
 };
+#[cfg(feature = "zhixueyun")]
+use crate::platform::{CookiePool, ZhiXueYunResolver};
 use crate::types::VideoInfo;
 use crate::yt_dlp::YtDlp;
 
@@ -59,6 +61,7 @@ pub fn global_registry(config: &AppConfig) -> Arc<ResolverRegistry> {
     r.register(BilibiliResolver::new());
     r.register(YouTubeResolver::new());
     r.register(NnyyResolver::new());
+    #[cfg(feature = "zhixueyun")]
     r.register(ZhiXueYunResolver::new(Arc::new(CookiePool::new(24, 100))));
     if let Ok(tp) = TulingPythonResolver::new() {
         r.register(tp);

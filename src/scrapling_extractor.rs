@@ -49,8 +49,8 @@ fn extract_from_config(html: &str) -> Option<String> {
     // 尝试在 script 标签中查找 JSON 配置
     if let Some(json_str) = extract_json_from_scripts(html) {
         if let Ok(re) = Regex::new(r#""(https://video\.twimg\.com/[^"]+)""#) {
-            if let Some(caps) = re.captures(&json_str) {
-                return Some(caps.get(1).unwrap().as_str().to_string());
+            if let Some(m) = re.captures(&json_str).and_then(|caps| caps.get(1)) {
+                return Some(m.as_str().to_string());
             }
         }
     }
@@ -68,8 +68,8 @@ fn extract_from_meta(html: &str) -> Option<String> {
 
     for pattern in &patterns {
         if let Ok(re) = Regex::new(pattern) {
-            if let Some(caps) = re.captures(html) {
-                return Some(caps.get(1).unwrap().as_str().to_string());
+            if let Some(m) = re.captures(html).and_then(|caps| caps.get(1)) {
+                return Some(m.as_str().to_string());
             }
         }
     }
@@ -115,8 +115,8 @@ pub fn extract_title(html: &str) -> Option<String> {
 
     for pattern in &patterns {
         if let Ok(re) = Regex::new(pattern) {
-            if let Some(caps) = re.captures(html) {
-                return Some(caps.get(1).unwrap().as_str().to_string());
+            if let Some(m) = re.captures(html).and_then(|caps| caps.get(1)) {
+                return Some(m.as_str().to_string());
             }
         }
     }
@@ -125,7 +125,7 @@ pub fn extract_title(html: &str) -> Option<String> {
 }
 
 /// 从 HTML 中提取 m3u8 URL
-#[allow(dead_code)] // 公开工具函数，未来可能在 scrapling 客户端调用
+#[expect(dead_code)] // 公开工具函数，未来可能在 scrapling 客户端调用
 pub fn extract_m3u8_url(html: &str) -> Option<String> {
     let patterns = [
         // player.src("https://...m3u8")
@@ -207,16 +207,24 @@ fn extract_video_variants(html: &str) -> Option<Vec<(String, u64)>> {
     let mut variants = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    for pattern in &variant_patterns {
+    for (pi, pattern) in variant_patterns.iter().enumerate() {
         if let Ok(re) = Regex::new(pattern) {
             for caps in re.captures_iter(html) {
+                // 模式 0/1 均含两个捕获组但字段顺序相反（0: g1=bitrate/g2=url，1: g1=url/g2=bitrate）；
+                // 模式 2 无捕获组，整体匹配即 URL（原 get(1) 在该分支必然 panic）
+                let (bitrate_idx, url_idx) = if pi == 0 { (1, 2) } else { (2, 1) };
                 let (url, bitrate) = if caps.len() >= 3 {
-                    (
-                        caps.get(2).unwrap().as_str().to_string(),
-                        caps.get(1).unwrap().as_str().parse().unwrap_or(0),
-                    )
+                    match (caps.get(bitrate_idx), caps.get(url_idx)) {
+                        (Some(b), Some(u)) => {
+                            (u.as_str().to_string(), b.as_str().parse().unwrap_or(0))
+                        }
+                        _ => continue,
+                    }
                 } else {
-                    (caps.get(1).unwrap().as_str().to_string(), 0)
+                    match caps.get(0) {
+                        Some(m) => (m.as_str().to_string(), 0),
+                        None => continue,
+                    }
                 };
 
                 if !seen.contains(&url) {

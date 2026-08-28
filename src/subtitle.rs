@@ -2,7 +2,7 @@
 //!
 //! 支持字幕下载和格式转换
 
-#![allow(dead_code)]
+#![expect(dead_code)]
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -147,7 +147,7 @@ fn format_srt_timestamp(seconds: f64) -> String {
 }
 
 /// 下载字幕文件
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub async fn download_subtitle(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
     Ok(client
         .get(url)
@@ -161,7 +161,7 @@ pub async fn download_subtitle(client: &reqwest::Client, url: &str) -> Result<Ve
 }
 
 /// 保存字幕到文件
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub async fn save_subtitle(content: &str, path: &Path) -> Result<()> {
     tokio::fs::write(path, content)
         .await

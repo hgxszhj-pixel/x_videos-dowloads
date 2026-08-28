@@ -1,0 +1,2 @@
+# unwrap_used/expect_used 豁免 #[cfg(test)] 与 tests/ 内的用例
+allow-unwrap-in-tests = true

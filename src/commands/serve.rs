@@ -9,7 +9,7 @@ use crate::collaboration::CollaborationClient;
 
 /// 启动协作服务器
 pub fn run_server(port: u16) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime 创建失败");
     runtime.block_on(async {
         let addr = format!("0.0.0.0:{}", port);
 

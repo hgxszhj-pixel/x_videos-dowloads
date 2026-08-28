@@ -40,9 +40,10 @@ impl DouYinApiClient {
         }
 
         let query = parts[1];
+        // 时钟回拨时归零（仅影响签名时间戳新鲜度，不值得 panic）
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
 
         let signature = self.xbogus.sign(query, &self.user_agent, timestamp);
@@ -122,7 +123,7 @@ impl DouYinApiClient {
             anyhow::anyhow!(
                 "Failed to parse response: {} - body: {}",
                 e,
-                &text.chars().take(200).collect::<String>()
+                text.chars().take(200).collect::<String>()
             )
         })?;
 
@@ -138,7 +139,7 @@ impl Default for DouYinApiClient {
 
 /// 视频详情响应
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct VideoDetailResponse {
     #[serde(rename = "status_code")]
     pub status_code: i32,
@@ -148,7 +149,7 @@ pub struct VideoDetailResponse {
 
 /// 作品项
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct AwemeItem {
     #[serde(rename = "aweme_id")]
     pub aweme_id: Option<String>,
@@ -191,7 +192,7 @@ impl AwemeItem {
 
 /// 作者信息
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct Author {
     #[serde(rename = "nickname")]
     pub nickname: Option<String>,
@@ -203,7 +204,7 @@ pub struct Author {
 
 /// 视频信息
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct Video {
     #[serde(rename = "duration")]
     pub duration: Option<i64>,
@@ -221,7 +222,7 @@ pub struct Video {
 
 /// 播放地址
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct PlayAddr {
     #[serde(rename = "uri")]
     pub uri: Option<String>,
@@ -238,7 +239,7 @@ pub struct Cover {
 
 /// 统计数据
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct Statistics {
     #[serde(rename = "play_count")]
     pub play_count: Option<u64>,

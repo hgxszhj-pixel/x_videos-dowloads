@@ -9,7 +9,6 @@ use crate::types::VideoInfo;
 use async_trait::async_trait;
 
 /// YouTube 解析器
-#[allow(dead_code)]
 pub struct YouTubeResolver {
     cookie_path: Option<std::path::PathBuf>,
 }
@@ -21,7 +20,7 @@ impl YouTubeResolver {
     }
 
     /// 从 cookie 文件创建解析器
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn with_cookie_file(mut self, path: std::path::PathBuf) -> Self {
         self.cookie_path = Some(path);
         self

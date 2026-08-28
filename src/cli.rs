@@ -70,18 +70,22 @@ pub struct Cli {
     pub gui: bool,
 
     /// 创建团队（协作模式）
+    #[cfg(feature = "collaboration")]
     #[arg(long = "create-team")]
     pub create_team: Option<String>,
 
     /// 加入团队（协作模式）
+    #[cfg(feature = "collaboration")]
     #[arg(long = "join-team")]
     pub join_team: Option<String>,
 
     /// 协作服务器地址
+    #[cfg(feature = "collaboration")]
     #[arg(long = "server", default_value = "ws://localhost:9000")]
     pub server_addr: String,
 
     /// 设备名称
+    #[cfg(feature = "collaboration")]
     #[arg(long = "device-name", default_value = "MyDevice")]
     pub device_name: String,
 
@@ -110,10 +114,12 @@ pub struct Cli {
     pub search: Option<String>,
 
     /// 启动协作服务器
+    #[cfg(feature = "collaboration")]
     #[arg(long = "start-server")]
     pub start_server: bool,
 
     /// 服务器端口
+    #[cfg(feature = "collaboration")]
     #[arg(long = "port", default_value = "9000")]
     pub server_port: u16,
 }

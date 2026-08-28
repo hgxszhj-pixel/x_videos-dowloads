@@ -4,6 +4,7 @@
 //! 仅负责命令路由；各子命令实现见 [`commands`] 模块。
 
 mod cli;
+#[cfg(feature = "collaboration")]
 mod collaboration;
 mod commands;
 mod config;
@@ -88,29 +89,33 @@ fn main() {
         return;
     }
 
-    // 启动协作服务器
-    if cli.start_server {
-        commands::serve::run_server(cli.server_port);
-        return;
-    }
-
-    // 协作模式
-    if cli.create_team.is_some() || cli.join_team.is_some() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        if let Some(ref name) = cli.create_team {
-            runtime.block_on(commands::serve::run_create_team(
-                name,
-                &cli.server_addr,
-                &cli.device_name,
-            ));
-        } else if let Some(ref invite_code) = cli.join_team {
-            runtime.block_on(commands::serve::run_join_team(
-                invite_code,
-                &cli.server_addr,
-                &cli.device_name,
-            ));
+    // 协作命令（feature = "collaboration"，默认不编译）
+    #[cfg(feature = "collaboration")]
+    {
+        // 启动协作服务器
+        if cli.start_server {
+            commands::serve::run_server(cli.server_port);
+            return;
         }
-        return;
+
+        // 协作模式
+        if cli.create_team.is_some() || cli.join_team.is_some() {
+            let runtime = tokio::runtime::Runtime::new().expect("tokio runtime 创建失败");
+            if let Some(ref name) = cli.create_team {
+                runtime.block_on(commands::serve::run_create_team(
+                    name,
+                    &cli.server_addr,
+                    &cli.device_name,
+                ));
+            } else if let Some(ref invite_code) = cli.join_team {
+                runtime.block_on(commands::serve::run_join_team(
+                    invite_code,
+                    &cli.server_addr,
+                    &cli.device_name,
+                ));
+            }
+            return;
+        }
     }
 
     // 初始化日志（根据 verbose 参数设置级别）。GUI 模式在 run_gui() 里初始化 (2026-08-01 修)。
@@ -131,6 +136,7 @@ fn main() {
 
     // 预初始化 ZhiXueYunResolver 的 blocking client（必须在 runtime 创建前）
     // 否则 reqwest::blocking::Client 会在 runtime 内创建阻塞池导致 panic
+    #[cfg(feature = "zhixueyun")]
     let _ = crate::platform::ZhiXueYunResolver::new_preinit();
 
     // 运行 CLI 应用 - 使用多线程 runtime (P2-1)
@@ -150,7 +156,7 @@ fn main() {
         .enable_io()
         .enable_time()
         .build()
-        .unwrap();
+        .expect("tokio runtime 创建失败");
     runtime
         .block_on(commands::download::run(cli, config))
         .unwrap_or_else(|e| {

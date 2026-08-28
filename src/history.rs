@@ -255,7 +255,7 @@ impl History {
     }
 
     /// 获取历史条数
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn count(&self) -> usize {
         self.entries.len()
     }
@@ -330,7 +330,7 @@ impl History {
     }
 
     /// 获取所有历史
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn get_all(&self) -> &[HistoryEntry] {
         &self.entries
     }

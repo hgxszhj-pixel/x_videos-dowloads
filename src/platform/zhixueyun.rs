@@ -7,7 +7,7 @@ use crate::history::Platform;
 use crate::platform::{url_matcher, CookiePool, PlatformResolver, ResolverError};
 use crate::types::VideoInfo;
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderName};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub type ProgressCallback = Arc<dyn Fn(u64, u64, &str) + Send + Sync>;
 
 /// 下载结果
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct DownloadResult {
     pub filename: String,
     pub success: bool,
@@ -44,7 +44,7 @@ pub struct DocumentInfo {
 
 /// 文件预览信息
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct FilePreview {
     pub secure_url: String,
     pub filename: String,
@@ -69,7 +69,6 @@ pub struct ZhiXueYunResolver {
 
 impl ZhiXueYunResolver {
     /// 创建新的 ZhiXueYunResolver（懒加载 client）
-    #[allow(dead_code)]
     pub fn new(cookie_pool: Arc<CookiePool>) -> Self {
         Self {
             cookie_pool,
@@ -80,7 +79,6 @@ impl ZhiXueYunResolver {
     }
 
     /// 预初始化 blocking client（在任何 async runtime 外调用）
-    #[allow(dead_code)]
     pub fn new_preinit() -> Self {
         let client = reqwest::blocking::Client::builder()
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
@@ -163,20 +161,25 @@ impl ZhiXueYunResolver {
 /// 智学云基础请求头（静态缓存避免每次重新构建）
 static BASE_HEADERS: once_cell::sync::Lazy<HeaderMap> = once_cell::sync::Lazy::new(|| {
     let mut headers = HeaderMap::new();
-    headers.insert(reqwest::header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36".parse().unwrap());
-    headers.insert(reqwest::header::ACCEPT, "*/*".parse().unwrap());
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        HeaderValue::from_static(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        ),
+    );
+    headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static("*/*"));
     headers.insert(
         reqwest::header::ACCEPT_LANGUAGE,
-        "zh-CN,zh;q=0.9".parse().unwrap(),
+        HeaderValue::from_static("zh-CN,zh;q=0.9"),
     );
-    headers.insert(reqwest::header::DNT, "1".parse().unwrap());
+    headers.insert(reqwest::header::DNT, HeaderValue::from_static("1"));
     headers.insert(
         HeaderName::from_static("x-requested-with"),
-        "XMLHttpRequest".parse().unwrap(),
+        HeaderValue::from_static("XMLHttpRequest"),
     );
     headers.insert(
         HeaderName::from_static("referer"),
-        "https://kc.zhixueyun.com/".parse().unwrap(),
+        HeaderValue::from_static("https://kc.zhixueyun.com/"),
     );
     headers
 });
@@ -185,13 +188,19 @@ impl ZhiXueYunResolver {
     fn get_auth_headers(&self, token: Option<&str>) -> Result<HeaderMap, ResolverError> {
         // Get or build cached base headers
         let base_headers = {
-            let cached = self.cached_headers.read().unwrap();
+            let cached = self
+                .cached_headers
+                .read()
+                .unwrap_or_else(|err| err.into_inner());
             if let Some(ref h) = *cached {
                 h.clone()
             } else {
                 drop(cached);
                 let base = (*BASE_HEADERS).clone();
-                let mut cached = self.cached_headers.write().unwrap();
+                let mut cached = self
+                    .cached_headers
+                    .write()
+                    .unwrap_or_else(|err| err.into_inner());
                 *cached = Some(base.clone());
                 base
             }
@@ -199,12 +208,12 @@ impl ZhiXueYunResolver {
 
         let mut headers = base_headers;
         if let Some(t) = token {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer__{}", t.trim_start_matches("Bearer__").trim())
-                    .parse()
-                    .unwrap(),
-            );
+            let value = HeaderValue::from_str(&format!(
+                "Bearer__{}",
+                t.trim_start_matches("Bearer__").trim()
+            ))
+            .map_err(|e| ResolverError::ParseFailed(format!("token 含非法 header 字符: {e}")))?;
+            headers.insert(reqwest::header::AUTHORIZATION, value);
         }
         Ok(headers)
     }
@@ -354,9 +363,10 @@ impl ZhiXueYunResolver {
         let mut last_error = None;
 
         for attempt in 0..max_retries {
+            // 时钟早于 epoch（回拨）时归零即可，timestamp 仅作 cache-buster 参数
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as u64;
             let url = format!(
                 "https://kc.zhixueyun.com/api/v1/tools-center/file-cloud/preview-new?id={}&_={}",
@@ -463,7 +473,7 @@ impl ZhiXueYunResolver {
     }
 
     /// 下载单个文件
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn download_file(
         &self,
         url: &str,
@@ -611,7 +621,7 @@ impl ZhiXueYunResolver {
     }
 
     /// 下载单个文件（公开接口，返回 DownloadResult）
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn download_single(
         &self,
         url: &str,
@@ -677,7 +687,7 @@ impl ZhiXueYunResolver {
     }
 
     /// 下载课程的所有文档
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn download_all_documents(
         &self,
         url: &str,
@@ -693,7 +703,7 @@ impl ZhiXueYunResolver {
     }
 
     /// 使用分类ID批量下载
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn download_all_by_category(
         &self,
         url: &str,

@@ -10,14 +10,14 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 /// 分块下载器
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct ChunkedDownloader {
     chunk_size: u64,
     connect_timeout: Duration,
     client: Arc<reqwest::Client>,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl ChunkedDownloader {
     /// 创建下载器
     pub fn new(chunk_size: u64) -> Self {

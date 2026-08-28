@@ -65,7 +65,7 @@ pub struct HlsDownloader {
     config: Arc<HlsDownloaderConfig>,
 }
 
-#[allow(dead_code)] // builder API (skip_unavailable/config/proxy/create_client)
+#[expect(dead_code)] // builder API (skip_unavailable/config/proxy/create_client)
 impl HlsDownloader {
     /// 使用配置创建下载器（自动创建带代理的 Client）
     pub async fn with_config(config: HlsDownloaderConfig) -> Result<Self> {
