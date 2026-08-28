@@ -5,6 +5,9 @@
 //!
 //! 用法：`cargo bench --bench hls_parse`
 
+// bench 专用代码（非 #[test] 函数，allow-unwrap-in-tests 不覆盖）
+#![allow(clippy::unwrap_used)]
+
 use std::time::Instant;
 
 // 与 src/main.rs 共享：include HLS parser 模块（bench 是独立 crate）

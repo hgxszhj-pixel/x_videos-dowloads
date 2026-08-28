@@ -4,6 +4,9 @@
 //! download across {1, 2, 4, 8, 16, 32} concurrency. Plain `Instant` loop —
 //! one sample per config. Run: `cargo bench --bench hls_concurrency`.
 
+// bench 专用代码（非 #[test] 函数，allow-unwrap-in-tests 不覆盖）
+#![allow(clippy::unwrap_used)]
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,16 +19,57 @@ use tokio::net::TcpListener;
 #[allow(dead_code)]
 mod hls;
 
-// Stub for `crate::types::DownloadProgress` used by HlsDownloader::download sig.
+// Copy of `crate::types::{DownloadProgress, DownloadStatus}` current definitions
+// (crate is binary-only; the inline `mod hls` resolves `crate::types` to this stub).
+// Keep in sync with src/types.rs when hls-facing surface changes.
 #[allow(dead_code)]
 pub mod types {
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum DownloadStatus {
+        Pending,
+        Preparing,
+        Downloading,
+        Completed,
+        Paused,
+        Failed,
+        Cancelled,
+    }
+
+    #[derive(Debug, Clone)]
     pub struct DownloadProgress {
-        pub percent: f32,
-        pub downloaded_bytes: u64,
+        pub task_id: String,
+        pub bytes_downloaded: u64,
         pub total_bytes: u64,
-        pub speed_bps: u64,
-        pub eta_secs: u64,
+        pub percent: f64,
+        pub speed: f64,
+        pub eta_secs: Option<f64>,
+        pub active_threads: u32,
+        pub status: DownloadStatus,
+    }
+
+    impl DownloadProgress {
+        pub fn new(task_id: String) -> Self {
+            Self {
+                task_id,
+                bytes_downloaded: 0,
+                total_bytes: 0,
+                percent: 0.0,
+                speed: 0.0,
+                eta_secs: None,
+                active_threads: 0,
+                status: DownloadStatus::Pending,
+            }
+        }
+
+        pub fn with_total_bytes(mut self, total_bytes: u64) -> Self {
+            self.total_bytes = total_bytes;
+            self
+        }
+
+        pub fn with_status(mut self, status: DownloadStatus) -> Self {
+            self.status = status;
+            self
+        }
     }
 }
 
