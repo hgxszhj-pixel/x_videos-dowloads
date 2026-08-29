@@ -199,17 +199,20 @@ impl M3u8Parser {
     /// 解析 base_url（去除文件名，保留到域名）
     #[allow(dead_code)] // bench 编译上下文看不到调用方，lib 实际使用
     fn extract_base_url(url: &str) -> String {
-        if let Some(idx) = url.find("://") {
-            let scheme_end = idx + 3;
-            let after_scheme = &url[scheme_end..];
-            // 找到域名后的第一个斜杠位置
-            if let Some(slash_pos) = after_scheme.find('/') {
-                url[..scheme_end + slash_pos].to_string()
-            } else {
-                url.to_string()
-            }
-        } else {
-            url.to_string()
+        // RFC 3986: 相对 URL 解析时,base URL 应为"目录路径"(含尾部 /)。
+        // 必须 (1) 去掉 query string (2) 保留到最后一层目录(含尾部 /)。
+        //
+        // 反例: 小鹅通 m3u8 URL 形如
+        //   https://encrypt-k-vod.xet.tech/522ff1e0vodcq1252524126/eb50187b5001834818244054481/playlist_eof.m3u8?sign=xxx&t=xxx&us=xxx
+        // 段 URL 是相对路径 `1485407404_302214827_1.ts?sign=xxx&t=xxx&us=xxx`。
+        // 旧实现只返回 `https://encrypt-k-vod.xet.tech`,导致段 URL 被解析成
+        //   https://encrypt-k-vod.xet.tech/1485407404_xxx_1.ts?sign=xxx&t=xxx&us=xxx
+        // 丢失路径前缀 `/522ff1e0vodcq1252524126/eb50187b5001834818244054481/`,
+        // CDN 签名校验失败 → 403 (missing parameter t) (2026-08-29 实测)。
+        let url_no_qs = url.split('?').next().unwrap_or(url);
+        match url_no_qs.rfind('/') {
+            Some(idx) => url_no_qs[..=idx].to_string(), // 含尾部 /
+            None => url_no_qs.to_string(),
         }
     }
 
@@ -266,6 +269,30 @@ segment1.ts
         assert_eq!(
             M3u8Parser::resolve_url(base, "/play/hls/x/index.m3u8"),
             "https://hn.bfvvs.com/play/hls/x/index.m3u8"
+        );
+    }
+
+    /// 回归测试:小鹅通 m3u8 含 ?sign=&t=&us= 时,段 URL 必须保留路径前缀。
+    /// Bug 修复前:`extract_base_url` 只返回 scheme://host,段被拼成
+    /// `https://host/segment.ts?sign=...&t=...&us=...` — 路径前缀丢失 → 403。
+    /// Bug 修复后:返回目录 `https://host/dir/`,段解析为
+    /// `https://host/dir/segment.ts?sign=...&t=...&us=...` — 路径保留。
+    #[test]
+    fn test_extract_base_url_keeps_directory_with_query() {
+        let m3u8 = "https://encrypt-k-vod.xet.tech/522ff1e0vodcq1252524126/eb50187b5001834818244054481/playlist_eof.m3u8?sign=44a45e55c6e48ac48c7d8b4b0a349072&t=6a93061f&us=JiNrOaqRla";
+        let base = M3u8Parser::extract_base_url(m3u8);
+        assert_eq!(
+            base,
+            "https://encrypt-k-vod.xet.tech/522ff1e0vodcq1252524126/eb50187b5001834818244054481/"
+        );
+        // 段 URL 含自己 ?sign=&t=&us=,拼到目录后必须保留路径 + 段 query
+        let seg = M3u8Parser::resolve_url(
+            &base,
+            "1485407404_302214827_1.ts?resolution=1920x1080&sign=44a45e55c6e48ac48c7d8b4b0a349072&t=6a93061f&us=JiNrOaqRla",
+        );
+        assert_eq!(
+            seg,
+            "https://encrypt-k-vod.xet.tech/522ff1e0vodcq1252524126/eb50187b5001834818244054481/1485407404_302214827_1.ts?resolution=1920x1080&sign=44a45e55c6e48ac48c7d8b4b0a349072&t=6a93061f&us=JiNrOaqRla"
         );
     }
 }

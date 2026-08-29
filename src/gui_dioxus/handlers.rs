@@ -547,8 +547,15 @@ async fn resolve_items_serially(
         }
         // P-1 (2026-08-16): 跳过已下载课节 — 检查输出目录是否存在同名 mp4 (>0 字节)
         // 大小 > 0 视为"有内容",0 字节的占位文件视为不存在,触发正常下载
+        // P-2 (2026-08-29): 兼容外部脚本命名 `{idx:02}_{title}.mp4`(Python 批量下载工具)
         // 填充 slot.total_bytes/progress 让 UI 直接显示 "✓ 已下载" + 100% + 文件大小
-        if let Some(file_size) = file_is_already_downloaded(&output_dir, &item.title).await {
+        if let Some(file_size) = file_is_already_downloaded_with_index(
+            &output_dir,
+            &item.title,
+            Some(item.index),
+        )
+        .await
+        {
             if let Some(s) = slot.as_ref() {
                 s.total_bytes.store(file_size, Ordering::Relaxed);
                 s.progress.store(10000, Ordering::Relaxed);
@@ -740,6 +747,49 @@ pub(super) async fn file_is_already_downloaded(
     })
 }
 
+/// 文件存在性检查的宽松版:除 `{title}.mp4` 外,还尝试兼容外部工具的命名约定
+/// (`tmp_batch_download.py` 用 `{idx:02}_{title}.mp4` + **不 sanitize 空格/横线**),
+/// 避免同名课程重复下载。
+///
+/// P-2 (2026-08-29) 修复:`tmp_batch_download.py` 已经把 14 节课下载到 `~/Movies/`,
+/// 但因命名带 `01_`...`14_` 前缀且保留空格/横线,Rust GUI 找不到,触发重新下载 +
+/// 403 (missing parameter t)。
+///
+/// **命名冲突**:
+/// - Rust `sanitize_filename` 把空格替换为 `_`(横线保留)
+/// - Python `safe_filename` 只替换 `\\/:*?"<>|\n\r\t`,**保留空格和横线**
+/// → 同样 `{idx:02}_{title}` 在两边产出不同文件名,必须两种都查。
+pub(super) async fn file_is_already_downloaded_with_index(
+    output_dir: &std::path::Path,
+    title: &str,
+    index: Option<u32>,
+) -> Option<u64> {
+    // 1. Rust GUI 自身命名: `{sanitize(title)}.mp4`
+    if let Some(size) = file_is_already_downloaded(output_dir, title).await {
+        return Some(size);
+    }
+    let Some(idx) = index else { return None };
+
+    // 2. Python 脚本命名: `{idx:02}_{raw_title}.mp4`(保留空格和横线)
+    let py_title = format!("{:02}_{}", idx, title);
+    if let Some(size) = metadata_size(output_dir.join(format!("{py_title}.mp4"))).await {
+        return Some(size);
+    }
+
+    // 3. Rust 加 index 前缀: `{idx:02}_{sanitize(title)}.mp4`(空格变 _)
+    let rust_title = format!("{:02}_{}", idx, sanitize_filename(title));
+    metadata_size(output_dir.join(format!("{rust_title}.mp4"))).await
+}
+
+/// 取文件大小(>0 字节视为有效,0 字节或不存在返回 None)。
+/// 与 `file_is_already_downloaded` 的判断一致:0 字节占位文件视为不存在。
+async fn metadata_size(path: std::path::PathBuf) -> Option<u64> {
+    tokio::fs::metadata(&path)
+        .await
+        .ok()
+        .and_then(|m| if m.len() > 0 { Some(m.len()) } else { None })
+}
+
 #[cfg(test)]
 mod skip_existing_tests {
     use super::*;
@@ -796,5 +846,53 @@ mod skip_existing_tests {
             Some(16),
             "sanitized title must map to the same path as download_one"
         );
+    }
+
+    /// P-2 (2026-08-29): 兼容 `tmp_batch_download.py` 命名约定 `{idx:02}_{title}.mp4`。
+    /// 14 节课已经用 Python 脚本下到 ~/Movies/,GUI 必须识别这些文件避免重复下载。
+    /// Python `safe_filename` **保留**空格和横线,Rust `sanitize_filename` 把空格 → `_`,
+    /// 必须三种命名都能命中。
+    #[tokio::test]
+    async fn test_with_index_detects_python_script_naming() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // 1) Python 命名: `{idx:02}_{raw_title}.mp4`(保留空格/横线)
+        let py_path = dir.path().join("01_js逆向14 AI逆向 - 魔改算法.mp4");
+        std::fs::write(&py_path, vec![0u8; 2048]).expect("write");
+        let py_hit = file_is_already_downloaded_with_index(
+            dir.path(),
+            "js逆向14 AI逆向 - 魔改算法",
+            Some(1),
+        )
+        .await;
+        assert_eq!(py_hit, Some(2048), "Python 命名必须命中");
+
+        // 2) Rust 加 index 前缀: `{idx:02}_{sanitize(title)}.mp4`(空格 → `_`,横线 `-` 保留)
+        //    sanitize_filename: "js逆向14 AI逆向 - 魔改算法" → "js逆向14_AI逆向_-_魔改算法"
+        let dir2 = tempfile::tempdir().expect("tempdir");
+        let rust_idx_path = dir2.path().join("02_js逆向14_AI逆向_-_魔改算法.mp4");
+        std::fs::write(&rust_idx_path, vec![0u8; 4096]).expect("write");
+        let rust_idx_hit = file_is_already_downloaded_with_index(
+            dir2.path(),
+            "js逆向14 AI逆向 - 魔改算法",
+            Some(2),
+        )
+        .await;
+        assert_eq!(rust_idx_hit, Some(4096), "Rust 加 index 前缀命名也要能命中");
+
+        // 3) Rust 原生: `{sanitize(title)}.mp4`(无 index 前缀)
+        let dir3 = tempfile::tempdir().expect("tempdir");
+        let rust_native = dir3.path().join("lesson_native.mp4");
+        std::fs::write(&rust_native, vec![0u8; 8192]).expect("write");
+        let rust_native_hit =
+            file_is_already_downloaded_with_index(dir3.path(), "lesson_native", Some(99)).await;
+        assert_eq!(rust_native_hit, Some(8192), "Rust 原生命名也要能命中");
+
+        // 4) None index → 不查 index 模式,只查原生
+        let dir4 = tempfile::tempdir().expect("tempdir");
+        let with_idx_only = dir4.path().join("01_only_with_idx.mp4");
+        std::fs::write(&with_idx_only, vec![0u8; 16]).expect("write");
+        let miss = file_is_already_downloaded(dir4.path(), "only_with_idx").await;
+        assert_eq!(miss, None, "无 index 时不查 index 模式,应 miss");
     }
 }
