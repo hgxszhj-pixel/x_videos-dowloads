@@ -51,6 +51,17 @@ pub struct FilePreview {
     pub file_size: u64,
 }
 
+/// 智学云业务主页元信息(从 `home-v?id=X` 解析得到)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BusinessHomeInfo {
+    /// 1 = default home,2 = business home
+    pub home_type: i32,
+    /// UUID,用于 `validate/<business_id>` 等下游接口
+    pub business_id: String,
+    /// 原始 shortCode(短码,如 `128558`),用于 `home-v?id=<shortCode>` 路由
+    pub short_code: String,
+}
+
 /// 下载上下文 (封装进度相关参数，减少函数参数)
 struct DownloadContext {
     progress: Option<ProgressCallback>,
@@ -681,6 +692,71 @@ impl ZhiXueYunResolver {
     /// 流程:`home-v?id=<id>` 这类单课节 URL 先尝试 `preview-new` API 拿标题;
     /// 失败则 fallback 到 `chapter-progress`(课程主页)。真实视频/文档地址
     /// 仍走 `url.to_string()` 原样回传,由下游 Native strategy 自己解析。
+    /// 智学云业务主页元信息(从 `home-v?id=X` 的 shortCode 反推)
+    ///
+    /// `home-v?id=128558` 中的 128558 是 **shortCode**,不是 file_resource_id。
+    /// 服务端真正处理请求需要 UUID 形式的 `businessId`,二者由
+    /// `/system/business-home-config/default-home-page` 响应桥接。
+    ///
+    /// SPA bundle (`main-ede6b38a1120a38f3eaa.js`) 显示消费者侧访问 `e.type`/`e.id`/`e.shortCode`:
+    /// ```js
+    /// sessionStorage.setItem("homeType", e.type);
+    /// e.id && (sessionStorage.setItem("businessId", e.id), ...);
+    /// this.app.navigate("home-v?id=" + e.shortCode, !0);
+    /// ```
+    ///
+    /// - `home_type == 1` 表示 default home(shortCode 直接可用)
+    /// - `home_type == 2` 表示 business home(必须用 `business_id` 走后续接口)
+    ///
+    /// multi-field-name OR parsing 是因为 SPA 仅展示访问模式,具体字段名以服务端为准。
+    #[expect(
+        dead_code,
+        reason = "公开 API,等待用户在 home-v?id= 场景接入(2026-08-29);GUI/TUI 调用方预留"
+    )]
+    pub fn resolve_business_home(
+        &self,
+        short_code: &str,
+        token: &str,
+    ) -> anyhow::Result<BusinessHomeInfo> {
+        if short_code.is_empty() {
+            anyhow::bail!("shortCode 不能为空");
+        }
+
+        let url = format!(
+            "https://kc.zhixueyun.com/api/v1/system/business-home-config/default-home-page?shortCode={}",
+            short_code
+        );
+        let headers = self.get_auth_headers(Some(token))?;
+        let resp = self
+            .get_client()
+            .get(&url)
+            .headers(headers)
+            .send()
+            .map_err(|e| anyhow::anyhow!("default-home-page 请求失败: {}", e))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            return Err(anyhow::anyhow!(
+                "default-home-page 返回 {},shortCode={}",
+                status,
+                short_code
+            ));
+        }
+
+        let body = resp
+            .text()
+            .map_err(|e| anyhow::anyhow!("读取 default-home-page 响应失败: {}", e))?;
+        let json: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("default-home-page JSON 解析失败: {}", e))?;
+
+        let info = parse_business_home_response(&json, short_code);
+        info!(
+            "resolve_business_home(shortCode={}): type={}, business_id={}, resolved_short_code={}",
+            info.short_code, info.home_type, info.business_id, info.short_code
+        );
+        Ok(info)
+    }
+
     pub fn fetch_video_info(&self, url: &str, token: &str) -> anyhow::Result<VideoInfo> {
         let course_id = Self::extract_course_id(url)
             .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 ID"))?;
@@ -741,6 +817,47 @@ impl ZhiXueYunResolver {
         output_dir: &std::path::Path,
     ) -> anyhow::Result<Vec<String>> {
         self.download_all_documents(url, token, output_dir)
+    }
+}
+
+/// 从 JSON 中按字段名优先级取第一个非空字符串
+///
+/// 智学云服务端字段名可能在多次迭代中漂移(id ↔ businessId ↔ uuid 等),
+/// 解析时按顺序尝试,首个非 None/空字符串的值胜出。
+fn pick_first_str(json: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(v) = json.get(*key).and_then(|v| v.as_str()) {
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 从 default-home-page 响应 JSON 中提取 BusinessHomeInfo
+///
+/// 纯函数,可单元测试。multi-field-name OR 解析:
+/// - `business_id` ← `id` / `businessId` / `uuid`,fallback 到输入 shortCode
+/// - `short_code` ← `shortCode` / `code` / `short_code`,fallback 到输入 shortCode
+/// - `home_type` ← `type` 字段(1/2),fallback 1
+fn parse_business_home_response(
+    json: &serde_json::Value,
+    fallback_short_code: &str,
+) -> BusinessHomeInfo {
+    let business_id = pick_first_str(json, &["id", "businessId", "uuid"])
+        .unwrap_or_else(|| fallback_short_code.to_string());
+    let short_code = pick_first_str(json, &["shortCode", "code", "short_code"])
+        .unwrap_or_else(|| fallback_short_code.to_string());
+    let home_type = json
+        .get("type")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1) as i32;
+
+    BusinessHomeInfo {
+        home_type,
+        business_id,
+        short_code,
     }
 }
 
@@ -863,5 +980,100 @@ mod tests {
             ZhiXueYunResolver::extract_course_id("https://kc.zhixueyun.com/#/home-v?id="),
             None
         );
+    }
+
+    // ====== resolve_business_home 响应解析测试 ======
+
+    /// 标准 SPA 响应:`{type:2, id:UUID, shortCode:128558}`
+    #[test]
+    fn test_parse_business_home_response_standard() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"type":2,"id":"abc12345-1234-1234-1234-123456789abc","shortCode":"128558"}"#,
+        )
+        .unwrap();
+        let info = parse_business_home_response(&json, "128558");
+        assert_eq!(info.home_type, 2);
+        assert_eq!(info.business_id, "abc12345-1234-1234-1234-123456789abc");
+        assert_eq!(info.short_code, "128558");
+    }
+
+    /// 字段名漂移到 `businessId` + `code`(兼容旧版本)
+    #[test]
+    fn test_parse_business_home_response_business_id_alias() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"type":2,"businessId":"uuid-aaa","code":"42"}"#,
+        )
+        .unwrap();
+        let info = parse_business_home_response(&json, "42");
+        assert_eq!(info.business_id, "uuid-aaa");
+        assert_eq!(info.short_code, "42");
+    }
+
+    /// 字段名漂移到 `uuid` + `short_code`(下划线风格)
+    #[test]
+    fn test_parse_business_home_response_uuid_alias() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"type":2,"uuid":"uuid-bbb","short_code":"9999"}"#,
+        )
+        .unwrap();
+        let info = parse_business_home_response(&json, "9999");
+        assert_eq!(info.business_id, "uuid-bbb");
+        assert_eq!(info.short_code, "9999");
+    }
+
+    /// 缺字段时 fallback 到输入 shortCode(防 panic,继续走原路径)
+    #[test]
+    fn test_parse_business_home_response_missing_fields() {
+        let json: serde_json::Value = serde_json::from_str(r#"{"type":1}"#).unwrap();
+        let info = parse_business_home_response(&json, "128558");
+        assert_eq!(info.home_type, 1);
+        assert_eq!(info.business_id, "128558");
+        assert_eq!(info.short_code, "128558");
+    }
+
+    /// 字段优先级:id 优先于 businessId 优先于 uuid
+    #[test]
+    fn test_parse_business_home_response_id_priority() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"type":2,"id":"primary","businessId":"secondary","uuid":"tertiary"}"#,
+        )
+        .unwrap();
+        let info = parse_business_home_response(&json, "x");
+        assert_eq!(info.business_id, "primary");
+    }
+
+    /// type 字段缺失时默认为 1(default home),不 panic
+    #[test]
+    fn test_parse_business_home_response_missing_type_defaults_to_one() {
+        let json: serde_json::Value =
+            serde_json::from_str(r#"{"id":"u","shortCode":"1"}"#).unwrap();
+        let info = parse_business_home_response(&json, "1");
+        assert_eq!(info.home_type, 1);
+    }
+
+    /// 空字符串字段被跳过(防止空值污染)
+    #[test]
+    fn test_parse_business_home_response_empty_string_skipped() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"type":2,"id":"","businessId":"real-uuid"}"#,
+        )
+        .unwrap();
+        let info = parse_business_home_response(&json, "1");
+        // 空字符串应被跳过,落到 `businessId`
+        assert_eq!(info.business_id, "real-uuid");
+    }
+
+    /// `pick_first_str` 直接测试:多键 OR + 空值跳过
+    #[test]
+    fn test_pick_first_str_multi_key() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"a":null,"b":"","c":"winner","d":"ignored"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            pick_first_str(&json, &["a", "b", "c", "d"]),
+            Some("winner".to_string())
+        );
+        assert_eq!(pick_first_str(&json, &["x", "y"]), None);
     }
 }
