@@ -523,7 +523,7 @@ async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
     // 2. 拿标题 (失败则 fallback 到 alive_id placeholder)
     let title = fetch_lesson_title(&client, &cookie_header, &alive_id, url)
         .await
-        .unwrap_or_else(|| format!("lesson_{}", &alive_id));
+        .unwrap_or_else(|| format!("lesson_{}", alive_id));
 
     info!(
         "API fast-path lesson m3u8 命中: {} (alive_id={})",

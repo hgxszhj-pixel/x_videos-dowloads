@@ -777,6 +777,7 @@ pub(super) async fn file_is_already_downloaded(
 /// **命名冲突**:
 /// - Rust `sanitize_filename` 把空格替换为 `_`(横线保留)
 /// - Python `safe_filename` 只替换 `\\/:*?"<>|\n\r\t`,**保留空格和横线**
+///
 /// → 同样 `{idx:02}_{title}` 在两边产出不同文件名,必须两种都查。
 pub(super) async fn file_is_already_downloaded_with_index(
     output_dir: &std::path::Path,
@@ -787,7 +788,7 @@ pub(super) async fn file_is_already_downloaded_with_index(
     if let Some(size) = file_is_already_downloaded(output_dir, title).await {
         return Some(size);
     }
-    let Some(idx) = index else { return None };
+    let idx = index?;
 
     // 2. Python 脚本命名: `{idx:02}_{raw_title}.mp4`(保留空格和横线)
     let py_title = format!("{:02}_{}", idx, title);
