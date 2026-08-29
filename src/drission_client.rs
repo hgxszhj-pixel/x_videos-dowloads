@@ -76,6 +76,55 @@ pub fn is_profile_dir_in_use(dir: &std::path::Path) -> bool {
     candidates.iter().any(|p| p.exists())
 }
 
+/// 清理 profile 目录里持有者已死的 SingletonLock/Cookie/Socket。
+///
+/// 场景:Chrome 被 parent 进程 `kill -9` 后变成孤儿(PPID=1),自身不退,
+/// SingletonLock 锁文件永远不释放。下次启动会因 `is_profile_dir_in_use` 误报
+/// "被占用" 或 Chromium 启动等待锁导致 GUI 卡在"分析课程中..."。
+///
+/// 安全前提:ego-lite 的 profile 不在此路径(它在 `~/Library/Application Support/Citro Labs/ego lite/`),
+/// 误清只会让我们自己 profile 重新登录,不会影响其他浏览器。
+///
+/// SingletonLock 在 macOS/Linux 上是 symlink → "hostname-PID";Windows 是文件。
+/// 我们用 `kill -0 PID` 探测进程是否仍存活:不存活则三件套全删。
+pub fn cleanup_stale_singleton_locks(dir: &std::path::Path) {
+    let lock = dir.join("SingletonLock");
+    if !lock.exists() {
+        return;
+    }
+
+    // 读 symlink target 或文件内容,提取末尾 PID
+    let target = std::fs::read_link(&lock)
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| std::fs::read_to_string(&lock).ok());
+
+    let Some(target) = target else { return };
+
+    let pid: i32 = match target.trim().rsplit('-').next().and_then(|s| s.parse().ok()) {
+        Some(p) => p,
+        None => return, // 解析失败 → 保守不清,留给 is_profile_dir_in_use 拦截
+    };
+
+    // kill -0:不真杀,只探测。exit 0 = 进程存在,非0 = 进程已死。
+    let alive = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !alive {
+        let _ = std::fs::remove_file(dir.join("SingletonLock"));
+        let _ = std::fs::remove_file(dir.join("SingletonCookie"));
+        let _ = std::fs::remove_file(dir.join("SingletonSocket"));
+        info!(
+            target: "drission",
+            "清理孤儿 Chrome 留下的 SingletonLock (PID {} 已死)",
+            pid
+        );
+    }
+}
+
 /// 登录状态细粒度分类。SPA 检测常见 3 种情况,GUI 需区分提示:
 /// - `LoggedIn`        找到 `data.user_info.user_id`
 /// - `SessionExpired`  cookie 存在但服务端识别失败 (Code:2506 "当前用户不存在"),需重新扫码
@@ -188,9 +237,11 @@ async fn is_logged_in_via_ego_lite() -> LoginStatus {
 }
 
 /// 从 ego-lite 的 Default/Cookies SQLite 数据库读 tulingpyton.cn 相关 cookies,
-/// 用 Keychain "ego safe storage" 派生 AES-128-GCM 密钥解密,返回 `name=value; ...` 字符串。
+/// 用 Keychain "ego safe storage" 派生 AES-128-GCM 密钥解密,返回 (host, name, value) 元组列表。
+/// 共享底层,供 [`decrypt_ego_lite_cookies_for_vip`] 和
+/// [`decrypt_ego_lite_cookies_for_host`] 两个包装函数使用。
 #[cfg(target_os = "macos")]
-fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
+fn decrypt_ego_lite_cookies_raw() -> anyhow::Result<Vec<(String, String, String)>> {
     use rusqlite::Connection;
 
     // 1. ego-lite profile 路径
@@ -246,13 +297,13 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         .map_err(|e| anyhow!("SQL 准备失败: {e}"))?;
 
     let now_unix = chrono::Utc::now().timestamp();
-    let mut parts: Vec<String> = Vec::new();
+    let mut entries: Vec<(String, String, String)> = Vec::new();
     let mut rows = stmt.query([]).map_err(|e| anyhow!("SQL 查询失败: {e}"))?;
     while let Some(row) = rows.next().map_err(|e| anyhow!("SQL next: {e}"))? {
         let name: String = row.get(0).unwrap_or_default();
         let plain_value: String = row.get(1).unwrap_or_default();
         let encrypted_value: Vec<u8> = row.get(2).unwrap_or_default();
-        let _host: String = row.get(3).unwrap_or_default();
+        let host_key: String = row.get(3).unwrap_or_default();
         let expires_utc: i64 = row.get(4).unwrap_or(0);
 
         if expires_utc > 0 {
@@ -308,19 +359,63 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         } else {
             plain_value
         };
-        if value.is_empty() {
+        if value.is_empty() || name.is_empty() {
             continue;
         }
 
-        if !value.is_empty() && !name.is_empty() {
-            parts.push(format!("{name}={value}"));
-        }
+        entries.push((host_key, name, value));
     }
 
-    if parts.is_empty() {
+    if entries.is_empty() {
         anyhow::bail!("ego-lite 找到 0 个 tulingpyton cookies (CBC 解密全失败,检查算法或过期)");
     }
-    info!(target: "drission", "ego-lite 解密出 {} 个 cookies", parts.len());
+    info!(target: "drission", "ego-lite 解密出 {} 个 cookies", entries.len());
+    Ok(entries)
+}
+
+/// 取全部 tulingpyton/ego-lite cookies(不做 host 过滤),用于登录态检测 user_info API。
+#[cfg(target_os = "macos")]
+fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
+    let entries = decrypt_ego_lite_cookies_raw()?;
+    Ok(entries
+        .into_iter()
+        .map(|(_, n, v)| format!("{n}={v}"))
+        .collect::<Vec<_>>()
+        .join("; "))
+}
+
+/// 按 target_host 过滤 cookies(浏览器行为:对目标 host 只发送匹配 host_key 的 cookies),
+/// 用于 host-sensitive API 调用如 `_alive/api/get_lookback_list`。否则全 host 的 cookie
+/// 会触发服务端 400 (2026-08-29 实测 ego-lite 36 条 cookie 全发,vip.tulingpyton.cn 返回 400)。
+///
+/// **小鹅通域名生态**:必须同时匹配 `tulingpyton.cn` 全域(含 `.tulingpyton.cn` /
+/// `vip.tulingpyton.cn` / `.vip.tulingpyton.cn`)+ `.xiaoeknow.com` 平台根域,
+/// 否则 xet.tech CDN 返回 403 (2026-08-29 实测漏掉 `.tulingpyton.cn` 子域 cookie)。
+#[cfg(target_os = "macos")]
+pub(crate) fn decrypt_ego_lite_cookies_for_host(
+    target_host: &str,
+) -> anyhow::Result<String> {
+    let entries = decrypt_ego_lite_cookies_raw()?;
+    let suffix = format!(".{target_host}");
+    let root_suffix = format!(".{}", target_host.trim_start_matches("vip."));
+    let mut seen = std::collections::HashSet::new();
+    let mut parts = Vec::new();
+    for (host, name, value) in entries {
+        // 平台根域(小鹅通 / 小鹅通知识店铺) + 当前 target_host 子域
+        let matches = host == target_host
+            || host == suffix
+            || host.ends_with(&suffix)
+            || host == ".xiaoeknow.com"
+            || host.ends_with(".xiaoeknow.com")
+            || host.ends_with(&root_suffix);
+        if !matches || name.is_empty() || value.is_empty() || !seen.insert(name.clone()) {
+            continue;
+        }
+        parts.push(format!("{name}={value}"));
+    }
+    if parts.is_empty() {
+        anyhow::bail!("ego-lite 未找到匹配 {target_host} 的 cookies");
+    }
     Ok(parts.join("; "))
 }
 
@@ -700,6 +795,8 @@ impl DrissionClient {
             .add_arg("--disable-features=IsolateOrigins,site-per-process");
         if let Some(ref dir) = self.config.user_data_dir {
             opts = opts.user_data_dir(dir.clone());
+            // 启动前先清孤儿 Chrome 留下的 SingletonLock,避免 launch 等待或失败
+            cleanup_stale_singleton_locks(dir);
         }
 
         let browser = ChromiumBrowser::launch(opts)

@@ -162,6 +162,17 @@ impl PlatformResolver for TulingPythonResolver {
     }
 
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
+        // Fast-path (lesson 维度): macOS + URL 含 `l_xxx` → API 直接拿 m3u8+title,
+        // 跳过 Drission 浏览器拦截。Drission 在 SPA 懒加载场景拦截不到 m3u8
+        // (player 需用户点击触发, 2026-08-29 实测单 lesson 30s 超时仍失败)。
+        // 失败返回 None, 调用方 fallback 到下方 Drission 流程。
+        #[cfg(target_os = "macos")]
+        if let Some((m3u8_url, title)) = try_api_fetch_lesson_m3u8(url).await {
+            let mut info = VideoInfo::new(title, m3u8_url, None);
+            info.download_strategy = crate::types::DownloadStrategy::Hls;
+            return Ok(info);
+        }
+
         info!("使用 Drission CDP 拦截 m3u8 URL: {}", url);
 
         let response = match self.drission.fetch(url).await {
@@ -320,6 +331,18 @@ fn list_collection_impl<'a>(
         if TulingPythonResolver::is_standalone_live(url) {
             return Ok(vec![]);
         }
+
+        // Fast-path: macOS + column URL → 直接调 column.items.get 拿课节列表。
+        // 成功则跳过 Drission,失败/非 macOS 走下方 Drission 兜底。
+        #[cfg(target_os = "macos")]
+        if let Some(cid) = TulingPythonResolver::extract_id(url)
+            .filter(|id| id.starts_with("p_"))
+        {
+            if let Some(entries) = try_api_list_collection(url, &cid).await {
+                return Ok(entries);
+            }
+        }
+
         let response = resolver
             .drission
             .fetch(url)
@@ -353,6 +376,194 @@ fn list_collection_impl<'a>(
             })
             .collect())
     })
+}
+
+/// API fast-path: 直接调 `column.items.get/2.0.0` 拿课节列表,跳过 Drission 浏览器拦截。
+/// Drission 在小鹅通 SPA 懒加载场景下拦截不到 m3u8 (2026-08-29 实测),
+/// 且 `column_list` 经常捕获失败 → list_collection 返空 → 用户看到 "未识别到课程条目"。
+/// 仅 macOS + URL 含 column_id (`p_xxx`) 时尝试,失败返回 None 让调用方 fallback 到 Drission。
+#[cfg(target_os = "macos")]
+async fn try_api_list_collection(
+    url: &str,
+    column_id: &str,
+) -> Option<Vec<CollectionEntry>> {
+    let cookie_header =
+        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn").ok()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .ok()?;
+
+    let body = serde_json::json!({
+        "column_id": column_id,
+        "page_index": 1,
+        "page_size": 50,
+        "content_app_id": "appssry6rs71641",
+        "sort": "desc",
+    });
+
+    let resp = client
+        .post("https://vip.tulingpyton.cn/xe.course.business_go.column.items.get/2.0.0")
+        .header("Cookie", &cookie_header)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .header("Referer", url)
+        .header("Origin", "https://vip.tulingpyton.cn")
+        .json(&body)
+        .send()
+        .await
+        .ok()?;
+
+    let json: serde_json::Value = resp.json().await.ok()?;
+    if json.get("code").and_then(|c| c.as_i64()) != Some(0) {
+        warn!(
+            "API fast-path column.items.get 返回非 0: code={:?} msg={:?}",
+            json.get("code"),
+            json.get("msg")
+        );
+        return None;
+    }
+
+    // 包装成 parse_channel_items 期望的 shape: { "data": { "list": [...] } }
+    let wrapper = serde_json::json!({ "data": json.get("data")? });
+    let (concrete, recurse) = parse_channel_items(&wrapper, url)?;
+    if !recurse.is_empty() {
+        warn!(
+            "API fast-path: {} 个子课程未递归(走 Drission fallback)",
+            recurse.len()
+        );
+    }
+    info!("API fast-path 拿到 {} 个课节", concrete.len());
+    Some(concrete)
+}
+
+/// API fast-path (lesson 维度): 单 lesson m3u8 URL, 直接调
+/// `_alive/api/get_lookback_list` 拿回放 m3u8。
+///
+/// Drission 在小鹅通 SPA 懒加载场景下拦截不到 m3u8 —— player 必须**用户点击**
+/// 才异步触发 m3u8 请求 (2026-08-29 实测, 单 lesson 30s 超时仍未拦截到)。
+/// 因此即使课程列表走 fast-path 拿到 14 个 lesson, 每个 lesson 的 m3u8 仍必须
+/// 走 API。返回 Some((m3u8_url, title)) 命中;None 让调用方 fallback 到 Drission。
+///
+/// 仅 macOS + URL 含 live_id (`l_xxx`) 时尝试。
+#[cfg(target_os = "macos")]
+async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
+    let alive_id = TulingPythonResolver::extract_id(url)
+        .filter(|id| id.starts_with("l_"))?;
+
+    let cookie_header =
+        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn").ok()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .ok()?;
+
+    // 1. 拿 m3u8 URL
+    let lookback_url = format!(
+        "https://vip.tulingpyton.cn/_alive/api/get_lookback_list?app_id=appssry6rs71641&alive_id={}",
+        alive_id
+    );
+    let resp = client
+        .get(&lookback_url)
+        .header("Cookie", &cookie_header)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .header("Referer", url)
+        .header("Origin", "https://vip.tulingpyton.cn")
+        .send()
+        .await
+        .ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    if json.get("code").and_then(|c| c.as_i64()) != Some(0) {
+        warn!(
+            "API fast-path get_lookback_list 返回非 0: code={:?} msg={:?}",
+            json.get("code"),
+            json.get("msg")
+        );
+        return None;
+    }
+
+    // data: [{line_name, default, line_sharpness: [{name, url, default}]}]
+    // 优先 default line + default 清晰度, 否则 data[0].line_sharpness[0].url
+    let data = json.get("data")?.as_array()?;
+    let mut chosen_url: Option<String> = None;
+    let mut first_url: Option<String> = None;
+    for line in data {
+        let sharpness_arr = match line.get("line_sharpness").and_then(|v| v.as_array()) {
+            Some(a) => a,
+            None => continue,
+        };
+        let is_default_line = line.get("default").and_then(|v| v.as_bool()).unwrap_or(false)
+            || line
+                .get("line_name")
+                .and_then(|v| v.as_str())
+                .map(|n| n == "线路1")
+                .unwrap_or(false);
+        for sharp in sharpness_arr {
+            let url_str = match sharp.get("url").and_then(|v| v.as_str()) {
+                Some(u) => u.to_string(),
+                None => continue,
+            };
+            if first_url.is_none() {
+                first_url = Some(url_str.clone());
+            }
+            let is_default_sharp = sharp.get("default").and_then(|v| v.as_bool()).unwrap_or(false)
+                || sharp
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|n| n == "原画")
+                    .unwrap_or(false);
+            if is_default_line && is_default_sharp && chosen_url.is_none() {
+                chosen_url = Some(url_str);
+            }
+        }
+    }
+    let m3u8_url = chosen_url.or(first_url)?;
+
+    // 2. 拿标题 (失败则 fallback 到 alive_id placeholder)
+    let title = fetch_lesson_title(&client, &cookie_header, &alive_id, url)
+        .await
+        .unwrap_or_else(|| format!("lesson_{}", &alive_id));
+
+    info!(
+        "API fast-path lesson m3u8 命中: {} (alive_id={})",
+        &m3u8_url[..m3u8_url.len().min(80)],
+        alive_id
+    );
+    Some((m3u8_url, title))
+}
+
+/// 取 lesson 标题。失败返回 None, 调用方 fallback 到 alive_id。
+#[cfg(target_os = "macos")]
+async fn fetch_lesson_title(
+    client: &reqwest::Client,
+    cookie_header: &str,
+    alive_id: &str,
+    referer: &str,
+) -> Option<String> {
+    let body = serde_json::json!({
+        "alive_id": alive_id,
+        "app_id": "appssry6rs71641",
+        "use_im_source": "pc_web",
+    });
+    let resp = client
+        .post("https://vip.tulingpyton.cn/_alive/api/alive/xe.alive.page.get/1.0.0?app_id=appssry6rs71641")
+        .header("Cookie", cookie_header)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .header("Referer", referer)
+        .header("Origin", "https://vip.tulingpyton.cn")
+        .json(&body)
+        .send()
+        .await
+        .ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    if json.get("code").and_then(|c| c.as_i64()) != Some(0) {
+        return None;
+    }
+    json.get("data")
+        .and_then(|d| d.get("title"))
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string())
 }
 
 /// URL 规范化(去 query/fragment),用于 list_collection 防环的 visited 集合。

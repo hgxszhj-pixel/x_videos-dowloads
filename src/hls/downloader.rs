@@ -39,6 +39,8 @@ pub struct HlsDownloaderConfig {
     pub proxy: Option<String>,
     /// HTTP Referer 头（用于绕过防盗链）
     pub referer: Option<String>,
+    /// HTTP Cookie 头（用于登录平台鉴权 CDN，如 tulingpyton 的 xet.tech / xed.plus）
+    pub cookie_header: Option<String>,
     /// 最大允许失败分段数（超过此数则停止下载）
     pub max_failed_segments: u32,
 }
@@ -54,6 +56,7 @@ impl Default for HlsDownloaderConfig {
             retry_max_delay_ms: 20000, // 最大 20s
             proxy: None,
             referer: None,
+            cookie_header: None,
             max_failed_segments: 5, // 默认 5 次失败后停止
         }
     }
@@ -113,6 +116,12 @@ impl HlsDownloader {
         self
     }
 
+    /// 设置 Cookie 头(用于登录平台鉴权 CDN,如 tulingpyton 的 xet.tech / xed.plus)
+    pub fn cookie_header(mut self, cookie: String) -> Self {
+        Arc::make_mut(&mut self.config).cookie_header = Some(cookie);
+        self
+    }
+
     /// 创建带代理的 Client
     fn create_client(proxy: &Option<String>) -> Result<Client> {
         let mut builder = Client::builder()
@@ -152,6 +161,30 @@ impl HlsDownloader {
     ) -> Result<u64> {
         // 1. 获取并解析 m3u8
         info!("获取 m3u8: {}", url);
+
+        // 自动探测防盗链 CDN（零调用方改动）：
+        // 小鹅通 CDN（xet.tech / xed.plus / xiaoe-materials.com）要求 Referer = vip.tulingpyton.cn
+        // 且需登录 Cookie（host-filtered ego-lite）。未显式配置时自动填默认值。
+        let config: Arc<HlsDownloaderConfig> = if needs_xiaoe_cdn_headers(url)
+            && (self.config.referer.is_none() || self.config.cookie_header.is_none())
+        {
+            let mut cfg = (*self.config).clone();
+            if cfg.referer.is_none() {
+                cfg.referer = Some("https://vip.tulingpyton.cn/".to_string());
+            }
+            #[cfg(target_os = "macos")]
+            if cfg.cookie_header.is_none() {
+                if let Ok(cookie) =
+                    crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn")
+                {
+                    cfg.cookie_header = Some(cookie);
+                }
+            }
+            Arc::new(cfg)
+        } else {
+            self.config.clone()
+        };
+
         let playlist = M3u8Parser::fetch_and_parse(&self.client, url)
             .await
             .context("failed to fetch m3u8")?;
@@ -179,7 +212,6 @@ impl HlsDownloader {
         let client = &self.client;
         let segments = playlist.segments.clone();
         let failed_count_clone = failed_count.clone();
-        let config = self.config.clone();
 
         // Per-segment 进度跟踪：累计下载字节 + 起始时间（用于算 speed）
         let progress_bytes = Arc::new(AtomicU64::new(0));
@@ -351,7 +383,13 @@ impl HlsDownloader {
 
             match tokio::time::timeout(
                 timeout,
-                Self::download_single_segment(client, segment, output, &config.referer),
+                Self::download_single_segment(
+                    client,
+                    segment,
+                    output,
+                    &config.referer,
+                    &config.cookie_header,
+                ),
             )
             .await
             {
@@ -468,6 +506,7 @@ impl HlsDownloader {
         segment: &M3u8Segment,
         output: &PathBuf,
         custom_referer: &Option<String>,
+        custom_cookie: &Option<String>,
     ) -> Result<u64> {
         let mut data = Vec::new();
 
@@ -503,12 +542,14 @@ impl HlsDownloader {
                 .unwrap_or_else(|| segment.url.clone())
         });
 
-        // 下载分段（带 Referer 防防盗链）
-        let response = client
+        // 下载分段（带 Referer + Cookie 防防盗链/鉴权 CDN）
+        let mut req = client
             .get(&segment.url)
-            .header("Referer", &referer)
-            .send()
-            .await?;
+            .header("Referer", &referer);
+        if let Some(cookie) = custom_cookie {
+            req = req.header("Cookie", cookie);
+        }
+        let response = req.send().await?;
         if !response.status().is_success() {
             let status = response.status();
             // 429/503 通常携带 Retry-After 头（秒数或 HTTP date）。
@@ -605,6 +646,15 @@ impl HlsDownloader {
 
         Ok(result)
     }
+}
+
+/// 检测 URL host 是否属于需要 tulingpyton 防盗链头的 CDN。
+/// 小鹅通 CDN（xet.tech / xed.plus / xiaoe-materials.com）必须带 Referer + 登录 Cookie，
+/// 否则返回 HTTP 403（2026-08-29 实测）。
+fn needs_xiaoe_cdn_headers(url: &str) -> bool {
+    url.contains("xet.tech")
+        || url.contains("xed.plus")
+        || url.contains("xiaoe-materials.com")
 }
 
 #[cfg(test)]
