@@ -1,7 +1,7 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-29 (智学云 URL 解析盲区修复 `9ab3813`:`extract_course_id` 增加 `?id=` 兜底 + `fetch_video_info` probe-then-fallback 复用 `preview-new` API)
-**上次**: 2026-08-29 (课程池覆盖已下载开关 P-3 `86e497e`:toggle UI + delete_existing_with_index 三命名预清理)
+**更新**: 2026-08-29 (智学云 ego-lite SQLite 兜底 `6cd927e`:`decrypt_ego_lite_cookies_for_host` 签名参数化 + 新增 `decrypt_ego_lite_authorization_for_zhixueyun` 走 host 链路 `.zhixueyun.com`/`.e.189.cn`/`.mylearning.cn`)
+**上次**: 2026-08-29 (智学云 URL 解析盲区修复 `9ab3813`:`extract_course_id` 增加 `?id=` 兜底 + `fetch_video_info` probe-then-fallback 复用 `preview-new` API)
 **再上次**: 2026-08-29 (8-25 暂存变更集验证补全落库 `c7b0fe4` + 两 bench 存量断裂修复 `deb54c3`;全局侧 12 条规则文章 3 边际项)
 **上次**: 2026-08-28 (全局 Claude Code 配置机械兜底改造:5 hooks 接线 + 15 deny + statusline 修复 + 死脚本归档;项目侧 gui_dioxus fmt 修复 commit ab2febd)
 **再上次**: 2026-08-25 (douyin-mp4-download skill v1 + 同日 URL 实测:v1 验出"jingxuan?modal_id= URL yt-dlp 不识别" + "/video/{id} 需 fresh cookies",v1+yt-dlp 组合为推荐方案)
