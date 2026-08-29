@@ -1,6 +1,7 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-29 (8-25 暂存变更集验证补全落库 `c7b0fe4` + 两 bench 存量断裂修复 `deb54c3`;全局侧 12 条规则文章 3 边际项)
+**更新**: 2026-08-29 (小鹅通 HLS segment 403 真凶 + GUI 跨脚本命名兼容双修 `0011caa`;parser RFC 3986 base URL + skip-existing 三命名匹配)
+**上次**: 2026-08-29 (8-25 暂存变更集验证补全落库 `c7b0fe4` + 两 bench 存量断裂修复 `deb54c3`;全局侧 12 条规则文章 3 边际项)
 **上次**: 2026-08-28 (全局 Claude Code 配置机械兜底改造:5 hooks 接线 + 15 deny + statusline 修复 + 死脚本归档;项目侧 gui_dioxus fmt 修复 commit ab2febd)
 **再上次**: 2026-08-25 (douyin-mp4-download skill v1 + 同日 URL 实测:v1 验出"jingxuan?modal_id= URL yt-dlp 不识别" + "/video/{id} 需 fresh cookies",v1+yt-dlp 组合为推荐方案)
 **更早**: 2026-08-25 (xiaoe-m3u8-download skill v3.2: setTimeout 5000ms→8000ms 防时序 false negative,爬虫基础2626期 15/15 端到端) · 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复) · 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3) · 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper) · 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
@@ -36,6 +37,66 @@
 头条"12 条规则"文章内容已 100% 在 `~/.claude/CLAUDE.md`,仅 3 边际项落地: 规则 6 改上下文相对预算 / 规则数冻结 13(>14 遵从率悬崖)/ karpathy 死引用清理。
 
 **待用户决定**: 未跟踪目录处置(`.claude/` `.omo/` `docs/diagrams/`;`.teach/` 文首称 gitignored 但实际 `??` 未跟踪,矛盾待澄清)。
+
+---
+
+## Session: 2026-08-29 — 小鹅通 HLS 403 真凶 + GUI 跨脚本命名兼容(commit `0011caa`)
+
+> 起因: 课程 14 节课 + 5 段错误 403, 排查后定位两条 bug 一并修。
+
+### 1. fix(`src/hls/parser.rs`) — `extract_base_url` 丢路径前缀 → 403
+
+**症状**: 选 2 节下载,首条 5 个分段错误,日志 `HTTP 403 missing parameter t`。误判方向:先猜 Cookie 不全,再猜 Referer 缺失,均无效。
+
+**真凶**: `extract_base_url` 旧实现 `url.find("://") + 第一个斜杠位置` 只返回 `scheme://host`。小鹅通 m3u8 URL 含 `/522ff1e0vodcq1252524126/eb50187b5001834818244054481/playlist_eof.m3u8?sign=xxx&t=xxx&us=xxx`,段是相对路径 `1485407404_xxx_1.ts?sign=xxx&t=xxx&us=xxx`。拼接后:
+
+```
+https://encrypt-k-vod.xet.tech/1485407404_xxx_1.ts?sign=xxx&t=xxx&us=xxx
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                  路径前缀 /522ff1e0vodcq1252524126/.../ 丢失!
+```
+
+CDN 按路径 + `t` 验签 → 验签失败 → `403 missing parameter t`。
+
+**诊断关键**: `curl -I` 不带任何 header 直接打 m3u8 URL,body=`missing parameter t`,**403 不一定是防盗链**,body 揭示 CDN 验签失败。
+
+**修复** (RFC 3986): 1) 剥 query string 2) 留到最后一层目录(含尾部 `/`)。段 URL 解析为正确路径。
+
+**测试**: `test_extract_base_url_keeps_directory_with_query` 回归 + 旧 `test_parse_simple_playlist` / `test_resolve_url` 无回归。3/3 通过。
+
+### 2. fix(`src/gui_dioxus/handlers.rs`) — `file_is_already_downloaded_with_index` 三命名兼容
+
+**症状**: Python `tmp_batch_download.py` 已下 14 节课 17.62 GB 到 `~/Movies/`,但 GUI"分析课程"后全部识别为"未下载"→ 重下 + 403 再次触发。
+
+**根因**: 命名约定不一致 —
+| 来源 | 文件名 | sanitize |
+| --- | --- | --- |
+| Python | `01_js逆向14 AI逆向 - 魔改算法.mp4` | 只替换 `\\/:*?"<>\|\n\r\t`,保留空格/横线 |
+| Rust GUI | `js逆向14_AI逆向_-_魔改算法.mp4` | 空格 → `_`,横线保留 |
+
+→ 旧 `file_is_already_downloaded` 只查 `{title}.mp4`,无法匹配带 `01_` 前缀的 Python 文件。
+
+**修复**: 新函数 `file_is_already_downloaded_with_index(dir, title, Some(idx))`,三种命名都查:
+1. `{sanitize(title)}.mp4` — Rust 原生
+2. `{idx:02}_{raw_title}.mp4` — Python 原始(保留空格)
+3. `{idx:02}_{sanitize(title)}.mp4` — Rust 加 index 前缀
+
+`resolve_items_serially` 改调新函数,传 `Some(item.index)`。
+
+**测试**: `test_with_index_detects_python_script_naming` 覆盖 4 分支(Rust 原生 / Rust 加 index / Python 原始 / None index)。5/5 通过(含 3 老用例)。
+
+### 3. 记忆 / 教训
+
+- 项目 memory `~/memory/projects/x-videos-dowloads.md` 加两段根因 + 7 条教训:
+  - 403 不一定是防盗链 → `curl -I` 看 body
+  - m3u8 base URL 必须按 RFC 3986(剥 query + 留目录)
+  - URL 拼接前确认 `a` 末尾 `/`
+  - 加 host-filter 后仍 403 ≠ Cookie 不全 → 先排 URL 再回头改 Cookie
+  - 跨工具文件名检测穷举所有命名(sanitize/raw + 前缀/无前缀)
+  - `sanitize_filename` 行为要文档化
+  - 0 字节占位文件视为不存在
+
+**GUI PID 54652 重启就绪**,用户可在"分析课程"后选 2 节实测:应跳过已存在,显示 `✓ 已下载` + 文件大小 + 0 失败。
 
 ---
 
