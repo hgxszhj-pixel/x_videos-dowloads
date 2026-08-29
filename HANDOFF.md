@@ -1,7 +1,8 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-29 (小鹅通 HLS segment 403 真凶 + GUI 跨脚本命名兼容双修 `0011caa`;parser RFC 3986 base URL + skip-existing 三命名匹配)
-**上次**: 2026-08-29 (8-25 暂存变更集验证补全落库 `c7b0fe4` + 两 bench 存量断裂修复 `deb54c3`;全局侧 12 条规则文章 3 边际项)
+**更新**: 2026-08-29 (课程池覆盖已下载开关 P-3 `86e497e`:toggle UI + delete_existing_with_index 三命名预清理)
+**上次**: 2026-08-29 (小鹅通 HLS segment 403 真凶 + GUI 跨脚本命名兼容双修 `0011caa`;parser RFC 3986 base URL + skip-existing 三命名匹配)
+**再上次**: 2026-08-29 (8-25 暂存变更集验证补全落库 `c7b0fe4` + 两 bench 存量断裂修复 `deb54c3`;全局侧 12 条规则文章 3 边际项)
 **上次**: 2026-08-28 (全局 Claude Code 配置机械兜底改造:5 hooks 接线 + 15 deny + statusline 修复 + 死脚本归档;项目侧 gui_dioxus fmt 修复 commit ab2febd)
 **再上次**: 2026-08-25 (douyin-mp4-download skill v1 + 同日 URL 实测:v1 验出"jingxuan?modal_id= URL yt-dlp 不识别" + "/video/{id} 需 fresh cookies",v1+yt-dlp 组合为推荐方案)
 **更早**: 2026-08-25 (xiaoe-m3u8-download skill v3.2: setTimeout 5000ms→8000ms 防时序 false negative,爬虫基础2626期 15/15 端到端) · 2026-08-22 (darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 截图链修复) · 2026-08-21 (opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 GLM Coding Plan glm-5.3) · 2026-08-17 (OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover wrapper) · 2026-08-16 (P1 enum 重构 + 进度条 UX + Dioxus Store 修复) · 2026-08-13 (GUI 响应瓶颈 + multi_thread) · 2026-08-09 (小鹅通端到端 8.5GB 验证通过)
@@ -97,6 +98,42 @@ CDN 按路径 + `t` 验签 → 验签失败 → `403 missing parameter t`。
   - 0 字节占位文件视为不存在
 
 **GUI PID 54652 重启就绪**,用户可在"分析课程"后选 2 节实测:应跳过已存在,显示 `✓ 已下载` + 文件大小 + 0 失败。
+
+---
+
+## Session: 2026-08-29 — 课程池覆盖已下载开关(commit `86e497e`)
+
+> 用户反馈"没有提示覆盖的提示",期望"符合逻辑(跳过) 或 提示是否覆盖"二选一。已实现跳过,缺覆盖选项。
+
+### 1. feat(`src/gui_dioxus/types.rs`) — `CourseCollectionState.overwrite_existing: bool`
+
+默认 `false` (沿用跳过行为),允许用户在课程池面板一键切换。
+
+### 2. feat(`src/gui_dioxus/app_course_pool.rs`) — 全选/全不选旁加 toggle 按钮
+
+- 关: `⊘ 跳过已下载 (关)` 灰色 — 旧行为,跳过已存在
+- 开: `🔄 覆盖已下载 (开)` 橙色 — 全部覆盖重下
+
+Dioxus 0.7 RSX 限制:不能在 `{...}` 块里直接放 `button {}` 宏,必须把动态计算放 `style: { ... }` 块或信号。代码用 `format!` 在 `style` 内联解决。
+
+### 3. feat(`src/gui_dioxus/handlers.rs`) — `delete_existing_with_index` + 串 overwire 标志
+
+- `resolve_items_serially` 新增 `overwrite_existing: bool` 参数
+- true → 跳过 exists 检查,先调 `delete_existing_with_index` 删三命名旧文件
+- `delete_existing_with_index` 三命名(Rust 原生 / Python 原始 / Rust 加 index)都用 `remove_file` 试删,无文件则忽略错误
+
+`CourseCollectionState` 重新加载时重置 `overwrite_existing=false`,避免粘性状态导致误覆盖。
+
+### 4. 测试 6/6 通过
+
+新增 `test_delete_existing_with_index_clears_all_naming_patterns`(建三命名 → 删 → exists 检查回 None)。
+
+### 5. GUI PID 63218 重启
+
+实测:
+1. 分析课程 → 14 节识别
+2. 默认 `⊘ 跳过已下载 (关)` + 选 1-2 节 → 下载 → 应跳过已存在 + ✓ 已下载 + 0 失败
+3. 切到 `🔄 覆盖已下载 (开)` + 选 1-2 节 → 下载 → 删旧 + 重下
 
 ---
 
