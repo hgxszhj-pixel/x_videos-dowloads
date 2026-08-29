@@ -275,6 +275,10 @@ pub(crate) struct CourseCollectionState {
     pub(super) visible: bool,
     pub(super) items: Vec<CourseItemDisplay>,
     pub(super) status: String,
+    /// P-3 (2026-08-29): 是否覆盖已下载课节。
+    /// - false (默认):跳过已存在的同名 mp4,显示 "✓ 已下载" 不重下
+    /// - true:重新下载并覆盖(覆盖前自动删旧文件,HLS 写入用 `File::create` 自动截断)
+    pub(super) overwrite_existing: bool,
 }
 
 /// fetch action 的返回值（单 URL vs 批量 URL）

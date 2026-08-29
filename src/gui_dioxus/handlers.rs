@@ -312,6 +312,8 @@ pub(super) async fn fetch_course_collection_impl(
         visible: true,
         items,
         status: format!("已识别 {total} 个课节"),
+        // P-3 (2026-08-29): 重新加载课程池时重置覆盖开关(避免粘性状态导致误覆盖)
+        overwrite_existing: false,
     })
 }
 
@@ -512,7 +514,8 @@ pub(super) async fn course_download_pool_impl(
     slots: Vec<Arc<CourseItemSlot>>,
 ) -> Vec<(String, String)> {
     // 第一步：串行解析所有课节（CDP 同一 profile，必须串行）
-    let (results, resolved) = resolve_items_serially(&state, &slots).await;
+    let overwrite = state.overwrite_existing;
+    let (results, resolved) = resolve_items_serially(&state, &slots, overwrite).await;
     // 第二步：并发下载已解析的 m3u8（HLS 独立任务，互不依赖）
     let dl_results = download_resolved_concurrently(&state, &slots, &resolved).await;
     let mut all = results;
@@ -522,9 +525,13 @@ pub(super) async fn course_download_pool_impl(
 
 /// 串行解析每个课节：检查登录态 → 调 Drission → 翻译错误。
 /// 返回：每项的 (id, status) 临时结果 + 已成功解析的 m3u8 列表。
+///
+/// `overwrite_existing` (P-3 2026-08-29): true → 跳过 exists 检查,允许覆盖;
+/// false → 存在同名 mp4 时标记 "✓ 已下载" 不重下。
 async fn resolve_items_serially(
     state: &CourseCollectionState,
     slots: &[Arc<CourseItemSlot>],
+    overwrite_existing: bool,
 ) -> (Vec<(String, String)>, Vec<Option<String>>) {
     use crate::platform::TulingPythonResolver;
     let total = state.items.len();
@@ -549,20 +556,32 @@ async fn resolve_items_serially(
         // 大小 > 0 视为"有内容",0 字节的占位文件视为不存在,触发正常下载
         // P-2 (2026-08-29): 兼容外部脚本命名 `{idx:02}_{title}.mp4`(Python 批量下载工具)
         // 填充 slot.total_bytes/progress 让 UI 直接显示 "✓ 已下载" + 100% + 文件大小
-        if let Some(file_size) = file_is_already_downloaded_with_index(
-            &output_dir,
-            &item.title,
-            Some(item.index),
-        )
-        .await
-        {
-            if let Some(s) = slot.as_ref() {
-                s.total_bytes.store(file_size, Ordering::Relaxed);
-                s.progress.store(10000, Ordering::Relaxed);
-                s.set_status(CourseItemStatus::Exists);
+        // P-3 (2026-08-29): `overwrite_existing=true` 时跳过本检查,允许覆盖重下
+        if !overwrite_existing {
+            if let Some(file_size) = file_is_already_downloaded_with_index(
+                &output_dir,
+                &item.title,
+                Some(item.index),
+            )
+            .await
+            {
+                if let Some(s) = slot.as_ref() {
+                    s.total_bytes.store(file_size, Ordering::Relaxed);
+                    s.progress.store(10000, Ordering::Relaxed);
+                    s.set_status(CourseItemStatus::Exists);
+                }
+                results.push((item.id.clone(), "exists".into()));
+                continue;
             }
-            results.push((item.id.clone(), "exists".into()));
-            continue;
+        } else {
+            // 覆盖模式:先删旧文件,避免 HLS `File::create` 截断失败
+            // (实测 m3u8 17GB 文件覆盖时,旧 .tmp 目录残留会导致空间浪费)
+            delete_existing_with_index(
+                &output_dir,
+                &item.title,
+                Some(item.index),
+            )
+            .await;
         }
         if let Some(s) = slot.as_ref() {
             s.set_status(CourseItemStatus::Resolving);
@@ -790,6 +809,27 @@ async fn metadata_size(path: std::path::PathBuf) -> Option<u64> {
         .and_then(|m| if m.len() > 0 { Some(m.len()) } else { None })
 }
 
+/// P-3 (2026-08-29): 覆盖模式预清理 — 删除已存在的同名 mp4(三种命名都查)。
+/// HLS `File::create` 会截断旧文件,但 17GB 大文件覆盖时旧 .tmp 目录残留
+/// 会浪费磁盘空间。先删旧主文件,再让 HLS 完整重写。
+async fn delete_existing_with_index(
+    output_dir: &std::path::Path,
+    title: &str,
+    index: Option<u32>,
+) {
+    // 1. Rust 原生命名
+    let p1 = output_dir.join(format!("{}.mp4", sanitize_filename(title)));
+    let _ = tokio::fs::remove_file(&p1).await;
+
+    let Some(idx) = index else { return };
+    // 2. Python 原始命名
+    let p2 = output_dir.join(format!("{:02}_{}.mp4", idx, title));
+    let _ = tokio::fs::remove_file(&p2).await;
+    // 3. Rust 加 index 前缀命名
+    let p3 = output_dir.join(format!("{:02}_{}.mp4", idx, sanitize_filename(title)));
+    let _ = tokio::fs::remove_file(&p3).await;
+}
+
 #[cfg(test)]
 mod skip_existing_tests {
     use super::*;
@@ -894,5 +934,31 @@ mod skip_existing_tests {
         std::fs::write(&with_idx_only, vec![0u8; 16]).expect("write");
         let miss = file_is_already_downloaded(dir4.path(), "only_with_idx").await;
         assert_eq!(miss, None, "无 index 时不查 index 模式,应 miss");
+    }
+
+    /// P-3 (2026-08-29): 覆盖模式预清理 — 三命名都要删。
+    /// 删完后再调 `file_is_already_downloaded_with_index` 必须返回 None。
+    #[tokio::test]
+    async fn test_delete_existing_with_index_clears_all_naming_patterns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let title = "js逆向14 AI逆向 - 魔改算法";
+
+        // 三种命名都建文件
+        let p1 = dir.path().join(format!("{}.mp4", sanitize_filename(title))); // Rust 原生
+        let p2 = dir.path().join(format!("01_{}.mp4", title)); // Python 原始
+        let p3 = dir.path().join(format!("01_{}.mp4", sanitize_filename(title))); // Rust 加 index
+        std::fs::write(&p1, vec![0u8; 100]).expect("write p1");
+        std::fs::write(&p2, vec![0u8; 200]).expect("write p2");
+        std::fs::write(&p3, vec![0u8; 300]).expect("write p3");
+        assert!(p1.exists() && p2.exists() && p3.exists());
+
+        delete_existing_with_index(dir.path(), title, Some(1)).await;
+
+        assert!(!p1.exists(), "Rust 原生命名应被删");
+        assert!(!p2.exists(), "Python 原始命名应被删");
+        assert!(!p3.exists(), "Rust 加 index 命名应被删");
+        // 删完后 exists 检查必须返回 None
+        let after = file_is_already_downloaded_with_index(dir.path(), title, Some(1)).await;
+        assert_eq!(after, None, "删完文件后 exists 检查应返回 None");
     }
 }

@@ -230,6 +230,28 @@ pub(super) fn CoursePoolPanel(
                     style: "padding: 6px 14px; background: #f5f5f5; color: #444; border: none; border-radius: 8px; font-size: 13px;",
                     "全不选"
                 }
+                // P-3 (2026-08-29): 覆盖已下载开关 — 默认关闭(跳过已存在),开启时全部覆盖重下
+                button {
+                    onclick: move |_| {
+                        let mut cc = state.write();
+                        cc.course_collection_state.overwrite_existing =
+                            !cc.course_collection_state.overwrite_existing;
+                    },
+                    style: {
+                        let overwrite = state.read().course_collection_state.overwrite_existing;
+                        let bg = if overwrite { "#ff7a45" } else { "#f5f5f5" };
+                        let fg = if overwrite { "white" } else { "#444" };
+                        let weight = if overwrite { "600" } else { "400" };
+                        format!(
+                            "padding: 6px 14px; background: {bg}; color: {fg}; border: none; border-radius: 8px; font-size: 13px; font-weight: {weight};"
+                        )
+                    },
+                    if state.read().course_collection_state.overwrite_existing {
+                        "🔄 覆盖已下载 (开)"
+                    } else {
+                        "⊘ 跳过已下载 (关)"
+                    }
+                }
                 div {
                     style: "flex: 1; font-size: 12px; color: {TEXT_MUTED};",
                     "{state.read().course_collection_state.status}"
