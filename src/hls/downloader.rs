@@ -175,7 +175,7 @@ impl HlsDownloader {
             #[cfg(target_os = "macos")]
             if cfg.cookie_header.is_none() {
                 if let Ok(cookie) =
-                    crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn")
+                    crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn", &["tulingpyton.cn", "xiaoeknow.com"])
                 {
                     cfg.cookie_header = Some(cookie);
                 }

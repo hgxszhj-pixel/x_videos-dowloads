@@ -67,6 +67,23 @@ pub fn load_zhixueyun_cookies() -> Option<String> {
     }
 
     tracing::debug!("未找到智学云 cookies 文件");
+
+    // 5) (2026-08-29)ego-lite SQLite 解密 fallback —— 用户用 ego-lite 扫码登录一次后,
+    // 后续任意智学云 URL 都能通过 SQLite 中的 `authorization` cookie 自动获取 Bearer token。
+    // host 链路:zhixueyun.com(主站) + e.189.cn(天翼) + mylearning.cn(SSO bridge)。
+    #[cfg(target_os = "macos")]
+    if let Some(token) = crate::drission_client::decrypt_ego_lite_authorization_for_zhixueyun() {
+        tracing::info!("从 ego-lite SQLite 解密到智学云 authorization token");
+        // 缓存结果(无对应路径,使用 UNIX_EPOCH —— 后续不再依赖 mtime 失效检查)
+        let cache = CookieCache {
+            token: token.clone(),
+            path: PathBuf::from("<ego-lite-sqlite>"),
+            mtime: SystemTime::UNIX_EPOCH,
+        };
+        COOKIE_CACHE.set(Some(cache)).ok();
+        return Some(token);
+    }
+
     None
 }
 

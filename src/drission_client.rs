@@ -384,31 +384,45 @@ fn decrypt_ego_lite_cookies_for_vip() -> anyhow::Result<String> {
         .join("; "))
 }
 
-/// 按 target_host 过滤 cookies(浏览器行为:对目标 host 只发送匹配 host_key 的 cookies),
+/// 按 target_host + allowed_roots 过滤 cookies(浏览器行为:对目标 host 只发送匹配 host_key 的 cookies),
 /// 用于 host-sensitive API 调用如 `_alive/api/get_lookback_list`。否则全 host 的 cookie
 /// 会触发服务端 400 (2026-08-29 实测 ego-lite 36 条 cookie 全发,vip.tulingpyton.cn 返回 400)。
 ///
-/// **小鹅通域名生态**:必须同时匹配 `tulingpyton.cn` 全域(含 `.tulingpyton.cn` /
-/// `vip.tulingpyton.cn` / `.vip.tulingpyton.cn`)+ `.xiaoeknow.com` 平台根域,
-/// 否则 xet.tech CDN 返回 403 (2026-08-29 实测漏掉 `.tulingpyton.cn` 子域 cookie)。
+/// **参数语义**:
+/// - `target_host`:本次请求要发往的主机(如 `vip.tulingpyton.cn`)
+/// - `allowed_roots`:目标平台全部根域(如 `["tulingpyton.cn", "xiaoeknow.com"]`)。
+///   浏览器对同根域下的 cookie 会一起发出,跨根域则不带。漏配会导致跨域请求丢 cookie,
+///   进而 CDN 403 / API 400(2026-08-29 实测漏掉 `.tulingpyton.cn` 子域 cookie,xet.tech CDN 返回 403)。
+///
+/// **示例**:小鹅通 = `&["tulingpyton.cn", "xiaoeknow.com"]`,
+/// 智学云 = `&["zhixueyun.com", "e.189.cn", "mylearning.cn"]`(后者用于天翼 OAuth 链路)。
 #[cfg(target_os = "macos")]
 pub(crate) fn decrypt_ego_lite_cookies_for_host(
     target_host: &str,
+    allowed_roots: &[&str],
 ) -> anyhow::Result<String> {
     let entries = decrypt_ego_lite_cookies_raw()?;
     let suffix = format!(".{target_host}");
-    let root_suffix = format!(".{}", target_host.trim_start_matches("vip."));
     let mut seen = std::collections::HashSet::new();
     let mut parts = Vec::new();
     for (host, name, value) in entries {
-        // 平台根域(小鹅通 / 小鹅通知识店铺) + 当前 target_host 子域
-        let matches = host == target_host
+        // target_host 子域匹配(支持 `vip.X` 形式去掉 vip. 后再比)
+        let trim_vip_suffix = format!(".{}", target_host.trim_start_matches("vip."));
+        let host_matches_target = host == target_host
             || host == suffix
             || host.ends_with(&suffix)
-            || host == ".xiaoeknow.com"
-            || host.ends_with(".xiaoeknow.com")
-            || host.ends_with(&root_suffix);
-        if !matches || name.is_empty() || value.is_empty() || !seen.insert(name.clone()) {
+            || host.ends_with(&trim_vip_suffix);
+        // allowed_roots 全域匹配(每个 root 都支持精确 + 子域两种形式)
+        let host_matches_root = allowed_roots.iter().any(|root| {
+            let root_dotted = format!(".{root}");
+            host == *root || host == root_dotted || host.ends_with(&root_dotted)
+        });
+        if !host_matches_target
+            && !host_matches_root
+            || name.is_empty()
+            || value.is_empty()
+            || !seen.insert(name.clone())
+        {
             continue;
         }
         parts.push(format!("{name}={value}"));
@@ -417,6 +431,32 @@ pub(crate) fn decrypt_ego_lite_cookies_for_host(
         anyhow::bail!("ego-lite 未找到匹配 {target_host} 的 cookies");
     }
     Ok(parts.join("; "))
+}
+
+/// (2026-08-29 新增)ego-lite 解密 → 智学云 Bearer token(authorization cookie 的 value)。
+///
+/// **host 链路**(OAuth 全链路):
+/// - `.zhixueyun.com` —— 智学云主站
+/// - `.e.189.cn` —— 天翼账号 (open.e.189.cn)
+/// - `.mylearning.cn` —— mylearning SSO bridge
+///
+/// **使用场景**:`ZhiXueYunResolver::get_token()` 第 5 级 fallback,
+/// 用户用 ego-lite 扫码登录一次,后续直接复用 SQLite 解密。
+#[cfg(target_os = "macos")]
+pub(crate) fn decrypt_ego_lite_authorization_for_zhixueyun() -> Option<String> {
+    let entries = decrypt_ego_lite_cookies_raw().ok()?;
+    for (host, name, value) in entries {
+        let is_zxy_host = host == ".zhixueyun.com"
+            || host.ends_with(".zhixueyun.com")
+            || host == ".e.189.cn"
+            || host.ends_with(".e.189.cn")
+            || host == ".mylearning.cn"
+            || host.ends_with(".mylearning.cn");
+        if is_zxy_host && name == "authorization" && value.starts_with("Bearer__") {
+            return Some(value.trim_start_matches("Bearer__").to_string());
+        }
+    }
+    None
 }
 
 /// 轻量级登录态检测:优先级

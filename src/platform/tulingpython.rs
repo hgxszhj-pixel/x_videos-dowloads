@@ -388,7 +388,7 @@ async fn try_api_list_collection(
     column_id: &str,
 ) -> Option<Vec<CollectionEntry>> {
     let cookie_header =
-        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn").ok()?;
+        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn", &["tulingpyton.cn", "xiaoeknow.com"]).ok()?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -452,7 +452,7 @@ async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
         .filter(|id| id.starts_with("l_"))?;
 
     let cookie_header =
-        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn").ok()?;
+        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn", &["tulingpyton.cn", "xiaoeknow.com"]).ok()?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
