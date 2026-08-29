@@ -139,7 +139,13 @@ impl ZhiXueYunResolver {
         Err(ResolverError::AuthenticationRequired)
     }
 
-    /// 从 URL 中提取 course/category ID (支持两种格式)
+    /// 从 URL 中提取 ID (三种格式)
+    ///
+    /// - `#/study/subject/detail/<id>` —— 课程主页
+    /// - `?courseId=<id>` —— 课程主页(query 形式)
+    /// - `#/home-v?id=<id>` / `?id=<id>` —— 单课节/单文件预览(`preview-new` API)
+    ///
+    /// 注意:`?id=` 兜底放在最后,避免误吃其他平台用 `id` 作参数的 URL。
     fn extract_course_id(url: &str) -> Option<String> {
         if let Some(fragment) = url.split('#').nth(1) {
             let parts: Vec<&str> = fragment.split('/').collect();
@@ -151,10 +157,19 @@ impl ZhiXueYunResolver {
                 return Some(parts[4].to_string());
             }
         }
-        url.split("courseId=")
-            .nth(1)
-            .and_then(|s| s.split('&').next())
-            .map(|s| s.to_string())
+        if let Some(raw) = url.split("courseId=").nth(1) {
+            let id = raw.split('&').next()?.trim();
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+        if let Some(raw) = url.split("id=").nth(1) {
+            let id = raw.split('&').next()?.trim();
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+        None
     }
 }
 
@@ -662,19 +677,34 @@ impl ZhiXueYunResolver {
     }
 
     /// 获取视频信息
+    ///
+    /// 流程:`home-v?id=<id>` 这类单课节 URL 先尝试 `preview-new` API 拿标题;
+    /// 失败则 fallback 到 `chapter-progress`(课程主页)。真实视频/文档地址
+    /// 仍走 `url.to_string()` 原样回传,由下游 Native strategy 自己解析。
     pub fn fetch_video_info(&self, url: &str, token: &str) -> anyhow::Result<VideoInfo> {
         let course_id = Self::extract_course_id(url)
-            .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 courseId"))?;
+            .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 ID"))?;
 
-        let docs = self.get_all_documents(&course_id, token)?;
-        let doc = docs
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("未找到文档"))?;
+        // 1) 单课节预览:`home-v?id=` 走这里(更精准,直接拿到文件标题)
+        let title = match self.get_file_preview_with_retry(&course_id, token, 3) {
+            Ok(preview) => preview.filename,
+            Err(preview_err) => {
+                debug!(
+                    "preview-new 探测失败,fallback 到 chapter-progress: {}",
+                    preview_err
+                );
+                // 2) 课程主页:`#/study/subject/detail/<id>` 走这里
+                let docs = self.get_all_documents(&course_id, token)?;
+                docs.into_iter()
+                    .next()
+                    .map(|d| d.name)
+                    .ok_or_else(|| anyhow::anyhow!("未找到文档"))?
+            }
+        };
 
         Ok(VideoInfo {
             url: url.to_string(),
-            title: doc.name,
+            title,
             description: None,
             uploader: None,
             duration: None,
@@ -754,5 +784,84 @@ impl PlatformResolver for ZhiXueYunResolver {
 
     fn download_strategy(&self) -> crate::types::DownloadStrategy {
         crate::types::DownloadStrategy::Native
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 课程主页 5 段路径提取 —— 锁定既有行为,防止未来误改
+    #[test]
+    fn test_extract_course_id_study_subject_detail() {
+        assert_eq!(
+            ZhiXueYunResolver::extract_course_id(
+                "https://kc.zhixueyun.com/#/study/subject/detail/128558"
+            ),
+            Some("128558".to_string())
+        );
+    }
+
+    /// 课程主页 query 形式提取
+    #[test]
+    fn test_extract_course_id_course_id_query() {
+        assert_eq!(
+            ZhiXueYunResolver::extract_course_id(
+                "https://kc.zhixueyun.com/?courseId=128558"
+            ),
+            Some("128558".to_string())
+        );
+    }
+
+    /// (2026-08-29 新增)单课节 URL:`#/home-v?id=<id>`
+    /// 这是用户最常贴的 URL 类型,旧实现会直接报"无法从 URL 中提取 courseId"。
+    #[test]
+    fn test_extract_course_id_home_v_with_query() {
+        assert_eq!(
+            ZhiXueYunResolver::extract_course_id(
+                "https://kc.zhixueyun.com/#/home-v?id=128558"
+            ),
+            Some("128558".to_string())
+        );
+    }
+
+    /// 纯 `?id=` query(无 fragment)也能识别
+    #[test]
+    fn test_extract_course_id_plain_id_query() {
+        assert_eq!(
+            ZhiXueYunResolver::extract_course_id(
+                "https://kc.zhixueyun.com/preview?id=128558&utm=foo"
+            ),
+            Some("128558".to_string())
+        );
+    }
+
+    /// `?id=` 兜底放在 `?courseId=` 之后,不会误吞已有 query
+    #[test]
+    fn test_extract_course_id_course_id_wins_over_id() {
+        assert_eq!(
+            ZhiXueYunResolver::extract_course_id(
+                "https://kc.zhixueyun.com/?courseId=42&id=128558"
+            ),
+            Some("42".to_string())
+        );
+    }
+
+    /// 完全不识别的 URL 返回 None(非 panic)
+    #[test]
+    fn test_extract_course_id_returns_none_for_unknown_url() {
+        assert_eq!(
+            ZhiXueYunResolver::extract_course_id("https://example.com/foo"),
+            None
+        );
+    }
+
+    /// 空 `id=` 不应返回空字符串(避免下游 URL 变成 `?id=` 触发 400)
+    #[test]
+    fn test_extract_course_id_empty_id_returns_none() {
+        assert_eq!(
+            ZhiXueYunResolver::extract_course_id("https://kc.zhixueyun.com/#/home-v?id="),
+            None
+        );
     }
 }
