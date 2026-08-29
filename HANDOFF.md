@@ -1,7 +1,7 @@
 # X Video Downloader — 项目交接
 
-**更新**: 2026-08-29 (课程池覆盖已下载开关 P-3 `86e497e`:toggle UI + delete_existing_with_index 三命名预清理)
-**上次**: 2026-08-29 (小鹅通 HLS segment 403 真凶 + GUI 跨脚本命名兼容双修 `0011caa`;parser RFC 3986 base URL + skip-existing 三命名匹配)
+**更新**: 2026-08-29 (智学云 URL 解析盲区修复 `9ab3813`:`extract_course_id` 增加 `?id=` 兜底 + `fetch_video_info` probe-then-fallback 复用 `preview-new` API)
+**上次**: 2026-08-29 (课程池覆盖已下载开关 P-3 `86e497e`:toggle UI + delete_existing_with_index 三命名预清理)
 **再上次**: 2026-08-29 (8-25 暂存变更集验证补全落库 `c7b0fe4` + 两 bench 存量断裂修复 `deb54c3`;全局侧 12 条规则文章 3 边际项)
 **上次**: 2026-08-28 (全局 Claude Code 配置机械兜底改造:5 hooks 接线 + 15 deny + statusline 修复 + 死脚本归档;项目侧 gui_dioxus fmt 修复 commit ab2febd)
 **再上次**: 2026-08-25 (douyin-mp4-download skill v1 + 同日 URL 实测:v1 验出"jingxuan?modal_id= URL yt-dlp 不识别" + "/video/{id} 需 fresh cookies",v1+yt-dlp 组合为推荐方案)
@@ -134,6 +134,48 @@ Dioxus 0.7 RSX 限制:不能在 `{...}` 块里直接放 `button {}` 宏,必须�
 1. 分析课程 → 14 节识别
 2. 默认 `⊘ 跳过已下载 (关)` + 选 1-2 节 → 下载 → 应跳过已存在 + ✓ 已下载 + 0 失败
 3. 切到 `🔄 覆盖已下载 (开)` + 选 1-2 节 → 下载 → 删旧 + 重下
+
+---
+
+## Session: 2026-08-29 — 智学云单课节 URL 解析盲区修复(commit `9ab3813`)
+
+> 用户贴 `https://kc.zhixueyun.com/#/home-v?id=128558` 测试,旧代码直接报"无法从 URL 中提取 courseId"。诊断:`extract_course_id` 只识别课程主页格式,漏了单课节预览页;`fetch_video_info` 又不会返回真实视频地址(只回传原 URL 给 Native strategy)。
+
+### 1. feat(`src/platform/zhixueyun.rs:143`) — `extract_course_id` 新增 `?id=` 兜底
+
+- 三种 URL 模式分级匹配(顺序严格):
+  1. `#/study/subject/detail/<id>` 课程主页 fragment
+  2. `?courseId=<id>` 课程主页 query
+  3. `#/home-v?id=<id>` / `?id=<id>` 单课节预览(query-only 也能命中)
+- 三处都加 `trim() + is_empty()` 校验,防止下游 URL 拼成 `?id=` 触发 400
+- `?id=` 兜底放最后,避免误吞含 `id` 参数的其他平台 URL(优先级:courseId > id)
+
+### 2. refactor(`src/platform/zhixueyun.rs:679`) — `fetch_video_info` 改 probe-then-fallback
+
+- 先试 `get_file_preview_with_retry(course_id, token, 3)`(已有函数,直接复用,不重复实现)
+  - 成功 → 用 `FilePreview.filename` 作 title(精准拿到文件标题,避免取课程章名)
+  - 失败(`preview-new` 404/超时) → fallback 到 `get_all_documents().first().name`
+- 真实视频/文档地址仍走 `url.to_string()` 原样回传,由下游 Native strategy 解析
+- 关键设计:**未改** strategy 层 —— 单课节可能返回 PDF 或 m3u8,caller 按扩展名分发即可
+
+### 3. 复用优势
+
+- `get_file_preview_with_retry`(行 372)原本只为下载流程服务,新用一处,共 3 处 callsite
+- `FilePreview` 结构体的 `#[expect(dead_code)]` 标注保留(仅下载流程直用 `secure_url`,title 走 `filename` 不冲突)
+- 不引入新 HTTP 路径,纯组合现有 API
+
+### 4. 测试 7/7 通过(累计 227/227)
+
+新增 `platform::zhixueyun::tests` 模块:
+- `study_subject_detail` / `course_id_query` —— 既有行为锁死,防回归
+- `home_v_with_query` / `plain_id_query` —— 新模式核心场景
+- `course_id_wins_over_id` —— 优先级正确性
+- `returns_none_for_unknown_url` / `empty_id_returns_none` —— 边界不 panic
+
+### 5. 已知风险
+
+- ⚠️ `preview-new` 端点是**推测**的(从模块顶部 import/已有调用得出)。真实端点若不同,`get_file_preview_with_retry` 失败 → 自动 fallback,UI 无感知,但首次响应会慢一倍(两次 HTTP)。
+- **建议下一步**:浏览器实测一次 `home-v?id=128558` 真实 API 响应,确认 `previewUrl`/`filename` 字段名(若实际叫 `playUrl`/`title`,需更新 `get_file_preview_with_retry` 的字段映射)。
 
 ---
 
