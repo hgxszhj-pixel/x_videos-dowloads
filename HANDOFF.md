@@ -1,6 +1,7 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
+**最新**: 2026-09-01 WikiSkill 三层落地 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
+**再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
 **再新**: 2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e 验证(短码 → 69 视频 / 单课详情 → 3 媒体含 2 PDF / 另一单课 → 0 媒体);新发现 `sectionType=1=PDF` + `sectionType=3=国考云跳转`;无 src/ 改动。
 **再新**: 2026-08-29 同日 5 个 commit — `0011caa` 小鹅通 HLS 403 真凶 + GUI 三命名兼容 · `86e497e` 课程池覆盖已下载开关 · `9ab3813` 智学云单课节 URL 解析盲区修复 · `c7b0fe4` 8-25 暂存变更集落库 · `deb54c3` 两 bench 存量断裂修复。
 **再早**: 2026-08-29 `63c9f53` home-v 根因解析 + `6cd927e` ego-lite SQLite 兜底(host 链路 .zhixueyun.com/.e.189.cn/.mylearning.cn)。
@@ -14,7 +15,74 @@
 
 ---
 
-## 最新 Session: 2026-08-29 — 智学云 zhixueyun-analyzer skill 创建(无 commit)
+## 最新 Session: 2026-09-01 — WikiSkill 决策日志 + skill 健康度盘点(commit `756d49d`)
+
+> 本 session 三件事: 1) WikiSkill 论文方法论落地本仓库 2) mattpocock/superpowers skill 主动盘点 3) 0 行 src/ 代码改动,纯文档 + .gitignore + 守门验证。
+
+### 1. WikiSkill 三层落地(why / index / decision)
+
+Google Research **WikiSkill** 论文核心: 知识库(wiki)和技能(skill)是两个不同抽象层,wiki **不回滚**只增改,skill 才演进。映射本仓库:
+
+| WikiSkill 层 | 本仓库落地 | 路径 |
+|-------------|----------|------|
+| Skills Layer(skill 文件) | `zhixueyun-analyzer/PURPOSE.md` | `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行,why-exists / 7 失败路径 / 4 拒绝方案 / 5 边界 / 6 缺口) |
+| Wiki Layer(结构化索引) | `.teach/index.md` | `/Users/hgxszhj/x_videos-dowloads/.teach/index.md` (106 行,主题 / 错误信号 / 反模式 三视图 + 全 8 LR 编号倒序 + 跨主题关联图) |
+| Raw Layer(原始记录) | `.teach/learning-records/0001-0008` | 已存在,本次未新增 |
+
+### 2. HANDOFF 决策回滚日志 D-001 ~ D-021
+
+commit `756d49d` 在 HANDOFF.md 新增「决策回滚日志」section,21 条决策记录(含本 session 追加 D-019/020/021):
+
+- 状态分布:**16 accepted / 1 rejected-deferred(D-013 bumpalo parser 62% 快不采纳)/ 4 pending**
+- pending: D-014 平台报告落 git / D-015 skill 同步镜像 / D-016 preview-new 端点实测 / D-017 SHANHU 方案选 A/B/C
+- 每条决策含 6 列: 日期 / 类别 / 决策 / 状态 / 背景 / 重审触发
+
+### 3. `.teach/` 归入 .gitignore(修复文档/实现不一致)
+
+HANDOFF.md §教学 workspace 约定 声称 `.teach/` gitignored,**实际 .gitignore 漏写**(工作区一直显示 `.teach/` 为 untracked)。本次 `.gitignore` 加 `.teach/` 修补,文档与实现一致。
+
+### 4. LR 计数 7 → 8
+
+HANDOFF.md §教学 workspace 约定 称 "当前 7 条",**实际 8 条**(LR 0008-launchd macOS 启动守护卸载)。同步更新。
+
+### 5. mattpocock/skills 健康度盘点(2026-09-01 复跑)
+
+```bash
+pnpx skills update caveman diagnose grill-me grill-with-docs \
+    improve-codebase-architecture setup-matt-pocock-skills tdd \
+    to-issues to-prd triage zoom-out -y -g
+# → ✓ All global skills are up to date
+```
+
+- 11 个可更新 skill(全 2026-08-24 batch 已 pull,无新 commit)
+- 6 个上游已删(diagnose / to-issues / to-prd / zoom-out / caveman / write-a-skill)— `update -y` 非交互模式跳过删除,本地原样保留
+- **本地 fork `write-a-skill` hash 守门**:`a9011c8a...` before == `a9011c8a...` after,4KB SKILL.md 字节级未变
+
+### 6. obra/superpowers 健康度盘点(2026-09-01 复跑)
+
+```bash
+pnpx skills update brainstorming systematic-debugging -y -g
+# → ✓ All global skills are up to date
+```
+
+- 本地 updatedAt 2026-08-24 14:55 UTC,上游 v6.3.0(2026-08-12)+ 之后无新 commit
+- 2 skill 已含 v6.3.0 内容: brainstorming + systematic-debugging
+
+### 7. 验收清单
+
+| 项 | 状态 |
+|----|------|
+| 决策日志 18 条(含 D-019 见 §决策日志) | ✅ |
+| `.teach/index.md` 三视图完整 | ✅ |
+| `zhixueyun-analyzer/PURPOSE.md` 4 章完整 | ✅ |
+| `.gitignore` 修补 | ✅ |
+| mattpocock 守门 hash 一致 | ✅ |
+| superpowers 已最新 | ✅ |
+| src/ 改动 | 0 行 |
+
+---
+
+## 更新 Session: 2026-08-29 — 智学云 zhixueyun-analyzer skill 创建(无 commit)
 
 ### 1. skill `~/.claude/skills/zhixueyun-analyzer/`(新)
 
@@ -279,6 +347,9 @@ cargo test --bin x-video-downloader -- --ignored \
 | D-016 | 2026-08-29 | 端点推断 | `/tools-center/file-cloud/preview-new` 端点存在性 | **pending** | 当前靠 fallback (chapter → documents → first.name);端点若不存在,UI 无感知但首次慢一倍 | 用户在 Camoufox 实测,确认 200 + `previewUrl` 字段 |
 | D-017 | 2026-09-01 | 平台策略 | SHANHU 京峰教育 (org_id=27632958) 3 路下载方案: A 手动抓 m3u8 / B 复用 tulingpython.rs 模式写 `shanhu.rs` / C 等首课后用 camoufox 嗅探 | **pending** | 见 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`;首课 2026-09-02 20:00 开课 | 用户决定走哪条 / 暂不实现 |
 | D-018 | 2026-09-01 | skill 文档 | zhixueyun-analyzer 加 `PURPOSE.md` (why-exists / 失败路径 / 拒绝方案 / 边界) | accepted | 遵循 WikiSkill 原则;今天新建 | 决策变更时追加,旧条目保留 |
+| D-019 | 2026-09-01 | gitignore | `.teach/` 显式列入 .gitignore(修文档/实现不一致) | accepted | HANDOFF.md §教学 workspace 约定声称 gitignored,但 .gitignore 实际漏写;本次同步 | `git status` 出现 `.teach/` 时重审 |
+| D-020 | 2026-09-01 | skill 安全 | mattpocock 本地 fork `write-a-skill` update 前 hash 守门 | accepted | `pnpx skills update` 不会跳过 lock 文件标记的源(源仍是 mattpocock/skills);手动 sha256 + 备份兜底 | 未来 `update -y` 行为变更或 fork 数量增加 |
+| D-021 | 2026-09-01 | skill 盘点 | obra/superpowers v6.3.0 已含本地(2026-08-24 batch),无动作 | accepted | 上游 2026-08-12 release v6.3.0,本地 updatedAt 在其后;`update -y` 确认无新 commit | 上游 release 新版本时 |
 
 ### pending 项汇总(供新会话快速扫描)
 
