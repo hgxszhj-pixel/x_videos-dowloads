@@ -28,5 +28,8 @@ __pycache__/
 .planning/
 .gitnexus
 
+# Personal teaching workspace (see HANDOFF.md "教学 workspace 维护约定")
+.teach/
+
 # SkillOpt temp clone (from pip install git+https://...)
 SkillOpt/
