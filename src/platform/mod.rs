@@ -1,6 +1,7 @@
 //! 平台解析器模块
 //!
 //! 提供统一接口 `PlatformResolver`，各平台实现自己的解析逻辑
+mod base;
 mod bilibili;
 #[cfg(feature = "zhixueyun")]
 mod cookie_pool;
@@ -18,6 +19,9 @@ mod zhixueyun;
 // Re-export 以保持 `use crate::platform::url_matcher` 调用方零改动。
 // 真正定义已迁到 `crate::utils::url_matcher`（避免 platform ↔ history 循环依赖）。
 pub use crate::utils::url_matcher;
+// Task 3-6 将消费此 re-export;Task 1 阶段先静默 unused_imports。
+#[allow(unused_imports)]
+pub use base::YtdlpBacked;
 pub use bilibili::BilibiliResolver;
 #[cfg(feature = "zhixueyun")]
 pub use cookie_pool::CookiePool;
