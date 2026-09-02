@@ -135,12 +135,8 @@ impl FxTwitterResolver {
                 format!("http://{}", proxy_url)
             };
 
-        // 创建带有代理的新客户端，基于共享客户端配置
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-            .tcp_keepalive(std::time::Duration::from_secs(120))
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .timeout(std::time::Duration::from_secs(600))
+        // 使用 http_client 工厂套默认值,再加 proxy + pool 配置
+        let client = crate::http_client::apply_resolver_defaults(reqwest::Client::builder())
             .pool_max_idle_per_host(32)
             .proxy(reqwest::Proxy::all(&proxy_with_scheme)?)
             .build()
