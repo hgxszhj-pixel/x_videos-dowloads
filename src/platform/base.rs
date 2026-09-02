@@ -12,18 +12,14 @@ use crate::platform::{CookieFileManager, ResolverError, TokenManager};
 use crate::types::VideoInfo;
 
 pub struct YtdlpBacked {
-    #[allow(dead_code)]
     tokens: HashMap<String, String>,
-    #[allow(dead_code)]
     cookie_manager: CookieFileManager,
-    #[allow(dead_code)]
     platform_tag: Platform,
-    #[allow(dead_code)]
+    #[expect(dead_code)] // 字段仅由 with_token_manager 写入,无 reader (Task 7 后仍未使用)
     token_manager: Option<Arc<Mutex<TokenManager>>>,
 }
 
 impl YtdlpBacked {
-    #[allow(dead_code)]
     pub fn new(platform: Platform) -> Self {
         Self {
             tokens: HashMap::new(),
@@ -33,24 +29,20 @@ impl YtdlpBacked {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_tokens(mut self, tokens: HashMap<String, String>) -> Self {
         self.tokens = tokens;
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_token_manager(mut self, tm: Arc<Mutex<TokenManager>>) -> Self {
         self.token_manager = Some(tm);
         self
     }
 
-    #[allow(dead_code)]
     pub fn has_token(&self, key: &str) -> bool {
         self.tokens.contains_key(key)
     }
 
-    #[allow(dead_code)]
     pub fn tokens_is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
@@ -60,7 +52,6 @@ impl YtdlpBacked {
         self.tokens.get(key)
     }
 
-    #[allow(dead_code)]
     pub fn cookie_file(&self) -> Option<PathBuf> {
         let ns = match self.platform_tag {
             Platform::YouTube => "youtube",
@@ -73,7 +64,6 @@ impl YtdlpBacked {
     }
 
     /// 核心:build ytdlp → 注入 cookie → 调 yt-dlp → log + wrap 错误
-    #[allow(dead_code)]
     pub async fn fetch_via_ytdlp(
         &self,
         url: &str,

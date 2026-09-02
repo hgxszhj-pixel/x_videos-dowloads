@@ -33,12 +33,10 @@ pub fn shared() -> Arc<Client> {
 }
 
 /// Resolver 默认 UA(集中维护,改版本只动这一处)
-#[allow(dead_code)] // Task 3-7 将消费此 API,Task 2 提交时暂未引用
 pub const RESOLVER_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
     AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 
 /// 给已有 builder 套上 resolver 默认值(供需要追加 proxy/超时 等的 caller)
-#[allow(dead_code)] // Task 3-7 将消费此 API,Task 2 提交时暂未引用
 pub fn apply_resolver_defaults(b: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     b.user_agent(RESOLVER_UA)
         .tcp_keepalive(std::time::Duration::from_secs(120))
@@ -47,7 +45,7 @@ pub fn apply_resolver_defaults(b: reqwest::ClientBuilder) -> reqwest::ClientBuil
 }
 
 /// 构建一个独立的 resolver HTTP client(用于一次性短请求,不参与连接池复用)
-#[allow(dead_code)] // Task 3-7 将消费此 API,Task 2 提交时暂未引用
+#[allow(dead_code)] // 仅为未来一次性短请求预留 + test 引用;production 未消费但 test 用了 (test cfg 下 expect 会 unfulfilled)
 pub fn build_resolver_client() -> reqwest::Client {
     apply_resolver_defaults(reqwest::Client::builder())
         .build()
