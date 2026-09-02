@@ -1,6 +1,6 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 commits (`c437a6b`..`ca2c45b`) on `gitbutler/workspace`,head `ca2c45b`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
+**最新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 SDD commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50` docs/handoff + `4f59255` chore/gitignore) on `gitbutler/workspace`,head `4f59255`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
 **再新**: 2026-09-01 WikiSkill 三层落地 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
 **再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
 **再新**: 2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e 验证(短码 → 69 视频 / 单课详情 → 3 媒体含 2 PDF / 另一单课 → 0 媒体);新发现 `sectionType=1=PDF` + `sectionType=3=国考云跳转`;无 src/ 改动。
@@ -45,7 +45,14 @@
 | `f08f4cf` | Task 7a | FxTwitter `with_proxy` 改用 `apply_resolver_defaults` |
 | `ca2c45b` | Task 7b | 清掉 Task 1-2 临时 `#[allow(dead_code)]` (现已被消费) |
 
-### 4. 7 条踩坑 rule(写入 `~/memory/projects/x-videos-dowloads.md`)
+### 4. Post-SDD 收尾(commit `6f79d50` + `4f59255`)
+
+不在 7-task SDD 范围,只为让 HANDOFF + 工作区干净:
+
+- `6f79d50` — 把本 session(8 commits)写进 HANDOFF.md「最新 Session」section
+- `4f59255` — `.gitignore` 归入 `.omo/` + `js_reverse_cache/`(镜像既有 `.omc/` + `SkillOpt/` 模式)
+
+### 5. 7 条踩坑 rule(写入 `~/memory/projects/x-videos-dowloads.md`)
 
 1. **`Platform` enum 没 impl Display** — 用 `Platform::display_name() -> &str`(project-specific)
 2. **crate binary-only** — `cargo test --lib` 不适用,用 `--bin x-video-downloader`
@@ -55,14 +62,14 @@
 6. **brief 写错的 `#[expect(dead_code)]` 在活代码上** — Tasks 4 + 6 都触发 `unfulfilled_lint_expectations`,按 rule 删除
 7. **brief 写错的 `.map_err(ResolverError::from)`** — `fetch_via_ytdlp` 已返回 `Result<_, ResolverError>`,useless_conversion
 
-### 5. SDD workflow 决策(写入 `~/memory/decisions.md`)
+### 6. SDD workflow 决策(写入 `~/memory/decisions.md`)
 
 - **Per-task reviewer subagent 不可靠**:3 次 dispatch (sonnet x2 / opus x1) 全返 "Acknowledged." 无 review 内容
 - **改用 controller inline self-review**:读 review-package diff + 跟 brief 对照 + 写 `task-N-review.md`
 - final whole-branch review 同理 controller 自审
 - **implementer subagent 工作正常**(haiku 跑 7 个 task 全 success),只是 reviewer 那条评估链不触发
 
-### 6. 验收清单
+### 7. 验收清单
 
 | 项 | 状态 |
 |---|---|
@@ -76,7 +83,7 @@
 | workspace `.superpowers/sdd/...` scratch 已删 | ✅ |
 | Memory 写入 (projects + decisions) | ✅ |
 
-### 7. 留待下期 (spec §10 out-of-scope)
+### 8. 留待下期 (spec §10 out-of-scope)
 
 - `wrap_resolver_call!` 宏(价值低)
 - `m3u8_extractor::extract_from_html` 共享
