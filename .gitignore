@@ -25,6 +25,7 @@ __pycache__/
 !.claude/skills/download-agent-loop/
 !.claude/skills/download-agent-loop/SKILL.md
 .omc/
+.omo/
 .planning/
 .gitnexus
 
@@ -33,3 +34,6 @@ __pycache__/
 
 # SkillOpt temp clone (from pip install git+https://...)
 SkillOpt/
+
+# JS reverse engineering cache (zhixueyun etc.)
+js_reverse_cache/
