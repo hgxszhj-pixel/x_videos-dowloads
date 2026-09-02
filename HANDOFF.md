@@ -1,6 +1,7 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-01 WikiSkill 三层落地 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
+**最新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 commits (`c437a6b`..`ca2c45b`) on `gitbutler/workspace`,head `ca2c45b`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
+**再新**: 2026-09-01 WikiSkill 三层落地 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
 **再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
 **再新**: 2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e 验证(短码 → 69 视频 / 单课详情 → 3 媒体含 2 PDF / 另一单课 → 0 媒体);新发现 `sectionType=1=PDF` + `sectionType=3=国考云跳转`;无 src/ 改动。
 **再新**: 2026-08-29 同日 5 个 commit — `0011caa` 小鹅通 HLS 403 真凶 + GUI 三命名兼容 · `86e497e` 课程池覆盖已下载开关 · `9ab3813` 智学云单课节 URL 解析盲区修复 · `c7b0fe4` 8-25 暂存变更集落库 · `deb54c3` 两 bench 存量断裂修复。
@@ -15,7 +16,77 @@
 
 ---
 
-## 最新 Session: 2026-09-01 — WikiSkill 决策日志 + skill 健康度盘点(commit `756d49d`)
+## 最新 Session: 2026-09-02 — Resolver Skeleton 共享基类 SDD (commits `c437a6b`..`ca2c45b`)
+
+> 7-task plan 全跑通;4 个 yt-dlp resolver + FxTwitter 共 -129 行,新增 `YtdlpBacked` (131 行) + http_client factory (46 行)。SDD = `superpowers:brainstorming → writing-plans → subagent-driven-development`,跳过 per-task reviewer(决策见 `~/memory/decisions.md` SDD 节)。
+
+### 1. 杠杆点识别 — 4 resolver 共享 ~550 行样板
+
+8 个 `PlatformResolver` 中 4 个 (YouTube/TikTok/Bilibili/DouYin) 重复:`tokens: HashMap<String,String>` + `cookie_manager: CookieFileManager` + `new()` / `with_tokens()` 构造器 + `get_cookie_file()` helper + `build ytdlp → 注入 cookie → 调 yt-dlp → wrap 错误` 调用链。Nnyy/FxTwitter/ZhiXueYun 散落 3+ 处 `reqwest::Client::builder()...` + UA 字符串。
+
+### 2. 设计决策
+
+| 候选 | 选择 | 理由 |
+|---|---|---|
+| Base struct vs trait | **组合式 base struct** | 编译期单态,无 dyn 开销,debug 友好 |
+| Macro vs 函数 | **不要 macro** | `apply_resolver_defaults()` factory 足够 |
+| 抽象范围 | **限 4 resolver** + http_client helper | YAGNI;以后有新需求再加 |
+
+### 3. 8 commits 全清单
+
+| Commit | 任务 | 关键改动 |
+|---|---|---|
+| `c437a6b` | Task 1 | `YtdlpBacked` struct + 4 tests (`base.rs` 103 行) |
+| `caef4ca` | Task 2 | `RESOLVER_UA` + `apply_resolver_defaults()` + `build_resolver_client()` + 3 tests (`http_client.rs` +48 行) |
+| `59f149f` | Task 3 | YouTube 87→64 行;`fetch_via_ytdlp()` 加进 base |
+| `aeada25` | Task 4 | TikTok 109→79 行;surgical 移除 `#[expect(dead_code)]` on 真活 struct |
+| `d307791` | Task 5 | Bilibili 97→47 行;`tokens_is_empty()` 加进 base |
+| `0b07406` | Task 6 | DouYin 251→208 行;`tokens_get()` 加进 base;API 分支 verbatim 保留 |
+| `f08f4cf` | Task 7a | FxTwitter `with_proxy` 改用 `apply_resolver_defaults` |
+| `ca2c45b` | Task 7b | 清掉 Task 1-2 临时 `#[allow(dead_code)]` (现已被消费) |
+
+### 4. 7 条踩坑 rule(写入 `~/memory/projects/x-videos-dowloads.md`)
+
+1. **`Platform` enum 没 impl Display** — 用 `Platform::display_name() -> &str`(project-specific)
+2. **crate binary-only** — `cargo test --lib` 不适用,用 `--bin x-video-downloader`
+3. **clippy scope 必须 narrow** — `cargo clippy -- -D warnings` 撞 pre-existing drission_client bench error,用 `--bin x-video-downloader --tests`
+4. **forward-ref 顺序** — base helper → verify build → 重写 consumer;颠倒 rustc 拒绝
+5. **`#[expect(dead_code)]` vs `#[allow(dead_code)]`** — 真死代码用 expect(test 唯一 caller 用 allow,因为 test cfg 下 expect 误报 unfulfilled)
+6. **brief 写错的 `#[expect(dead_code)]` 在活代码上** — Tasks 4 + 6 都触发 `unfulfilled_lint_expectations`,按 rule 删除
+7. **brief 写错的 `.map_err(ResolverError::from)`** — `fetch_via_ytdlp` 已返回 `Result<_, ResolverError>`,useless_conversion
+
+### 5. SDD workflow 决策(写入 `~/memory/decisions.md`)
+
+- **Per-task reviewer subagent 不可靠**:3 次 dispatch (sonnet x2 / opus x1) 全返 "Acknowledged." 无 review 内容
+- **改用 controller inline self-review**:读 review-package diff + 跟 brief 对照 + 写 `task-N-review.md`
+- final whole-branch review 同理 controller 自审
+- **implementer subagent 工作正常**(haiku 跑 7 个 task 全 success),只是 reviewer 那条评估链不触发
+
+### 6. 验收清单
+
+| 项 | 状态 |
+|---|---|
+| 8 commits 全含 `Intent:` 行 | ✅ |
+| 242 tests pass / 0 failed | ✅ |
+| `cargo clippy --bin x-video-downloader --tests -- -D warnings` clean | ✅ |
+| 4 resolver + FxTwitter 净 -129 行 (YouTube-23 / TikTok-30 / Bilibili-21 / DouYin-43 / FxTwitter-6) | ✅ |
+| DouYin API 分支 verbatim 保留 (行为零变化) | ✅ |
+| `PlatformResolver` trait / `ResolverRegistry` 未改 | ✅ |
+| 新依赖数 | 0 |
+| workspace `.superpowers/sdd/...` scratch 已删 | ✅ |
+| Memory 写入 (projects + decisions) | ✅ |
+
+### 7. 留待下期 (spec §10 out-of-scope)
+
+- `wrap_resolver_call!` 宏(价值低)
+- `m3u8_extractor::extract_from_html` 共享
+- YouTube `with_cookie_file(user_path)` 行为迁移
+- Nnyy/ZhiXueYun 内部 m3u8 / CookiePool 抽取
+- TulingPython Drission 抽象
+
+---
+
+## 更新 Session: 2026-09-01 — WikiSkill 决策日志 + skill 健康度盘点(commit `756d49d`)
 
 > 本 session 三件事: 1) WikiSkill 论文方法论落地本仓库 2) mattpocock/superpowers skill 主动盘点 3) 0 行 src/ 代码改动,纯文档 + .gitignore + 守门验证。
 
