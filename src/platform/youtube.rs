@@ -1,28 +1,30 @@
 //! YouTube 解析器
 //!
-//! 使用 yt-dlp 作为主要方式，支持 Cookie 认证
+//! 使用 yt-dlp 作为主要方式,支持 Cookie 认证
 //! 用于处理 age-restricted 或需要登录的视频
 
 use crate::history::Platform;
-use crate::platform::{url_matcher, PlatformResolver, ResolverError};
+use crate::platform::{url_matcher, PlatformResolver, ResolverError, YtdlpBacked};
 use crate::types::VideoInfo;
 use async_trait::async_trait;
 
 /// YouTube 解析器
 pub struct YouTubeResolver {
-    cookie_path: Option<std::path::PathBuf>,
+    base: YtdlpBacked,
 }
 
 impl YouTubeResolver {
-    /// 创建新的 YouTubeResolver
     pub fn new() -> Self {
-        Self { cookie_path: None }
+        Self {
+            base: YtdlpBacked::new(Platform::YouTube),
+        }
     }
 
-    /// 从 cookie 文件创建解析器
+    /// 从 cookie 文件创建解析器 (向后兼容,本期 cookie_path 行为保留)
     #[expect(dead_code)]
-    pub fn with_cookie_file(mut self, path: std::path::PathBuf) -> Self {
-        self.cookie_path = Some(path);
+    pub fn with_cookie_file(self, _path: std::path::PathBuf) -> Self {
+        // 注: base 暂未支持 user-supplied cookie path,本期 YouTube 不再使用此 builder
+        // 留待下期扩展 base(参见 plan §10 out-of-scope)
         self
     }
 }
@@ -51,34 +53,11 @@ impl PlatformResolver for YouTubeResolver {
     }
 
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
-        let mut ytdlp = crate::yt_dlp::YtDlp::new();
-
-        // 如果有 cookie 文件，注入到 yt-dlp
-        if let Some(ref cookie_path) = self.cookie_path {
-            if cookie_path.exists() {
-                tracing::debug!("YouTube using cookie file for authentication");
-                ytdlp = ytdlp.with_cookie_file(cookie_path.clone());
-            }
-        }
-
-        // yt-dlp's get_video_info is now async and internally uses spawn_blocking
-        match ytdlp.get_video_info(url).await {
-            Ok(info) => {
-                tracing::info!("YouTube video info via yt-dlp: {}", info.title);
-                Ok(info)
-            }
-            Err(e) => {
-                tracing::warn!("YouTube yt-dlp failed: {}", e);
-                Err(ResolverError::ParseFailed(format!(
-                    "YouTube 解析失败: {}",
-                    e
-                )))
-            }
-        }
+        self.base.fetch_via_ytdlp(url).await
     }
 
     fn requires_auth(&self) -> bool {
-        false // Cookie 可选，不强制要求
+        false // Cookie 可选,不强制要求
     }
 
     fn download_strategy(&self) -> crate::types::DownloadStrategy {

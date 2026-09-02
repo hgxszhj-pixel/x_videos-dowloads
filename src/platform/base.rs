@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::history::Platform;
-use crate::platform::{CookieFileManager, TokenManager};
+use crate::platform::{CookieFileManager, ResolverError, TokenManager};
+use crate::types::VideoInfo;
 
 pub struct YtdlpBacked {
     #[allow(dead_code)]
@@ -59,6 +60,33 @@ impl YtdlpBacked {
             _ => "default",
         };
         self.cookie_manager.get_cookie_file(&self.tokens, ns)
+    }
+
+    /// 核心:build ytdlp → 注入 cookie → 调 yt-dlp → log + wrap 错误
+    #[allow(dead_code)]
+    pub async fn fetch_via_ytdlp(
+        &self,
+        url: &str,
+    ) -> Result<VideoInfo, ResolverError> {
+        let mut ytdlp = crate::yt_dlp::YtDlp::new();
+        if let Some(cookie_file) = self.cookie_file() {
+            tracing::debug!("{} using cookie file for authentication", self.platform_tag.display_name());
+            ytdlp = ytdlp.with_cookie_file(cookie_file);
+        }
+        match ytdlp.get_video_info(url).await {
+            Ok(info) => {
+                tracing::info!("{} video info via yt-dlp: {}", self.platform_tag.display_name(), info.title);
+                Ok(info)
+            }
+            Err(e) => {
+                tracing::warn!("{} yt-dlp failed: {}", self.platform_tag.display_name(), e);
+                Err(ResolverError::ParseFailed(format!(
+                    "{} 解析失败: {}",
+                    self.platform_tag.display_name(),
+                    e
+                )))
+            }
+        }
     }
 }
 
