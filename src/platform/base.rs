@@ -51,6 +51,11 @@ impl YtdlpBacked {
     }
 
     #[allow(dead_code)]
+    pub fn tokens_is_empty(&self) -> bool {
+        self.tokens.is_empty()
+    }
+
+    #[allow(dead_code)]
     pub fn cookie_file(&self) -> Option<PathBuf> {
         let ns = match self.platform_tag {
             Platform::YouTube => "youtube",

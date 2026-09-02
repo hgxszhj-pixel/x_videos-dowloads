@@ -3,37 +3,27 @@
 //! 使用 yt-dlp 作为主要方式，支持 cookies 认证
 
 use crate::history::Platform;
-use crate::platform::{url_matcher, CookieFileManager, PlatformResolver, ResolverError};
+use crate::platform::{url_matcher, PlatformResolver, ResolverError, YtdlpBacked};
 use crate::types::VideoInfo;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// Bilibili 解析器
 pub struct BilibiliResolver {
-    cookies: HashMap<String, String>,
-    cookie_manager: CookieFileManager,
+    base: YtdlpBacked,
 }
 
 impl BilibiliResolver {
-    /// 创建新的 BilibiliResolver
     pub fn new() -> Self {
         Self {
-            cookies: HashMap::new(),
-            cookie_manager: CookieFileManager::new(),
+            base: YtdlpBacked::new(Platform::Bilibili),
         }
     }
 
-    /// 设置 cookies
     #[expect(dead_code)]
     pub fn with_cookies(mut self, cookies: HashMap<String, String>) -> Self {
-        self.cookies = cookies;
+        self.base = self.base.with_tokens(cookies);
         self
-    }
-
-    /// 获取 cookie 文件路径
-    fn get_cookie_file(&self) -> Option<std::path::PathBuf> {
-        self.cookie_manager
-            .get_cookie_file(&self.cookies, "bilibili")
     }
 }
 
@@ -54,28 +44,12 @@ impl PlatformResolver for BilibiliResolver {
     }
 
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
-        let mut ytdlp = crate::yt_dlp::YtDlp::new();
-
-        // 如果有 cookies，设置 cookie 文件
-        if let Some(cookie_file) = self.get_cookie_file() {
-            ytdlp = ytdlp.with_cookie_file(cookie_file);
-        }
-
-        // 使用 yt-dlp 获取视频信息
-        match ytdlp.get_video_info(url).await {
-            Ok(info) => {
-                tracing::info!("Bilibili video info via yt-dlp: {}", info.title);
-                Ok(info)
-            }
-            Err(e) => {
-                tracing::warn!("Bilibili yt-dlp failed: {}", e);
-                Err(ResolverError::from(e))
-            }
-        }
+        self.base.fetch_via_ytdlp(url).await
     }
 
     fn requires_auth(&self) -> bool {
-        !self.cookies.is_empty()
+        // Bilibili 旧逻辑：cookies 非空 → 需要 auth
+        !self.base.tokens_is_empty()
     }
 
     fn required_tokens(&self) -> Vec<&'static str> {
@@ -92,6 +66,6 @@ mod tests {
         let resolver = BilibiliResolver::new();
         assert!(resolver.supports_url("https://www.bilibili.com/video/BV1xx411c7XD"));
         assert!(resolver.supports_url("https://b23.tv/abc"));
-        assert!(!resolver.supports_url("https://youtube.com/watch"));
+        assert!(!resolver.supports_url("https://tiktok.com/video"));
     }
 }
