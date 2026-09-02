@@ -2,51 +2,41 @@
 //!
 //! 使用 yt-dlp 作为主要方式，msToken/ttwid 用于认证
 //! 支持信息流 URL (jingxuan/sports) 和 modal_id 解析
+//! API 分支（feed/modal_id）走 DouYinApiClient，yt-dlp 分支走 YtdlpBacked
 
 use crate::history::Platform;
 use crate::platform::{
-    extract_modal_id, url_matcher, CookieFileManager, DouYinApiClient, PlatformResolver,
-    ResolverError,
+    extract_modal_id, url_matcher, DouYinApiClient, PlatformResolver, ResolverError, YtdlpBacked,
 };
 use crate::types::{VideoFormat, VideoInfo};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 /// 抖音解析器
-#[expect(dead_code)]
 pub struct DouYinResolver {
-    tokens: HashMap<String, String>,
-    token_manager: Option<Arc<Mutex<crate::platform::TokenManager>>>,
-    cookie_manager: CookieFileManager,
+    base: YtdlpBacked,
 }
 
 impl DouYinResolver {
-    /// 创建新的 DouYinResolver
     pub fn new() -> Self {
         Self {
-            tokens: HashMap::new(),
-            token_manager: None,
-            cookie_manager: CookieFileManager::new(),
+            base: YtdlpBacked::new(Platform::DouYin),
         }
     }
 
-    /// 设置 tokens
     pub fn with_tokens(mut self, tokens: HashMap<String, String>) -> Self {
-        self.tokens = tokens;
+        self.base = self.base.with_tokens(tokens);
         self
     }
 
-    /// 设置 TokenManager 用于自动token生成
-    #[expect(dead_code)]
-    pub fn with_token_manager(mut self, tm: Arc<Mutex<crate::platform::TokenManager>>) -> Self {
-        self.token_manager = Some(tm);
-        self
-    }
-
-    /// 获取 cookie 文件路径（从 tokens 创建临时 cookie 文件）
-    fn get_cookie_file(&self) -> Option<std::path::PathBuf> {
-        self.cookie_manager.get_cookie_file(&self.tokens, "douyin")
+    /// 构造直接视频 URL（jingxuan/recommend feed → modal_id）
+    fn direct_video_url(&self, url: &str, modal_id: Option<&String>) -> String {
+        if url.contains("/jingxuan/") || url.contains("/recommend/") {
+            if let Some(m_id) = modal_id {
+                return format!("https://www.douyin.com/video/{}", m_id);
+            }
+        }
+        url.to_string()
     }
 }
 
@@ -67,7 +57,7 @@ impl PlatformResolver for DouYinResolver {
     }
 
     async fn get_video_info(&self, url: &str) -> Result<VideoInfo, ResolverError> {
-        // 检查是否是 feed URL (jingxuan/sports 等) 或包含 modal_id
+        // 检查是否是 feed URL（jingxuan/sports 等）或包含 modal_id
         let modal_id = extract_modal_id(url);
         let is_feed_url =
             url.contains("jingxuan") || url.contains("sports") || url.contains("recommend");
@@ -79,7 +69,7 @@ impl PlatformResolver for DouYinResolver {
             // 如果有 modal_id，尝试从 API 获取
             if let Some(modal_id) = &modal_id {
                 let modal_id_clone = modal_id.clone();
-                let ms_token = self.tokens.get("msToken").cloned();
+                let ms_token = self.base.tokens_get("msToken").cloned();
 
                 // get_video_by_modal_id 是 async fn，DouYinApiClient 实现了 Sync
                 // 将整个 async 调用封装在 spawn_blocking 中，避免 nested Runtime::new().block_on()
@@ -89,7 +79,7 @@ impl PlatformResolver for DouYinResolver {
                     } else {
                         DouYinApiClient::new()
                     };
-                    // DouYinApiClient 内部使用 reqwest::Client (Sync)，可以直接调用 async fn
+                    // DouYinApiClient 内部使用 reqwest::Client（Sync），可以直接调用 async fn
                     let rt = tokio::runtime::Runtime::new()?;
                     rt.block_on(client.get_video_by_modal_id(&modal_id_clone))
                 })
@@ -171,65 +161,33 @@ impl PlatformResolver for DouYinResolver {
                 }
             }
 
-            // API 失败或没有 modal_id，尝试 yt-dlp
-            let mut ytdlp = crate::yt_dlp::YtDlp::new();
-            if let Some(cookie_file) = self.get_cookie_file() {
-                ytdlp = ytdlp.with_cookie_file(cookie_file);
-            }
-
-            // 如果是 feed URL 带有 modal_id，尝试构造直接视频 URL
-            let download_url = if url.contains("/jingxuan/") || url.contains("/recommend/") {
-                if let Some(ref m_id) = modal_id {
-                    // 构造直接视频 URL
-                    format!("https://www.douyin.com/video/{}", m_id)
-                } else {
-                    url.to_string()
-                }
-            } else {
-                url.to_string()
-            };
-
-            match ytdlp.get_video_info(&download_url).await {
+            // API 失败或没有 modal_id，尝试 yt-dlp（走 base）
+            let download_url = self.direct_video_url(url, modal_id.as_ref());
+            match self.base.fetch_via_ytdlp(&download_url).await {
                 Ok(info) => {
                     tracing::info!("DouYin video info via yt-dlp: {}", info.title);
                     return Ok(info);
                 }
                 Err(e) => {
                     tracing::warn!("DouYin yt-dlp also failed: {}", e);
-                    // 返回更友好的错误
-                    return Err(ResolverError::ParseFailed("无法解析 DouYin feed URL，请尝试直接使用视频 URL (如 https://www.douyin.com/video/xxx)".to_string()));
+                    return Err(ResolverError::ParseFailed(
+                        "无法解析 DouYin feed URL，请尝试直接使用视频 URL (如 https://www.douyin.com/video/xxx)".to_string()
+                    ));
                 }
             }
         }
 
-        // 普通视频 URL，使用 yt-dlp 优先策略
+        // 普通视频 URL，使用 yt-dlp（走 base）
         if url.contains("/video/") {
-            let mut ytdlp = crate::yt_dlp::YtDlp::new();
-            if let Some(cookie_file) = self.get_cookie_file() {
-                ytdlp = ytdlp.with_cookie_file(cookie_file);
-            }
-
-            match ytdlp.get_video_info(url).await {
-                Ok(info) => {
-                    tracing::info!("DouYin video info via yt-dlp: {}", info.title);
-                    return Ok(info);
-                }
-                Err(e) => {
-                    tracing::warn!("DouYin yt-dlp failed: {}", e);
-                }
-            }
+            return self.base.fetch_via_ytdlp(url).await;
         }
 
-        // 最后降级到 yt-dlp
-        let mut ytdlp = crate::yt_dlp::YtDlp::new();
-        if let Some(cookie_file) = self.get_cookie_file() {
-            ytdlp = ytdlp.with_cookie_file(cookie_file);
-        }
-        ytdlp.get_video_info(url).await.map_err(ResolverError::from)
+        // 最后降级到 yt-dlp（走 base）
+        self.base.fetch_via_ytdlp(url).await
     }
 
     fn requires_auth(&self) -> bool {
-        self.tokens.contains_key("msToken")
+        self.base.has_token("msToken")
     }
 
     fn required_tokens(&self) -> Vec<&'static str> {

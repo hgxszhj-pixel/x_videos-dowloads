@@ -55,6 +55,11 @@ impl YtdlpBacked {
         self.tokens.is_empty()
     }
 
+    /// 直接读 token 值 (引用),供各 resolver 在 yt-dlp 之外的分支使用
+    pub fn tokens_get(&self, key: &str) -> Option<&String> {
+        self.tokens.get(key)
+    }
+
     #[allow(dead_code)]
     pub fn cookie_file(&self) -> Option<PathBuf> {
         let ns = match self.platform_tag {
