@@ -12,7 +12,7 @@ use crate::config::AppConfig;
 use crate::fxtwitter::FxTwitterResolver;
 use crate::platform::{
     BilibiliResolver, DouYinResolver, NnyyResolver, ResolverError, ResolverRegistry,
-    TikTokResolver, TulingPythonResolver, YouTubeResolver,
+    ShanhuResolver, TikTokResolver, TulingPythonResolver, YouTubeResolver,
 };
 #[cfg(feature = "zhixueyun")]
 use crate::platform::{CookiePool, ZhiXueYunResolver};
@@ -67,6 +67,11 @@ pub fn global_registry(config: &AppConfig) -> Arc<ResolverRegistry> {
         r.register(tp);
     } else {
         tracing::warn!("TulingPythonResolver 初始化失败，跳过注册");
+    }
+    if let Ok(sr) = ShanhuResolver::new() {
+        r.register(sr);
+    } else {
+        tracing::warn!("ShanhuResolver 初始化失败，跳过注册");
     }
 
     let arc = Arc::new(r);
