@@ -586,6 +586,17 @@ impl ShanhuResolver {
             }
         })?;
 
+        // P1 主动过期提示:saved_at 超过 7 天阈值时,videoAuth 大概率返 code=100067。
+        // 不直接拒绝(老 session 可能仍可用),但提前打 warn 让用户能看到重跑 --shanhu-login 提示。
+        if session.is_stale() {
+            let age_days = session.age_seconds().map(|s| s / 86400).unwrap_or(0);
+            warn!(
+                "SHANHU session 已保存 {} 天,超过 7 天阈值,videoAuth 可能失败;\
+                 建议重跑 `x-video-downloader --shanhu-login <state.json>`",
+                age_days
+            );
+        }
+
         let url = format!(
             "{}/onlineapi/stu/course/videoAuth",
             SHANHU_ONLINE_API

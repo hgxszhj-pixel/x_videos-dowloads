@@ -31,10 +31,17 @@
 use crate::platform::shanhu::hash_cache_path;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 /// Session 文件名,与 hash cache 同目录。
 pub const SESSION_FILENAME: &str = "shanhu-session.json";
+
+/// Session 过期阈值 (默认 7 天)。
+///
+/// 选 7 天的理由:PHPSESSID + 微信扫码态在 SHANHU/万字平台实测稳定期约 1-2 周;
+/// 设 7 天给用户留充足缓冲,过期后主动提示比"看似能用实则 code=100067"友好得多。
+pub const SESSION_MAX_AGE_SECS: u64 = 7 * 24 * 3600;
 
 /// 单条 cookie。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +68,37 @@ pub struct Session {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     pub cookies: Vec<CookieEntry>,
+}
+
+impl Session {
+    /// 解析 `saved_at` (`epoch:<secs>` 格式) 为 Unix 秒数。无法解析 → None。
+    ///
+    /// 故意对未知格式返回 None 而非 false:旧 session 文件(如意外手工编辑)
+    /// 不会因为 saved_at 不识别就误判"刚保存",而是降级到被动检测
+    /// (实际调 videoAuth 时返 code=100067 才报错)。
+    pub fn saved_at_epoch(&self) -> Option<u64> {
+        self.saved_at.strip_prefix("epoch:")?.parse().ok()
+    }
+
+    /// 距今的秒数。None 表示 saved_at 无法解析或本地时钟早于 saved_at (clock skew)。
+    pub fn age_seconds(&self) -> Option<u64> {
+        let saved = self.saved_at_epoch()?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+        now.checked_sub(saved)
+    }
+
+    /// 是否超过 `max_age_secs` 阈值。
+    ///
+    /// 返回 false on parse failure (graceful):无法识别 saved_at 时保守地认为未过期,
+    /// 让旧 session 文件继续可用 (实际失效由 videoAuth 的 `code=100067` 兜底)。
+    pub fn is_expired(&self, max_age_secs: u64) -> bool {
+        self.age_seconds().is_some_and(|age| age > max_age_secs)
+    }
+
+    /// 是否超过默认阈值 (`SESSION_MAX_AGE_SECS`)。
+    pub fn is_stale(&self) -> bool {
+        self.is_expired(SESSION_MAX_AGE_SECS)
+    }
 }
 
 /// Session 文件路径。与 hash cache 同目录。
@@ -131,6 +169,8 @@ pub fn session_summary() -> SessionSummary {
         cookie_count: session.as_ref().map(|s| s.cookies.len()).unwrap_or(0),
         has_token: session.as_ref().and_then(|s| s.token.as_ref()).is_some(),
         saved_at: session.as_ref().map(|s| s.saved_at.clone()),
+        age_days: session.as_ref().and_then(|s| s.age_seconds()).map(|s| s / 86400),
+        is_stale: session.as_ref().is_some_and(|s| s.is_stale()),
     }
 }
 
@@ -140,6 +180,10 @@ pub struct SessionSummary {
     pub cookie_count: usize,
     pub has_token: bool,
     pub saved_at: Option<String>,
+    /// 距今天数 (None = 无 session 或 saved_at 无法解析)
+    pub age_days: Option<u64>,
+    /// 是否超过 SESSION_MAX_AGE_SECS
+    pub is_stale: bool,
 }
 
 /// 判断 cookie 域是否属于 SHANHU/Wanzibook 体系。
@@ -294,5 +338,67 @@ mod tests {
         assert!(is_shanhu_cookie_domain("fake-rexxi.cn.evil.com"));
         // 空字符串
         assert!(!is_shanhu_cookie_domain(""));
+    }
+
+    // --- Session 过期检测 (2026-09-06 P1) ---
+
+    fn make_session_with_saved_at(saved_at: &str) -> Session {
+        Session {
+            saved_at: saved_at.to_string(),
+            token: None,
+            cookies: vec![],
+        }
+    }
+
+    #[test]
+    fn session_fresh_is_not_expired() {
+        // "刚刚保存" (epoch:<now>) → age ≈ 0,远小于 7 天阈值
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let s = make_session_with_saved_at(&format!("epoch:{now_secs}"));
+        assert!(s.age_seconds().unwrap() < 5, "刚保存的 session age 应 < 5s");
+        assert!(!s.is_stale(), "fresh session 不应过期");
+        assert!(!s.is_expired(SESSION_MAX_AGE_SECS));
+    }
+
+    #[test]
+    fn session_old_is_expired() {
+        // 8 天前保存的 session → age > 7 天阈值
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let eight_days_ago = now_secs - 8 * 86400;
+        let s = make_session_with_saved_at(&format!("epoch:{eight_days_ago}"));
+        let age_days = s.age_seconds().unwrap() / 86400;
+        assert!(age_days >= 8, "8 天前 age 应 >= 8 天");
+        assert!(s.is_stale(), "8 天前 session 应过期");
+        assert!(s.is_expired(SESSION_MAX_AGE_SECS));
+    }
+
+    #[test]
+    fn session_unparseable_saved_at_is_not_expired() {
+        // saved_at 不是 epoch:<secs> 格式 → graceful 不误判为过期
+        // (真实场景:手工编辑 / 旧版本写入 / 文件损坏)
+        let s = make_session_with_saved_at("2026-09-06T20:00:00Z");
+        assert_eq!(s.saved_at_epoch(), None);
+        assert_eq!(s.age_seconds(), None);
+        assert!(!s.is_expired(SESSION_MAX_AGE_SECS), "无法解析时保守不报过期");
+    }
+
+    #[test]
+    fn session_is_expired_uses_threshold_correctly() {
+        // 3 天前的 session,测试不同阈值
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let three_days_ago = now_secs - 3 * 86400;
+        let s = make_session_with_saved_at(&format!("epoch:{three_days_ago}"));
+        assert!(!s.is_expired(7 * 86400), "7 天阈值下 3 天前不老化");
+        assert!(s.is_expired(1 * 86400), "1 天阈值下 3 天前老化");
+        assert!(s.is_expired(0), "0 阈值下任何 age > 0 即过期 (这里 age ≈ 3 天)");
     }
 }

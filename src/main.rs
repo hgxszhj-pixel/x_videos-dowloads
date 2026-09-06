@@ -229,6 +229,15 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
             println!("  cookie 数: {}", s.cookie_count);
             println!("  含 token:  {}", if s.has_token { "是" } else { "否" });
             println!("  保存时间:  {}", s.saved_at.as_deref().unwrap_or("<未知>"));
+            match s.age_days {
+                Some(d) => println!("  距今:     {} 天", d),
+                None => println!("  距今:     <无法解析 saved_at>"),
+            }
+            if s.is_stale {
+                println!();
+                println!("  ⚠️  session 已超过 7 天阈值,videoAuth 可能返 code=100067 非法请求");
+                println!("     建议重跑: x-video-downloader --shanhu-login <state.json>");
+            }
             println!();
             println!("  videoAuth 自动发现可用,缺失章节会通过 session cookie 自动获取 cfileid");
         }
