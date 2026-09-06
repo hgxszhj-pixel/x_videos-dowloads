@@ -20,7 +20,51 @@
 
 ---
 
-## 最新 Session: 2026-09-06 — SHANHU `--shanhu-login` CLI (commit `bd2dfeb`)
+## 最新 Session: 2026-09-06 — GUI 单 URL 智能识别 + 批量视频面板 checkbox UI (commits `a9ca186` → `6492013`)
+
+> 用户报:SHANHU 课程 URL `https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714` 点"获取信息"只显示 1 个 video card(`Linux基本概念和系统搭建 119:52`),期望显示完整 83 章节批量面板。根因:`use_fetch_action` 单 URL 分支只调 `fetch_video_info_impl` → SHANHU 走 `get_video_info` → 只返回首章。本 Session **完成 smart dispatch 闭环 + checkbox UI 落地 + 错误 docstring 修正**。
+
+### 1. 设计权衡
+
+| 候选 | 否决原因 | 选定 |
+|------|---------|------|
+| 重写 `use_fetch_action` 把课程池逻辑塞进主流程 | 与既有 `course_collection_state`/"分析课程"按钮路径耦合 | ❌ |
+| 在主流程加智能派发,显式按钮路径不变 | smart dispatch 只在"获取信息"按钮生效,显式课程入口保留 | ✅(per plan `curious-stirring-dusk.md`) |
+| eager 解析全部章节 | 83 章节 × 2s = 3 分钟 | ✅(用户接受,与现有 batch 路径一致;lazy 留作未来优化) |
+| TulingPython 也走 smart dispatch | 该平台需要登录预检,与 SHANHU 匿名 `list_collection` 行为不对称 | ❌(只 SHANHU 走批量,其它平台保持单视频) |
+
+### 2. 4 commits 落地 (HEAD `6492013`)
+
+| commit | 类型 | 内容 |
+|--------|------|------|
+| `a9ca186` | feat(gui) | 新 `fetch_smart_impl(url)` 优先 `list_collection` → 逐章节 `get_video_info` → `FetchResult::Batch`;`use_fetch_action` 单 URL 分支改调 |
+| `caf4da3` | docs(history) | 收录 2 份历史 platform 报告(SHANHU v1 + 智学云) |
+| `cbf412d` / `609a451` | docs(handoff) | 同步 a9ca186 + caf4da3,修正"HANDOFF line 11 v1 报告已推翻" |
+| `86d9298` | docs(gui) | **修正 `fetch_smart_impl` docstring 错误信息**("已知限制:N 条相同首章" → "章节级跳转"准确描述) |
+| `f4bf425` | feat(gui) | 批量视频面板加 per-item checkbox + 全选/全不选 + "▶ 下载选中 (N)" + 0 选中守卫(独立 commit,与 smart dispatch 解耦) |
+| `6492013` | docs(handoff) | 同步 f4bf425 + 86d9298;修正原 line 3 worktree 残留 |
+
+### 3. 关键设计要点
+
+- **章节级跳转**:`shanhu.rs:739-742` `list_collection` 已给每条 chapter 生成 `jump_url = "<原URL>#chapter=<id>"`;`shanhu.rs:790-791` `get_video_info` 用 `extract_chapter_id` 解析 fragment → 返回该章节 m3u8。所以批量面板实际显示 N 个**不同**章节项,不会下载首章 N 次。
+- **fallback 容忍**:`fetch_smart_impl` 任一环节失败(list_collection 空/错、单章节 `get_video_info` 失败)→ graceful 降级到单视频 `FetchResult::Single`;用户始终拿到结果。
+- **SHANHU 范围内智能派发**:其它平台(X.com / B 站 / TikTok)直接走 `fetch_video_info_impl` 单视频,行为不变。
+- **checkbox UI 解耦**:`VideoInfoDisplay.selected: bool` 是新增字段(默认 true),但 `BatchVideoPanel` 与 `fetch_smart_impl` 无代码耦合 — 两层独立 commit 独立验证。
+
+### 4. 验证状态
+
+- `cargo check --bin x-video-downloader` clean
+- `cargo clippy --bin x-video-downloader -- -D warnings` clean
+- `cargo test --bin x-video-downloader` → **283 passed / 0 failed / 8 ignored**
+- **未跑 GUI smoke test**(必须用户操作窗口):4 个 case 详见 plan `curious-stirring-dusk.md` Verification 段
+  - **Case A(重点)**:SHANHU 课程 URL → 批量面板 2 个不同章节 + checkbox
+  - Case B/C/D:X.com / B 站 / TulingPython 各 1 case
+
+### 5. 与 SHANHU 闭环全景的衔接
+
+Phase 7 (smart dispatch) + Phase 8 (checkbox UI + docstring 修正) 填补了 SHANHU 全链路最后一块 GUI 缺口:`Phase 1-3 接入 → Phase 4-5 session + 过期检测 → Phase 6 skill 复用 → Phase 7-8 GUI 闭环`。完整能力矩阵见前 Session (line 71)。
+
+
 
 > 用户在前一 commit (`2a68896`) 完成后选 "实现 --shanhu-login CLI (Recommended)"。本 commit **完成 SHANHU 全自动闭环**。
 
