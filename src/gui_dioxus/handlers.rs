@@ -11,7 +11,7 @@ use crate::downloader::VideoDownloader;
 use crate::fxtwitter::FxTwitterResolver;
 use crate::platform::{
     BilibiliResolver, DouYinResolver, NnyyResolver, PlatformResolver, ResolverRegistry,
-    TikTokResolver, TulingPythonResolver, YouTubeResolver,
+    ShanhuResolver, TikTokResolver, TulingPythonResolver, YouTubeResolver,
 };
 use crate::types::sanitize_filename;
 use crate::types::{DownloadProgress, DownloadRequest};
@@ -210,6 +210,9 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
     if let Ok(tp) = TulingPythonResolver::new() {
         registry.register(tp); // vip.tulingpyton.cn / tulingpyton.cn（含课程池 list_collection）
     }
+    if let Ok(sr) = ShanhuResolver::new() {
+        registry.register(sr); // rexxi.cn / wanzibook.com / tenwiseacademy.cn（白标 SHANHU/万字）
+    }
     // 其他平台使用默认的 YtDlpResolver
 
     // 使用 try_resolve_all 尝试所有解析器
@@ -242,6 +245,7 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
                     })
                     .collect(),
                 download_strategy: info.download_strategy,
+                selected: true, // 批量解析得到的视频默认勾选（与 CourseItemDisplay.selected 对齐）
             })
         }
         Err(e) => Err(format!("Failed to fetch video info: {}", e)),

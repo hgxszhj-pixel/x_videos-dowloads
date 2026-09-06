@@ -25,6 +25,9 @@ pub enum Platform {
     Weibo,
     ZhiXueYun,
     TulingPython,
+    /// SHANHU/珊瑚 SaaS 平台（白标域 rexxi.cn + 后端 wanzibook.com + CDN tenwiseacademy.cn）。
+    /// 2026-09-06 v2 实测:整条 m3u8 链路完全匿名,无需 token。
+    Shanhu,
     Other,
 }
 
@@ -42,6 +45,7 @@ impl Platform {
             Platform::Weibo => "Weibo",
             Platform::ZhiXueYun => "智学云",
             Platform::TulingPython => "图灵Python",
+            Platform::Shanhu => "SHANHU/珊瑚",
             Platform::Other => "Other",
         }
     }

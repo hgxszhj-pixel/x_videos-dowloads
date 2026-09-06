@@ -54,6 +54,14 @@ const URL_PATTERNS: &[UrlPattern] = &[
         platform: Platform::TulingPython,
         patterns: &["vip.tulingpyton.cn", "tulingpyton.cn"],
     },
+    UrlPattern {
+        platform: Platform::Shanhu,
+        // SHANHU/珊瑚 SaaS:
+        // - rexxi.cn          白标域 (wx-bgfcbieh.rexxi.cn 等任意子域)
+        // - wanzibook.com     SHANHU_ONLINE_API 后端 (study.wanzibook.com)
+        // - tenwiseacademy.cn play_url 解析 endpoint (匿名返回 m3u8 URL)
+        patterns: &["rexxi.cn", "wanzibook.com", "tenwiseacademy.cn"],
+    },
 ];
 
 /// 从 URL 提取 hostname 并转换为小写（一次性完成，避免重复分配）
@@ -280,6 +288,31 @@ mod tests {
         assert_eq!(
             detect_platform("https://tulingpyton.cn/p/course/member/p_628ef20ee4b0cedf38b6e660"),
             Platform::TulingPython
+        );
+    }
+
+    #[test]
+    fn test_detect_shanhu() {
+        // 白标域 (任意 *.rexxi.cn 子域)
+        assert_eq!(
+            detect_platform("https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714"),
+            Platform::Shanhu
+        );
+        assert_eq!(
+            detect_platform("https://rexxi.cn/anything"),
+            Platform::Shanhu
+        );
+        // 后端域 (SHANHU_ONLINE_API)
+        assert_eq!(
+            detect_platform("https://study.wanzibook.com/onlineapi/stu/course/listSections"),
+            Platform::Shanhu
+        );
+        // CDN play_url 域
+        assert_eq!(
+            detect_platform(
+                "https://111453136245362688.tenwiseacademy.cn/111453136245362688/abc.m3u8"
+            ),
+            Platform::Shanhu
         );
     }
 
