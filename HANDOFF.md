@@ -1,7 +1,9 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 SDD commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50` docs/handoff + `4f59255` chore/gitignore) on `gitbutler/workspace`,head `4f59255`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
-**再新**: 2026-09-01 WikiSkill 三层落地 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
+**最新**: 2026-09-02 WikiSkill 三层架构全局落地(无 commit) — `~/.claude/WIKI_INDEX.md` (5.1KB wiki 层目录) + 3 个 skill-impact 账本 (`CLAUDE.md` 3.4KB / `claude-code-best-practice.md` 1.7KB / `settings-hooks.md` 4.0KB) + SessionStart 双模式拆分(`obsidian-memory-prelude.sh` 默认 295B 指针 / `WIKI_FULL=1` 完整 11.5KB;WikiSkill 消融: Inference Agent 看累积 wiki 反而 48.7%→45.3%);`settings.json` SessionStart 追加 memory-prelude 接线(JSON 有效)。0 行 src/ 改动。
+**再新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 SDD commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50` docs/handoff + `4f59255` chore/gitignore) on `gitbutler/workspace`,head `4f59255`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
+**再新**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
+**再新**: 2026-09-06 SHANHU/万字 SaaS 京峰教育接入落地 — 4 commits (`54bbe4d`..`1164286`) on `gitbutler/workspace`,head `1164286`;Phase 1 ShanhuResolver 骨架+匿名 listSections / Phase 2 get_video_info+hash 缓存+CLI 缓存管理 / Phase 3 **class_id 自动发现**(JS bundle 反推 listClass 端点,SPA fallback `data[0].id`)+URL 2 段路由解析+进程内缓存 / fix CLI global_registry 漏注册;E2E 实测 1920x1080 H.264 端到端 2 章节 (884.7MB+590.2MB,81s+56s);camoufox bootstrap 一次性拦截 `tenwiseacademy.cn/<hash>.m3u8` 拿 2 个 file_id→hash 映射写本地缓存;`--shanhu-add-hash <FID>:<HASH>` + `--shanhu-cache-info` CLI 子命令独立可用;30/30 unit tests + clippy clean。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/jfedu-rexxi-shanhu-m3u8-download.md`。
 **再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
 **再新**: 2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e 验证(短码 → 69 视频 / 单课详情 → 3 媒体含 2 PDF / 另一单课 → 0 媒体);新发现 `sectionType=1=PDF` + `sectionType=3=国考云跳转`;无 src/ 改动。
 **再新**: 2026-08-29 同日 5 个 commit — `0011caa` 小鹅通 HLS 403 真凶 + GUI 三命名兼容 · `86e497e` 课程池覆盖已下载开关 · `9ab3813` 智学云单课节 URL 解析盲区修复 · `c7b0fe4` 8-25 暂存变更集落库 · `deb54c3` 两 bench 存量断裂修复。
@@ -423,11 +425,14 @@ cargo test --bin x-video-downloader -- --ignored \
 | D-014 | 2026-08-29 | 文档归档 | `docs/zhixueyun-platform-report-2026-08-29.md` 是否落 git | **pending** | 报告含完整 endpoint + 鉴权矩阵,落 git 暴露给所有协作者 | 用户回复落/不落 |
 | D-015 | 2026-08-29 | skill 同步 | zhixueyun-analyzer skill 是否同步到镜像/装机版(wpr 双拷贝规则) | **pending** | 装机版权威;改 SKILL/router 后需跑 build_agents.py + preflight.py | 用户回复同步 / 不同步 |
 | D-016 | 2026-08-29 | 端点推断 | `/tools-center/file-cloud/preview-new` 端点存在性 | **pending** | 当前靠 fallback (chapter → documents → first.name);端点若不存在,UI 无感知但首次慢一倍 | 用户在 Camoufox 实测,确认 200 + `previewUrl` 字段 |
-| D-017 | 2026-09-01 | 平台策略 | SHANHU 京峰教育 (org_id=27632958) 3 路下载方案: A 手动抓 m3u8 / B 复用 tulingpython.rs 模式写 `shanhu.rs` / C 等首课后用 camoufox 嗅探 | **pending** | 见 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`;首课 2026-09-02 20:00 开课 | 用户决定走哪条 / 暂不实现 |
+| D-017 | 2026-09-06 | 平台策略 | SHANHU 京峰教育 选 **Path B** (复用 tulingpython.rs 模式写 `shanhu.rs`) + camoufox bootstrap 抓 hash;3 路方案对比详见原 pending 条目 | **accepted** | v2 实测推翻 v1 报告"开课前不可下载";4 commits `54bbe4d`..`1164286` 完整端到端 (1920x1080 H.264, 884.7MB+590.2MB);E2E 81s+56s | 平台 hash 算法逆向成功(不需 camoufox)时,可彻底去 bootstrap 步骤 |
+| D-024 | 2026-09-06 | 解析器架构 | **任何 resolver 必须同时注册到 GUI (`gui_dioxus/handlers.rs::fetch_video_info_impl`) + CLI (`resolver_chain::global_registry`) 两条路径** | accepted | Phase 1 漏 CLI 注册 → CLI URL 落 yt-dlp fallback → Unsupported URL;`1164286` 修复 + E2E CLI 实测通过 | 新加 resolver 时,检查两条路径同步注册 |
 | D-018 | 2026-09-01 | skill 文档 | zhixueyun-analyzer 加 `PURPOSE.md` (why-exists / 失败路径 / 拒绝方案 / 边界) | accepted | 遵循 WikiSkill 原则;今天新建 | 决策变更时追加,旧条目保留 |
 | D-019 | 2026-09-01 | gitignore | `.teach/` 显式列入 .gitignore(修文档/实现不一致) | accepted | HANDOFF.md §教学 workspace 约定声称 gitignored,但 .gitignore 实际漏写;本次同步 | `git status` 出现 `.teach/` 时重审 |
 | D-020 | 2026-09-01 | skill 安全 | mattpocock 本地 fork `write-a-skill` update 前 hash 守门 | accepted | `pnpx skills update` 不会跳过 lock 文件标记的源(源仍是 mattpocock/skills);手动 sha256 + 备份兜底 | 未来 `update -y` 行为变更或 fork 数量增加 |
 | D-021 | 2026-09-01 | skill 盘点 | obra/superpowers v6.3.0 已含本地(2026-08-24 batch),无动作 | accepted | 上游 2026-08-12 release v6.3.0,本地 updatedAt 在其后;`update -y` 确认无新 commit | 上游 release 新版本时 |
+| D-022 | 2026-09-02 | 全局配置 | SessionStart 双模式拆分:默认 ≤1KB 指针 (295B), `WIKI_FULL=1` 输出完整 11.5KB | accepted | 见 WikiSkill 消融: Inference Agent 看累积 wiki 反而有害 (48.7%→45.3%);Skill Proposer 才是 wiki 受益方 (+15pt) | 切换到非 WikiSkill 架构时 (如 Claude 原生管理 context) 或 wiki 注入重新被设为默认 |
+| D-023 | 2026-09-02 | 知识管理 | 每个 skill 维护 `~/.claude/skill-impact/<slug>.md` 账本 (改动提案 + 验证 + 接受/拒绝) | accepted | 遵循 WikiSkill 论文 `skill-impact.md` 模式;当前 3 个 skill 已建账 (CLAUDE.md / claude-code-best-practice / settings-hooks) | 维护成本 > 收益时回退到自由文本,或账本数 > 20 时考虑自动生成器 |
 
 ### pending 项汇总(供新会话快速扫描)
 
@@ -435,7 +440,6 @@ cargo test --bin x-video-downloader -- --ignored \
 - D-014 平台报告 zhixueyun-platform-report-2026-08-29.md 是否落 git
 - D-015 zhixueyun-analyzer skill 是否同步到镜像/装机版
 - D-016 preview-new 端点是否真实存在(需 Camoufox 实测)
-- D-017 SHANHU 京峰教育下载方案选 A/B/C
 ```
 
 ---
@@ -449,6 +453,8 @@ cargo test --bin x-video-downloader -- --ignored \
 - 跨项目决策/偏好 → `~/memory/`
 - 当日流水 → `~/memory/daily/{YYYY-MM-DD}.md`
 - Agent 自动记忆索引 → `/Users/hgxszhj/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/MEMORY.md`
+- Wiki 层目录 (全局) → `~/.claude/WIKI_INDEX.md` (SessionStart 自动注入 ≤1KB 指针;`WIKI_FULL=1` 加载完整)
+- Skill 改动账本 → `~/.claude/skill-impact/<slug>.md` (本项目改动前必读)
 
 ## commit 历史
 
