@@ -1,12 +1,14 @@
 # X Video Downloader — 项目交接
 
+**最新**: 2026-09-06 `shanhu-analyzer` skill 创建(无 commit) — `~/.claude/skills/shanhu-analyzer/` (8.0K SKILL.md + 16K PURPOSE.md + 3 references [api-endpoints/cookie-recipe/hash-chain] + 3 scripts [bootstrap/video_auth/resolve_m3u8]);frontmatter 触发词 `rexxi.cn`/`wanzibook.com`/`cfileid`/`videoAuth`,任何相关 URL 查询自动触发;py_compile + ast.parse 全 OK,Pyright 3 ✘ errors(`args.class` 关键字冲突等)→ 0 ✘ / 3 ★ info;Memory Phase 6 已追加 skill 指针;未来复用 30-60 分钟/次。
+**最新**: 2026-09-06 SHANHU session 过期主动检测 — commit `5ca9e1c` on `gitbutler/workspace`;**P1 主动提示代替被动 code=100067 报错**;`SESSION_MAX_AGE_SECS=7天` 阈值(PHPSESSID+微信扫码实测稳定期 1-2 周,留 7 天缓冲),Session 加 `saved_at_epoch/age_seconds/is_expired(max_age)/is_stale()`,saved_at 无法解析时 graceful 返 false (老/损坏 session 不误报过期);`SessionSummary` 增 `age_days+is_stale` 字段,`--shanhu-session-info` 显示「距今 N 天」+ ⚠️ 重跑 `--shanhu-login` 提示;`fetch_cfileid_via_video_auth` 加 pre-flight warn (7 天+ session 调用前主动提示);4 unit tests (fresh/old/unparseable/阈值切换);283 tests pass(+4)/ clippy clean。Memory 已记录。
 **最新**: 2026-09-02 WikiSkill 三层架构全局落地(无 commit) — `~/.claude/WIKI_INDEX.md` (5.1KB wiki 层目录) + 3 个 skill-impact 账本 (`CLAUDE.md` 3.4KB / `claude-code-best-practice.md` 1.7KB / `settings-hooks.md` 4.0KB) + SessionStart 双模式拆分(`obsidian-memory-prelude.sh` 默认 295B 指针 / `WIKI_FULL=1` 完整 11.5KB;WikiSkill 消融: Inference Agent 看累积 wiki 反而 48.7%→45.3%);`settings.json` SessionStart 追加 memory-prelude 接线(JSON 有效)。0 行 src/ 改动。
 **再新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 SDD commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50` docs/handoff + `4f59255` chore/gitignore) on `gitbutler/workspace`,head `4f59255`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
 **再新**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
 **再新**: 2026-09-06 SHANHU session cookie复用 — commit `2a68896` on `gitbutler/workspace`;新模块 `src/platform/shanhu_session.rs` (270 行,4 unit tests) + `ShanhuResolver::fetch_cfileid_via_video_auth` 自动 fallback;JS 逆向发现 **`cfileid` 是腾讯云 VOD 服务端分配的 FileID 不可算法反推**(MD5/SHA1/SHA256 of file_id 全不匹配),JS bundle 硬编码 COS AKID `***REDACTED_TENCENT_SECRET_ID***` 仅 COS 上传可用 / VOD `/verify/sign` 拒签("SecretID 不存在或已禁用");链路是双层 hash: `tenwiseacademy.cn/<cfileid>` 匿名 redirect → `cskziwl.cn/<hash1>/<hash2>`(两组完全不同);唯一返 `cfileid` 端点 `videoAuth` 100% 需登录(`code=100067`);`get_video_info` 缓存未命中 → 自动 videoAuth + 写 hash cache → 后续全匿名;CLI `--shanhu-session-info` 显示状态+配置指引;277 tests pass(+4)/ clippy clean。Memory 已更新。
 **再新**: 2026-09-06 SHANHU `--shanhu-login` CLI 落地 — commit `bd2dfeb` on `gitbutler/workspace`;**SHANHU 全自动闭环完成**: 用户用 camoufox MCP `export_state()` 导出 cookies JSON → `--shanhu-login <state.json>` 过滤 wanzibook/rexxi/tenwiseacademy 三域 → 原子写本地 session 文件 → 缺失章节自动 videoAuth;新增 `is_shanhu_cookie_domain()` helper (substr 匹配,2 unit tests),`handle_shanhu_login()` (~75 行,兼容 camoufox 两种 export 格式 `{"cookies":[…]}` / 顶层 `[…]`),移除 `save_session` / `session_from_export` 上的 `#[allow(dead_code)]`;4 错误路径友好提示 (文件缺失/JSON 损坏/无 cookies 字段/全非 SHANHU 域);279 tests pass(+2)/ clippy clean。Memory 已更新。
 **再新**: 2026-09-06 SHANHU/万字 SaaS 京峰教育接入落地 — 4 commits (`54bbe4d`..`1164286`) on `gitbutler/workspace`,head `1164286`;Phase 1 ShanhuResolver 骨架+匿名 listSections / Phase 2 get_video_info+hash 缓存+CLI 缓存管理 / Phase 3 **class_id 自动发现**(JS bundle 反推 listClass 端点,SPA fallback `data[0].id`)+URL 2 段路由解析+进程内缓存 / fix CLI global_registry 漏注册;E2E 实测 1920x1080 H.264 端到端 2 章节 (884.7MB+590.2MB,81s+56s);camoufox bootstrap 一次性拦截 `tenwiseacademy.cn/<hash>.m3u8` 拿 2 个 file_id→hash 映射写本地缓存;`--shanhu-add-hash <FID>:<HASH>` + `--shanhu-cache-info` CLI 子命令独立可用;30/30 unit tests + clippy clean。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/jfedu-rexxi-shanhu-m3u8-download.md`。
-**再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
+**再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit,**已推翻** — 见 2026-09-06 后续 5 commits + skill) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空;v1 报告判定"当前不可下载"已由 v2 实测推翻(2/83 章节 videos[] 有 file_id + 双层 hash 链路打通,见 2026-09-06 落地 commit `bd2dfeb`)。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
 **再新**: 2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e 验证(短码 → 69 视频 / 单课详情 → 3 媒体含 2 PDF / 另一单课 → 0 媒体);新发现 `sectionType=1=PDF` + `sectionType=3=国考云跳转`;无 src/ 改动。
 **再新**: 2026-08-29 同日 5 个 commit — `0011caa` 小鹅通 HLS 403 真凶 + GUI 三命名兼容 · `86e497e` 课程池覆盖已下载开关 · `9ab3813` 智学云单课节 URL 解析盲区修复 · `c7b0fe4` 8-25 暂存变更集落库 · `deb54c3` 两 bench 存量断裂修复。
 **再早**: 2026-08-29 `63c9f53` home-v 根因解析 + `6cd927e` ego-lite SQLite 兜底(host 链路 .zhixueyun.com/.e.189.cn/.mylearning.cn)。
@@ -72,6 +74,151 @@
 | 4. **session 一次性导入** | `--shanhu-login <state.json>` | **仅首次** |
 
 **全自动 + 仅一次性浏览器** 闭环完成。
+
+---
+
+## 最新 Session: 2026-09-06 — SHANHU session 过期主动检测 P1 (commit `5ca9e1c`)
+
+> 用户在前一 Session (skill 创建) 后选 "继续" → 走 C 项 (session 过期检测 P1)。本 commit **把被动 `code=100067` 改为主动 saved_at>7天检查**。
+
+### 1. 设计权衡
+
+| 候选 | 否决原因 | 选定 |
+|------|---------|------|
+| 只在 `code=100067` 时报错 | 用户首次遇到时冷错误,不知为何 | ❌(当前行为) |
+| 每 N 天主动提示用户重跑 | 需要后台任务 / 通知机制,过度设计 | ❌ |
+| **`saved_at`>7 天阈值 + 调用前 warn** | 零基础设施,触发即提示,不影响功能 | ✅ |
+
+### 2. 实现要点 (4 文件,净 +129 行)
+
+| 文件 | 改动 |
+|------|------|
+| `src/platform/shanhu_session.rs` | `SESSION_MAX_AGE_SECS` 常量 + `impl Session { saved_at_epoch/age_seconds/is_expired/is_stale }` + `SessionSummary. {age_days, is_stale}` 字段 + 4 unit tests |
+| `src/platform/shanhu.rs` | `fetch_cfileid_via_video_auth` 加 pre-flight `warn!()` (7 天+ session 调用前主动提示) |
+| `src/main.rs` | `--shanhu-session-info` 显示"距今" + ⚠️ 重跑 `--shanhu-login` 提示 |
+| `src/platform/mod.rs` | 调整 re-export (移除未消费 helper,保持 API surface 最小) |
+
+### 3. 关键设计: graceful on parse failure
+
+```rust
+pub fn is_expired(&self, max_age_secs: u64) -> bool {
+    self.age_seconds().is_some_and(|age| age > max_age_secs)
+}
+```
+
+- saved_at 无法解析 → `is_expired` 返 **false** (保守不误报)
+- 老/损坏 session 文件不会因为解析失败就被认为是"刚保存"
+- 真实 session 失效仍由 `code=100067` 兜底
+- **不阻断**:session 过期仍尝试请求(老 session 可能仍可用),只是提前 `warn!` 让用户看到
+
+### 4. 阈值 7 天的理由
+
+PHPSESSID + 微信扫码态在 SHANHU/万字平台**实测稳定期约 1-2 周**。设 7 天给用户留充足缓冲 — 既不会过早骚扰(避免"刚登录完就被告知过期"),也不会太宽松(给足够时间让用户在 `code=100067` 之前就重跑)。
+
+### 5. 4 个 unit tests (覆盖 4 个边界)
+
+| 测试 | 覆盖 |
+|------|------|
+| `session_fresh_is_not_expired` | epoch:<now> → age ≈ 0 → 不过期 |
+| `session_old_is_expired` | 8 天前 → age >= 8 天 → 过期 |
+| `session_unparseable_saved_at_is_not_expired` | "2026-09-06T20:00:00Z" → None → 不误报过期 |
+| `session_is_expired_uses_threshold_correctly` | 3 天前 / 阈值 7/1/0 三档断言正确 |
+
+### 6. 验证
+
+| 项 | 状态 |
+|---|---|
+| `cargo test --bin x-video-downloader` 283 passed (+4) | ✅ |
+| `cargo clippy --bin x-video-downloader -- -D warnings` clean | ✅ |
+| CLI `--shanhu-session-info` 烟雾测试 ("距今: 0 天") | ✅ |
+| Intent: 行通过 commit-msg hook | ✅ |
+
+### 7. SHANHU 闭环全景 (Phase 1-8)
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ Phase 1: 54bbe4d   ShanhuResolver 骨架 + 匿名 listSections          │
+│ Phase 2: 90b574e   get_video_info + hash cache + CLI 缓存管理        │
+│ Phase 3: 130f3b2   class_id 自动发现 (listClass + URL 路由)          │
+│ Phase 4: 1164286   fix CLI global_registry 漏注册                    │
+│ Phase 5: 2a68896   session 模块 + videoAuth 自动 cfileid 发现        │
+│ Phase 6: bd2dfeb   --shanhu-login CLI (camoufox export_state)        │
+│ Phase 7: 无 commit  shanhu-analyzer skill 沉淀                       │
+│ Phase 8: 5ca9e1c   session 过期主动检测 P1 (本 Session)              │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 最新 Session: 2026-09-06 — `shanhu-analyzer` skill 创建(无 commit)
+
+> 用户在 `--shanhu-login` CLI (`bd2dfeb`) 完成后选 "建 SHANHU analyzer skill (Recommended)"。本 Session 把 Phase 1-5 全部发现沉淀为可复用 skill,类似 `zhixueyun-analyzer` / `tulingvip-m3u8-download`。
+
+### 1. 设计目标
+
+| 候选 | 否决原因 | 选定 |
+|------|---------|------|
+| 写在 Rust doc 注释 | 模型不主动读注释,且散落在 6 个文件 | ❌ |
+| 只追加到 memory 文件 | 缺触发词,下次查询不会自动跳到对应位置 | ❌ |
+| **~/.claude/skills/<name>/** (SKILL.md + PURPOSE.md + references + scripts) | WikiSkill 三层架构之一,frontmatter description = 触发词,自动 discoverable | ✅ |
+
+### 2. skill 结构 (8 文件, ~76K)
+
+```
+~/.claude/skills/shanhu-analyzer/
+├── SKILL.md (8.0K)              # 触发词 + When/When NOT + Quick Start + 4 endpoint 链路图 + 反模式
+├── PURPOSE.md (16K)             # 9 节:为什么存在 / 失败路径 / 边界 / 缺口 / 拒绝方案 / 反模式 / 验证 / 与其他 skill / 维护规则
+├── references/
+│   ├── api-endpoints.md         # 4 端点 (listClass / listSections / videoAuth / resolve_play_url) + ERR codes
+│   ├── cookie-recipe.md         # camoufox 6 步流程 + cookie 过滤 + session 文件格式 + P1 失效检测
+│   └── hash-chain.md            # 链路 + 6 种 hash 反推失败 + COS 假阳性 + 双层 hash + CDN 防盗链 + 性能数据
+└── scripts/
+    ├── shanhu_bootstrap.py      # camoufox 一次性扫码 + 拦截 m3u8 + 写 session + 写 hash cache
+    ├── shanhu_video_auth.py     # state.json → videoAuth → cfileid → (可选) 写 hash cache
+    └── shanhu_resolve_m3u8.py   # 匿名 listSections → m3u8 URL (管道友好)
+```
+
+### 3. 关键设计原则
+
+- **SKILL.md 极简** — 只 Quick Start + 决策表 + 反模式 (5.7KB),详细知识下沉到 references
+- **PURPOSE.md 持久化失败路径** — `v1→v2` 反转、6 种 hash 反推失败、COS creds 假阳性、双层 hash 容易被遗漏的第二层 (避免下次重蹈覆辙)
+- **scripts 独立可执行** — 3 个 Python 脚本各自独立完成一件事,可被 shell 管道调用 (`--print-m3u8`)
+- **frontmatter description = 触发词** — 含 8 个关键词 (rexxi.cn / wanzibook.com / tenwiseacademy / cskziwl / videoAuth / cfileid / 珊瑚 / 万字),确保模型主动 recall
+
+### 4. 验证
+
+| 项 | 状态 |
+|---|---|
+| 8 文件全部创建 | ✅ |
+| `python3 -m py_compile` 3 scripts | ✅ |
+| `python3 -c "import ast; ast.parse(...)"` 3 scripts | ✅ |
+| Pyright 0 ✘ (3 ★ info-level: optional dep import + unused param) | ✅ |
+| frontmatter `name: shanhu-analyzer` 自动注册 skill | ✅ |
+| `chmod +x` 3 scripts | ✅ |
+
+### 5. 与已有 skill 的关系
+
+- **`zhixueyun-analyzer`** (2026-08-29) — 同样 SaaS 教育平台,但全程登录 + 6 跳 API;SHANHU 是 4 endpoint + 大部分匿名
+- **`tulingvip-m3u8-download`** (2026-08-25) — 小鹅通 1 端点 JS 触发,SHANHU 是双层 hash 服务端分配
+- **`camoufox-reverse-mcp`** — 提供 anti-detect browser + JS reverse,本 skill 复用 `export_state()` 不直接调 camoufox
+
+### 6. Memory 同步
+
+`~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/jfedu-rexxi-shanhu-m3u8-download.md` 追加 Phase 6 (skill 结构 + 设计决策 + 为什么用 skill),MEMORY.md 已有条目无需重复添加。
+
+### 7. SHANHU 闭环全景 (Phase 1-6)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ Phase 1: 54bbe4d   ShanhuResolver 骨架 + 匿名 listSections      │
+│ Phase 2: 90b574e   get_video_info + hash cache + CLI 缓存管理    │
+│ Phase 3: 130f3b2   class_id 自动发现 (listClass + URL 路由)      │
+│ Phase 4: 1164286   fix CLI global_registry 漏注册                │
+│ Phase 5: 2a68896   session 模块 + videoAuth 自动 cfileid 发现    │
+│ Phase 6: bd2dfeb   --shanhu-login CLI (camoufox export_state)    │
+│ Phase 7: 无 commit  沉淀为 shanhu-analyzer skill (本 Session)    │
+└──────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
