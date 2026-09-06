@@ -6,7 +6,7 @@
 
 use dioxus::prelude::*;
 
-use super::handlers::{fetch_course_collection_impl, fetch_video_info_impl};
+use super::handlers::{fetch_course_collection_impl, fetch_smart_impl, fetch_video_info_impl};
 use super::types::{
     AppState, BatchVideoState, CourseCollectionState, ErrorDisplay, FetchResult, VideoInfoDisplay,
 };
@@ -29,8 +29,8 @@ pub(super) fn use_fetch_action() -> Action<(String,), FetchResult> {
         }
 
         if url_list.len() == 1 {
-            match fetch_video_info_impl(&url_list[0]).await {
-                Ok(info) => Ok(FetchResult::Single(info)),
+            match fetch_smart_impl(&url_list[0]).await {
+                Ok(result) => Ok(result),
                 Err(err) => Err(anyhow::anyhow!(
                     "URL 解析失败：{}（提示：URL 无效或平台不支持）",
                     err

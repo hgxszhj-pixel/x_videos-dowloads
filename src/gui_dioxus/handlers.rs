@@ -252,6 +252,78 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
     }
 }
 
+/// 单 URL 智能派发:SHANHU 课程 URL 自动走批量路径,其它平台保持单视频流程。
+///
+/// 设计动机(2026-09-06):用户输入课程页 URL(如 rexxi.cn/PC/#/yueke3/3529714 含 83 章节)
+/// 点"获取信息",原行为只显示 1 个 video card(`ShanhuResolver::get_video_info` 返回
+/// 第 1 个有 `file_id` 的章节)。期望:显示完整 N 章节列表(带 checkbox)。
+///
+/// 实现路径:
+/// 1. 用 `select_resolver` 识别平台
+/// 2. 仅 `Platform::Shanhu` 走批量(`list_collection` 完全匿名,无需登录)
+/// 3. 其它平台 → 直接 `fetch_video_info_impl` 单视频(原行为)
+/// 4. SHANHU 拿到 N 章节后逐条调 `get_video_info` 拿 m3u8 → `FetchResult::Batch`
+/// 5. 任一环节失败 → fallback 到单视频路径(graceful degradation)
+///
+/// **已知限制**:SHANHU 当前 `list_collection` 的 `jump_url` 与原 URL 相同
+/// (per `shanhu.rs` A.4 实现:`jump_url: Some(url.clone())`),所以每条章节都会
+/// 调 `get_video_info` 拿同一个首章 m3u8 → 显示 N 个相同项。下载会下载首章 N 次。
+/// 这是 SHANHU 章节级 URL 解析的独立问题,不在本任务修复。
+pub(super) async fn fetch_smart_impl(url: &str) -> Result<super::types::FetchResult, String> {
+    use crate::history::Platform;
+    use crate::platform::ShanhuResolver;
+
+    // 1) 仅当 resolver 是 SHANHU 时才走批量
+    let mut registry = ResolverRegistry::new();
+    if let Ok(sr) = ShanhuResolver::new() {
+        registry.register(sr);
+    }
+    let resolver = registry.select_resolver(url);
+    if resolver.platform() != Platform::Shanhu {
+        return fetch_video_info_impl(url)
+            .await
+            .map(super::types::FetchResult::Single);
+    }
+
+    // 2) SHANHU list_collection 匿名可达
+    let entries = match resolver.list_collection(url).await {
+        Ok(e) if !e.is_empty() => e,
+        Ok(_) => {
+            // 空列表 → 视为单视频
+            return fetch_video_info_impl(url)
+                .await
+                .map(super::types::FetchResult::Single);
+        }
+        Err(e) => {
+            // list_collection 失败 → fallback 单视频(ResloverError 不外泄给用户)
+            tracing::warn!("SHANHU list_collection 失败,回退单视频: {e}");
+            return fetch_video_info_impl(url)
+                .await
+                .map(super::types::FetchResult::Single);
+        }
+    };
+
+    // 3) 逐章节 resolve m3u8 → Vec<VideoInfoDisplay>
+    //    单条失败跳过(对照 SHANHU 实测:83 章节仅 2 条有 file_id,其它跳过后 N=2)
+    let mut items = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let target = entry.jump_url.as_deref().unwrap_or(url);
+        match fetch_video_info_impl(target).await {
+            Ok(info) => items.push(info),
+            Err(e) => {
+                tracing::warn!("批量章节解析跳过 {}: {}", entry.name, e);
+            }
+        }
+    }
+    if items.is_empty() {
+        // 全部解析失败 → fallback
+        return fetch_video_info_impl(url)
+            .await
+            .map(super::types::FetchResult::Single);
+    }
+    Ok(super::types::FetchResult::Batch(items))
+}
+
 /// 从课程页 URL 拉取课程目录。仅供具备 list_collection 的解析器使用
 /// （目前只有 `TulingPythonResolver`），其他平台返回 `Err` 让上层走单视频流程。
 pub(super) async fn fetch_course_collection_impl(
