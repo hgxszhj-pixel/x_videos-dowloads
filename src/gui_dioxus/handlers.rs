@@ -265,10 +265,11 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
 /// 4. SHANHU 拿到 N 章节后逐条调 `get_video_info` 拿 m3u8 → `FetchResult::Batch`
 /// 5. 任一环节失败 → fallback 到单视频路径(graceful degradation)
 ///
-/// **已知限制**:SHANHU 当前 `list_collection` 的 `jump_url` 与原 URL 相同
-/// (per `shanhu.rs` A.4 实现:`jump_url: Some(url.clone())`),所以每条章节都会
-/// 调 `get_video_info` 拿同一个首章 m3u8 → 显示 N 个相同项。下载会下载首章 N 次。
-/// 这是 SHANHU 章节级 URL 解析的独立问题,不在本任务修复。
+/// **章节级跳转**:SHANHU `list_collection` (shanhu.rs:739-742) 给每条 chapter
+/// 生成 `jump_url = "<原URL>#chapter=<id>"`(或 `&chapter=<id>` 当原 URL 已有
+/// `#`);`get_video_info` (shanhu.rs:790-791) 通过 `extract_chapter_id` 解析该
+/// 片段,确定要下载的章节。所以批量解析会拿到 N 个不同章节的 m3u8,**不会**
+/// 出现"N 条相同项下载首章 N 次"。fragment 仅作客户端参数,不会发到 server。
 pub(super) async fn fetch_smart_impl(url: &str) -> Result<super::types::FetchResult, String> {
     use crate::history::Platform;
     use crate::platform::ShanhuResolver;
