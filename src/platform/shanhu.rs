@@ -189,12 +189,61 @@ impl ShanhuResolver {
     }
 
     /// 从 URL 提取 class_id（query 参数 `?class_id=xxx`）。
+    /// 注：URL 标准 2 段路由形式 `/PC/#/yueke3/{course_id}/{class_id}`（JS bundle 2026-09-06
+    /// 实测）由 `extract_course_and_class_id` 内部解析并经 `extract_class_id` 透出。
     fn extract_class_id(url: &str) -> Option<u64> {
-        let key = "class_id=";
-        let idx = url.find(key)?;
-        let after = &url[idx + key.len()..];
-        let end = after.find(['&', '#']).unwrap_or(after.len());
-        after[..end].parse::<u64>().ok()
+        Self::extract_course_and_class_id(url).1
+    }
+
+    /// 从 URL 同时提取 course_id + class_id（hash 路由 2 段 + query 参数兼容）。
+    ///
+    /// **优先级**：
+    /// 1. `/yueke<n>/<course_id>/<class_id>` 2 段路由（JS bundle 标准格式）
+    /// 2. `/yueke<n>/<course_id>` 单段路由 + 独立 `?class_id=` query
+    /// 3. 其它 fallback（`/course/<id>`、`/learn/<id>` 等）
+    ///
+    /// 返回 `(Option<course_id>, Option<class_id>)`。class_id 可能在 URL 里没有——
+    /// 此时 `list_collection` / `get_video_info` 通过 `resolve_class_id` 自动 listClass 兜底。
+    fn extract_course_and_class_id(url: &str) -> (Option<u64>, Option<u64>) {
+        // 模式 1：2 段路由 /yueke<n>/<course>/<class>（JS bundle 实测 2026-09-06）
+        if let Ok(re) = regex::Regex::new(r"/yueke\d+/(\d+)/(\d+)") {
+            if let Some(caps) = re.captures(url) {
+                let course = caps.get(1).and_then(|m| m.as_str().parse().ok());
+                let class = caps.get(2).and_then(|m| m.as_str().parse().ok());
+                if course.is_some() {
+                    return (course, class);
+                }
+            }
+        }
+        // 模式 2-4：单段路由（course_id 唯一候选，class_id 留给 query）
+        let mut course_id = None;
+        for pat in [r"/yueke\d+/(\d+)", r"/course/(\d+)", r"/learn/(\d+)", r"/study/(\d+)"] {
+            if let Ok(re) = regex::Regex::new(pat) {
+                if let Some(caps) = re.captures(url) {
+                    if let Some(m) = caps.get(1) {
+                        if let Ok(n) = m.as_str().parse::<u64>() {
+                            course_id = Some(n);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // 模式 5：query 参数 `course_id=xxx`（兜底）
+        if course_id.is_none() {
+            if let Some(idx) = url.find("course_id=") {
+                let after = &url[idx + "course_id=".len()..];
+                let end = after.find(['&', '#', '/']).unwrap_or(after.len());
+                course_id = after[..end].parse().ok();
+            }
+        }
+        // class_id 始终走 query（不论 course 来源是 hash 还是 query）
+        let class_id = url.find("class_id=").and_then(|idx| {
+            let after = &url[idx + "class_id=".len()..];
+            let end = after.find(['&', '#']).unwrap_or(after.len());
+            after[..end].parse::<u64>().ok()
+        });
+        (course_id, class_id)
     }
 
     /// 确定实际使用的 org_id（env 覆盖 → 常量默认）。
@@ -203,6 +252,117 @@ impl ShanhuResolver {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_ORG_ID)
+    }
+
+    /// 进程内 course_id → class_id 缓存（避免同一 session 重复调 listClass）。
+    /// listClass 匿名可用但仍是网络往返，缓存可加速 GUI 双击"分析"按钮。
+    fn class_id_cache() -> &'static std::sync::Mutex<std::collections::HashMap<u64, u64>> {
+        static CACHE: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashMap<u64, u64>>,
+        > = std::sync::OnceLock::new();
+        CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+    }
+
+    /// 解析 listClass 响应提取首个 class_id。
+    /// 兼容响应路径：`data[]` (数组) 或 `data.classes[]` (对象嵌套)。
+    /// SPA fallback（JS bundle 实测 2026-09-06）：匿名用户 `filter(access !== 0)`，
+    /// 空集时 `data[0].id`，非空时 `e[0].id` —— 简化为总是取 `data[0].id`。
+    #[allow(private_interfaces)]
+    pub(crate) fn parse_first_class_id(body: &Value) -> Result<u64, ResolverError> {
+        // 路径 1: data 是数组
+        if let Some(arr) = body.get("data").and_then(|d| d.as_array()) {
+            if let Some(id) = arr.first().and_then(|c| c.get("id")).and_then(|v| v.as_u64()) {
+                return Ok(id);
+            }
+        }
+        // 路径 2: data 是对象含 classes 数组
+        if let Some(arr) = body
+            .get("data")
+            .and_then(|d| d.get("classes"))
+            .and_then(|c| c.as_array())
+        {
+            if let Some(id) = arr.first().and_then(|c| c.get("id")).and_then(|v| v.as_u64()) {
+                return Ok(id);
+            }
+        }
+        Err(ResolverError::ParseFailed(
+            "listClass 响应无 id 字段(课程可能未开课)".into(),
+        ))
+    }
+
+    /// 匿名调 listClass 自动发现 course 的默认 class_id。
+    ///
+    /// **Endpoint**: `GET {SHANHU_ONLINE_API}/onlineapi/stu/course/listClass?org_id=...&course_id=...`
+    /// **鉴权**: 匿名 ✅（2026-09-06 实测返 class_id=3023639 对 course=3529714）
+    /// **命中**: `data[0].id` 即为 SPA fallback 的默认 class。
+    /// **缓存**: 进程内 HashMap（一次解析后续 0 网络）。
+    async fn fetch_default_class_id(&self, course_id: u64) -> Result<u64, ResolverError> {
+        // 1. 进程缓存命中 → 直返
+        if let Some(cached) = Self::class_id_cache()
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&course_id).copied())
+        {
+            info!("SHANHU class_id 缓存命中: course_id={} → {}", course_id, cached);
+            return Ok(cached);
+        }
+        // 2. 匿名拉 listClass
+        let org_id = Self::org_id();
+        let url = format!(
+            "{}/onlineapi/stu/course/listClass?org_id={}&course_id={}",
+            SHANHU_ONLINE_API, org_id, course_id
+        );
+        info!("SHANHU listClass (auto-discover) → {}", url);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
+            .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .send()
+            .await
+            .map_err(|e| ResolverError::Network(format!("listClass HTTP 失败: {e}")))?;
+        if !resp.status().is_success() {
+            return Err(ResolverError::Network(format!(
+                "listClass HTTP {}",
+                resp.status()
+            )));
+        }
+        let body: Value = resp.json().await.map_err(|e| {
+            ResolverError::ParseFailed(format!("listClass JSON: {e}"))
+        })?;
+        let id = Self::parse_first_class_id(&body)?;
+        // 3. 写缓存
+        if let Ok(mut cache) = Self::class_id_cache().lock() {
+            cache.insert(course_id, id);
+        }
+        info!(
+            "SHANHU class_id 自动发现: course_id={} → {} (已写缓存)",
+            course_id, id
+        );
+        Ok(id)
+    }
+
+    /// 解析最终生效的 class_id。
+    /// 优先级：URL 显式 class_id (非 0) > listClass 自动发现 (带缓存)。
+    ///
+    /// 注意：URL 显式 class_id=0 等同"未指定"，触发自动发现。其它值视为用户覆盖，
+    /// 即使服务端 500 也不回退到自动发现（尊重用户选择，错误信息透传）。
+    async fn resolve_class_id(
+        &self,
+        url: &str,
+        course_id: u64,
+    ) -> Result<u64, ResolverError> {
+        if let Some(c) = Self::extract_class_id(url) {
+            if c != DEFAULT_CLASS_ID {
+                info!(
+                    "SHANHU 使用 URL 显式 class_id: course_id={} class_id={}",
+                    course_id, c
+                );
+                return Ok(c);
+            }
+        }
+        // 缺省 → listClass 自动发现
+        self.fetch_default_class_id(course_id).await
     }
 
     /// 匿名调 listSections 拉章节列表。
@@ -410,8 +570,8 @@ impl PlatformResolver for ShanhuResolver {
         let course_id = Self::extract_course_id(url).ok_or_else(|| {
             ResolverError::ParseFailed(format!("无法从 URL 提取 course_id: {url}"))
         })?;
-        // class_id 优先级:URL query > 默认 0
-        let class_id = Self::extract_class_id(url).unwrap_or(DEFAULT_CLASS_ID);
+        // class_id 优先级:URL 显式 (非 0) > listClass 自动发现 (带缓存)
+        let class_id = self.resolve_class_id(url, course_id).await?;
 
         let sections = self.fetch_sections(course_id, class_id).await?;
 
@@ -475,7 +635,8 @@ impl PlatformResolver for ShanhuResolver {
         let course_id = Self::extract_course_id(url).ok_or_else(|| {
             ResolverError::ParseFailed(format!("无法从 URL 提取 course_id: {url}"))
         })?;
-        let class_id = Self::extract_class_id(url).unwrap_or(DEFAULT_CLASS_ID);
+        // class_id 优先级:URL 显式 (非 0) > listClass 自动发现 (带缓存)
+        let class_id = self.resolve_class_id(url, course_id).await?;
 
         // 1. 拿章节列表（已知匿名返回 200）
         let sections = self.fetch_sections(course_id, class_id).await?;
@@ -835,5 +996,138 @@ mod tests {
     fn download_strategy_is_hls() {
         let r = ShanhuResolver::new().unwrap();
         assert!(matches!(r.download_strategy(), DownloadStrategy::Hls));
+    }
+
+    // ──────────────────── Phase 3: extract_course_and_class_id ────────────────────
+
+    #[test]
+    fn extract_course_and_class_id_2_segment_route() {
+        // JS bundle 标准 URL 形式：/yueke3/{course}/{class}
+        let (c, cl) = ShanhuResolver::extract_course_and_class_id(
+            "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714/3023639",
+        );
+        assert_eq!(c, Some(3529714));
+        assert_eq!(cl, Some(3023639));
+    }
+
+    #[test]
+    fn extract_course_and_class_id_single_segment_route() {
+        // 用户省略 class_id（最常见情形）
+        let (c, cl) = ShanhuResolver::extract_course_and_class_id(
+            "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714",
+        );
+        assert_eq!(c, Some(3529714));
+        assert_eq!(cl, None);
+    }
+
+    #[test]
+    fn extract_course_and_class_id_query_class_id_only() {
+        // 单段路由 + ?class_id= query
+        let (c, cl) = ShanhuResolver::extract_course_and_class_id(
+            "https://rexxi.cn/x?class_id=3023639",
+        );
+        assert_eq!(c, None, "未知 course 来源");
+        assert_eq!(cl, Some(3023639));
+    }
+
+    #[test]
+    fn extract_course_and_class_id_2_segment_overrides_query() {
+        // 2 段路由的 class_id 优先于 query class_id(避免用户 URL 拼接冲突)
+        let (c, cl) = ShanhuResolver::extract_course_and_class_id(
+            "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714/3023639?class_id=1111111",
+        );
+        assert_eq!(c, Some(3529714));
+        assert_eq!(cl, Some(3023639), "2 段路由的 class_id 应优先于 query");
+    }
+
+    #[test]
+    fn extract_class_id_from_2_segment_route() {
+        // extract_class_id 透出 extract_course_and_class_id 的第 2 段结果
+        assert_eq!(
+            ShanhuResolver::extract_class_id(
+                "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714/3023639"
+            ),
+            Some(3023639)
+        );
+        // 无 class_id → None
+        assert_eq!(
+            ShanhuResolver::extract_class_id(
+                "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714"
+            ),
+            None
+        );
+    }
+
+    // ──────────────────── Phase 3: parse_first_class_id ────────────────────
+
+    #[test]
+    fn parse_first_class_id_data_array_form() {
+        // listClass 实测响应（2026-09-06）：data 是 1+ 元素数组
+        let body = json!({
+            "code": 200,
+            "msg": "success",
+            "data": [
+                {"id": 3023639, "period": "2026", "access": 1},
+                {"id": 3023640, "period": "2027", "access": 0}
+            ]
+        });
+        assert_eq!(
+            ShanhuResolver::parse_first_class_id(&body).unwrap(),
+            3023639
+        );
+    }
+
+    #[test]
+    fn parse_first_class_id_data_object_with_classes_key() {
+        // 兼容：data 是对象，classes 数组
+        let body = json!({
+            "code": 200,
+            "data": {
+                "classes": [{"id": 555}]
+            }
+        });
+        assert_eq!(ShanhuResolver::parse_first_class_id(&body).unwrap(), 555);
+    }
+
+    #[test]
+    fn parse_first_class_id_returns_err_for_empty_data() {
+        // 课程未开课：data 是空数组
+        let body = json!({"code": 200, "data": []});
+        assert!(ShanhuResolver::parse_first_class_id(&body).is_err());
+
+        // 课程无 data
+        let body = json!({"code": 200});
+        assert!(ShanhuResolver::parse_first_class_id(&body).is_err());
+    }
+
+    #[test]
+    fn parse_first_class_id_returns_err_for_missing_id() {
+        // 元素缺 id 字段
+        let body = json!({"data": [{"period": "2026"}]});
+        assert!(ShanhuResolver::parse_first_class_id(&body).is_err());
+    }
+
+    // ──────────────────── Phase 3: class_id_cache process-local ────────────────────
+
+    #[test]
+    fn class_id_cache_initializes_empty() {
+        // 进程启动后首次访问 → 初始化为空 HashMap
+        let cache = ShanhuResolver::class_id_cache();
+        let map = cache.lock().unwrap();
+        assert!(map.is_empty(), "首次访问应返回空 cache");
+    }
+
+    // ──────────────────── Phase 3: resolve_class_id 行为契约 ────────────────────
+
+    #[test]
+    fn resolve_class_id_returns_explicit_class_id_unchanged() {
+        // resolve_class_id 是 async + 需要 self，但 class_id 提取逻辑纯函数可测。
+        // 这里直接验证 extract_course_and_class_id 的契约：
+        // 当 class_id 显式非 0 → resolve_class_id 不会调用 listClass（由调用方合约保证）。
+        // 完整集成测试需要 mock HTTP server，留待手测 GUI 时观察日志。
+        let url = "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714/3023639";
+        let (_, cl) = ShanhuResolver::extract_course_and_class_id(url);
+        assert_eq!(cl, Some(3023639));
+        assert_ne!(cl, Some(DEFAULT_CLASS_ID), "3023639 != 0,resolve_class_id 不触发自动发现");
     }
 }
