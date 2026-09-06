@@ -29,6 +29,8 @@
 use crate::history::Platform;
 use crate::platform::{CollectionEntry, PlatformResolver, ResolverError};
 use crate::types::{DownloadStrategy, VideoInfo};
+// `super::shanhu_session` 是兄弟模块(mod shanhu_session 私有,但子模块互相可见)。
+use super::shanhu_session::{cookies_to_header, load_session};
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -133,6 +135,9 @@ struct ChapterInfo {
     file_id: Option<String>,
     /// 时长（秒，部分章节无）。
     duration: Option<u64>,
+    /// `videos[].id`（内部 video 行 ID,videoAuth 入参之一）。与 `id` (chapter_id) 不同。
+    #[allow(dead_code)]
+    video_id: Option<u64>,
 }
 
 /// SHANHU/万字 SaaS 解析器（轻量级，纯 reqwest，无浏览器）。
@@ -453,11 +458,16 @@ impl ShanhuResolver {
                 .and_then(|vs| vs.first())
                 .and_then(|v| v.get("duration"))
                 .and_then(|v| v.as_u64());
+            let video_id = videos
+                .and_then(|vs| vs.first())
+                .and_then(|v| v.get("id"))
+                .and_then(|v| v.as_u64());
             out.push(ChapterInfo {
                 id,
                 name,
                 file_id,
                 duration,
+                video_id,
             });
         }
         Ok(out)
@@ -543,6 +553,124 @@ impl ShanhuResolver {
             .to_string();
 
         Ok(m3u8_url)
+    }
+
+    /// 调 videoAuth 拿 cfileid (32 字符 hex,tenwiseacademy URL 中的 `<hash>` 部分)。
+    ///
+    /// **前置**: 用户必须先运行一次浏览器登录,把 cookies 导出到 `shanhu-session.json`
+    /// (运行 `--shanhu-session-info` 查看路径与状态)。
+    ///
+    /// **Endpoint**: `POST {SHANHU_ONLINE_API}/onlineapi/stu/course/videoAuth`
+    /// **鉴权**: 🔒 需要 session cookies (否则 100067 非法请求)
+    /// **响应**: `data.video.cfileid` (32 字符 hex) — 这就是 tenwiseacademy URL 用的 hash。
+    ///
+    /// 入参 `file_id` 用于日志对照,实际传给 server 的是 `video_id` (来自 listSections `videos[].id`)。
+    async fn fetch_cfileid_via_video_auth(
+        &self,
+        file_id: &str,
+        course_id: u64,
+        class_id: u64,
+        chapter_id: u64,
+        video_id: u64,
+    ) -> Result<String, ResolverError> {
+        let session = load_session().ok_or_else(|| {
+            ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: String::new(),
+                message: format!(
+                    "file_id `{file_id}` (chapter={chapter_id}) hash 不在本地缓存,且无可用登录 session"
+                ),
+                action: "请运行 `x-video-downloader --shanhu-login <course-url>` 完成一次性浏览器登录\n\
+                         (camoufox 自动导出 cookies 到 ~/.config/.../shanhu-session.json)"
+                    .into(),
+            }
+        })?;
+
+        let url = format!(
+            "{}/onlineapi/stu/course/videoAuth",
+            SHANHU_ONLINE_API
+        );
+        let body = serde_json::json!({
+            "noteCourseId": course_id,
+            "class_id": class_id,
+            "chapter_id": chapter_id,
+            "video_id": video_id,
+        });
+        let cookie_header = cookies_to_header(&session);
+        info!(
+            "SHANHU videoAuth → chapter={chapter_id} video_id={video_id} cookies={}",
+            session.cookies.len()
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
+            .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .header("Cookie", cookie_header)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ResolverError::Network(format!("videoAuth HTTP 失败: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ResolverError::ParseFailed(format!("videoAuth body 读取失败: {e}")))?;
+
+        if !status.is_success() {
+            return Err(ResolverError::Network(format!(
+                "videoAuth HTTP {status}: {text}"
+            )));
+        }
+
+        let body: Value = serde_json::from_str(&text).map_err(|e| {
+            ResolverError::ParseFailed(format!("videoAuth JSON 解析失败: {e}, body={text}"))
+        })?;
+
+        // 错误码: 100067 = 非法请求 / 未登录 → session 失效,提示用户重新登录
+        let code = body.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
+        if code != 200 {
+            let msg = body
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<no message>");
+            return Err(ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: String::new(),
+                message: format!("videoAuth 失败 (code={code}): {msg}"),
+                action: "session 可能已过期,请重新运行 `--shanhu-login` 刷新 cookies".into(),
+            });
+        }
+
+        // 提取 cfileid — 响应路径: data.video.cfileid
+        let cfileid = body
+            .get("data")
+            .and_then(|d| d.get("video"))
+            .and_then(|v| v.get("cfileid"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ResolverError::ParseFailed(format!(
+                    "videoAuth 响应缺 data.video.cfileid,body={text}"
+                ))
+            })?
+            .to_string();
+
+        // 防御性校验: 必须是 32 字符 hex
+        if cfileid.len() != 32 || !cfileid.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(ResolverError::ParseFailed(format!(
+                "videoAuth 返回的 cfileid 长度或格式异常: `{cfileid}` (len={})",
+                cfileid.len()
+            )));
+        }
+
+        info!(
+            "SHANHU videoAuth → chapter={chapter_id} cfileid={}",
+            &cfileid[..8]
+        );
+        Ok(cfileid)
     }
 }
 
@@ -673,31 +801,53 @@ impl PlatformResolver for ShanhuResolver {
         })?;
 
         // 4. 查 hash 缓存
-        let cache = load_hash_cache();
-        let hash = cache.get(&file_id).cloned().ok_or_else(|| {
-            ResolverError::Detailed {
-                platform: Platform::Shanhu,
-                url: url.to_string(),
-                message: format!(
-                    "file_id `{file_id}` (章节 {}) 的 hash 未在缓存中",
-                    chapter.id
-                ),
-                action: format!(
-                    "{}\n\n\
-                     快速补救:\n\
-                     1. 浏览器打开课程页, F12 → Network → 过滤 `tenwiseacademy.cn`\n\
-                     2. 播放该章节\n\
-                     3. 找到形如 `<hash>.m3u8` 的请求, 复制 32 字符 hex 部分\n\
-                     4. 运行: x-video-downloader --shanhu-add-hash {file_id}:<hash>\n\n\
-                     缓存位置: {}",
-                    Self::bootstrap_hint(course_id, class_id),
-                    hash_cache_path()
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "<未知>".into()),
-                ),
+        let mut cache = load_hash_cache();
+        let hash = if let Some(h) = cache.get(&file_id).cloned() {
+            h
+        } else {
+            // 缓存未命中 → 尝试用 session cookie 调 videoAuth 自动发现 cfileid (2026-09-06 新增)
+            let video_id = chapter.video_id.ok_or_else(|| {
+                ResolverError::Detailed {
+                    platform: Platform::Shanhu,
+                    url: url.to_string(),
+                    message: format!(
+                        "file_id `{file_id}` (章节 {}) 的 hash 未在缓存中,且 listSections 响应缺 videos[].id",
+                        chapter.id
+                    ),
+                    action: format!(
+                        "{}\n\n\
+                         快速补救:\n\
+                         1. 浏览器打开课程页, F12 → Network → 过滤 `tenwiseacademy.cn`\n\
+                         2. 播放该章节\n\
+                         3. 找到形如 `<hash>.m3u8` 的请求, 复制 32 字符 hex 部分\n\
+                         4. 运行: x-video-downloader --shanhu-add-hash {file_id}:<hash>\n\n\
+                         缓存位置: {}",
+                        Self::bootstrap_hint(course_id, class_id),
+                        hash_cache_path()
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "<未知>".into()),
+                    ),
+                }
+            })?;
+            let discovered = self
+                .fetch_cfileid_via_video_auth(&file_id, course_id, class_id, chapter.id, video_id)
+                .await?;
+            // 自动写入缓存,后续章节无需再走 videoAuth
+            if let Err(e) = save_hash_entry(&file_id, &discovered) {
+                warn!(
+                    "SHANHU 自动写入 hash 缓存失败: {e} (file_id={file_id}, cfileid={})",
+                    &discovered[..8]
+                );
+            } else {
+                info!(
+                    "SHANHU 自动写入 hash 缓存: {file_id} → {}",
+                    &discovered[..8]
+                );
+                cache.insert(file_id.clone(), discovered.clone());
             }
-        })?;
+            discovered
+        };
 
         // 5. 拼 play_url 并解析 m3u8
         let m3u8_url = self.resolve_play_url(&file_id, &hash).await?;

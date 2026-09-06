@@ -71,7 +71,7 @@ fn main() {
 
     // SHANHU/万字 SaaS: 管理本地 hash 缓存(用于解析 file_id → m3u8 URL 映射)。
     // 此处必须先于 --gui / --history / 其它 dispatch,确保 CLI 子命令独立可用。
-    if cli.shanhu_cache_info || cli.shanhu_add_hash.is_some() {
+    if cli.shanhu_cache_info || cli.shanhu_add_hash.is_some() || cli.shanhu_session_info {
         handle_shanhu_cache_commands(&cli);
         return;
     }
@@ -200,6 +200,33 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
                 eprintln!("错误: 无法定位 XDG config dir");
                 std::process::exit(1);
             }
+        }
+        return;
+    }
+
+    if cli.shanhu_session_info {
+        use crate::platform::session_summary;
+        let s = session_summary();
+        println!("SHANHU login session");
+        match &s.path {
+            Some(p) => println!("  路径: {}", p),
+            None => println!("  路径: <无法定位 XDG config dir>"),
+        }
+        if s.cookie_count == 0 {
+            println!("  状态: 未配置 (无 cookies)");
+            println!();
+            println!("  videoAuth 自动发现当前不可用 — 缺失章节需手工 `--shanhu-add-hash`");
+            println!();
+            println!("  配置方式 (二选一):");
+            println!("    1. 浏览器手动:登录 wx-bgfcbieh.rexxi.cn 后,DevTools → Application →");
+            println!("       Cookies → 复制 .wanzibook.com 下的所有 cookie 到上述路径 JSON");
+            println!("    2. 自动化脚本:用 camoufox 打开课程页,扫码登录,export_state → 转 shanhu-session.json");
+        } else {
+            println!("  cookie 数: {}", s.cookie_count);
+            println!("  含 token:  {}", if s.has_token { "是" } else { "否" });
+            println!("  保存时间:  {}", s.saved_at.as_deref().unwrap_or("<未知>"));
+            println!();
+            println!("  videoAuth 自动发现可用,缺失章节会通过 session cookie 自动获取 cfileid");
         }
         return;
     }

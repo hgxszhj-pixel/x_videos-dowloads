@@ -133,6 +133,11 @@ pub struct Cli {
     /// SHANHU/万字 SaaS: 显示本地 hash 缓存路径与条目数。
     #[arg(long = "shanhu-cache-info")]
     pub shanhu_cache_info: bool,
+
+    /// SHANHU/万字 SaaS: 显示登录 session 文件路径与状态 (cookie 数 / token / saved_at)。
+    /// 用于排查 videoAuth 自动发现失效时,确认 session 是否过期。
+    #[arg(long = "shanhu-session-info")]
+    pub shanhu_session_info: bool,
 }
 
 /// 下载模式
