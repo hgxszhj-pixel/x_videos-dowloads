@@ -3,12 +3,96 @@
 **最新**: 2026-09-02 WikiSkill 三层架构全局落地(无 commit) — `~/.claude/WIKI_INDEX.md` (5.1KB wiki 层目录) + 3 个 skill-impact 账本 (`CLAUDE.md` 3.4KB / `claude-code-best-practice.md` 1.7KB / `settings-hooks.md` 4.0KB) + SessionStart 双模式拆分(`obsidian-memory-prelude.sh` 默认 295B 指针 / `WIKI_FULL=1` 完整 11.5KB;WikiSkill 消融: Inference Agent 看累积 wiki 反而 48.7%→45.3%);`settings.json` SessionStart 追加 memory-prelude 接线(JSON 有效)。0 行 src/ 改动。
 **再新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 SDD commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50` docs/handoff + `4f59255` chore/gitignore) on `gitbutler/workspace`,head `4f59255`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
 **再新**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
+**再新**: 2026-09-06 SHANHU session cookie复用 — commit `2a68896` on `gitbutler/workspace`;新模块 `src/platform/shanhu_session.rs` (270 行,4 unit tests) + `ShanhuResolver::fetch_cfileid_via_video_auth` 自动 fallback;JS 逆向发现 **`cfileid` 是腾讯云 VOD 服务端分配的 FileID 不可算法反推**(MD5/SHA1/SHA256 of file_id 全不匹配),JS bundle 硬编码 COS AKID `***REDACTED_TENCENT_SECRET_ID***` 仅 COS 上传可用 / VOD `/verify/sign` 拒签("SecretID 不存在或已禁用");链路是双层 hash: `tenwiseacademy.cn/<cfileid>` 匿名 redirect → `cskziwl.cn/<hash1>/<hash2>`(两组完全不同);唯一返 `cfileid` 端点 `videoAuth` 100% 需登录(`code=100067`);`get_video_info` 缓存未命中 → 自动 videoAuth + 写 hash cache → 后续全匿名;CLI `--shanhu-session-info` 显示状态+配置指引;277 tests pass(+4)/ clippy clean。Memory 已更新。
 **再新**: 2026-09-06 SHANHU/万字 SaaS 京峰教育接入落地 — 4 commits (`54bbe4d`..`1164286`) on `gitbutler/workspace`,head `1164286`;Phase 1 ShanhuResolver 骨架+匿名 listSections / Phase 2 get_video_info+hash 缓存+CLI 缓存管理 / Phase 3 **class_id 自动发现**(JS bundle 反推 listClass 端点,SPA fallback `data[0].id`)+URL 2 段路由解析+进程内缓存 / fix CLI global_registry 漏注册;E2E 实测 1920x1080 H.264 端到端 2 章节 (884.7MB+590.2MB,81s+56s);camoufox bootstrap 一次性拦截 `tenwiseacademy.cn/<hash>.m3u8` 拿 2 个 file_id→hash 映射写本地缓存;`--shanhu-add-hash <FID>:<HASH>` + `--shanhu-cache-info` CLI 子命令独立可用;30/30 unit tests + clippy clean。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/jfedu-rexxi-shanhu-m3u8-download.md`。
 **再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
 **再新**: 2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e 验证(短码 → 69 视频 / 单课详情 → 3 媒体含 2 PDF / 另一单课 → 0 媒体);新发现 `sectionType=1=PDF` + `sectionType=3=国考云跳转`;无 src/ 改动。
 **再新**: 2026-08-29 同日 5 个 commit — `0011caa` 小鹅通 HLS 403 真凶 + GUI 三命名兼容 · `86e497e` 课程池覆盖已下载开关 · `9ab3813` 智学云单课节 URL 解析盲区修复 · `c7b0fe4` 8-25 暂存变更集落库 · `deb54c3` 两 bench 存量断裂修复。
 **再早**: 2026-08-29 `63c9f53` home-v 根因解析 + `6cd927e` ego-lite SQLite 兜底(host 链路 .zhixueyun.com/.e.189.cn/.mylearning.cn)。
 **更早**: 2026-08-28 全局 Claude Code 配置机械兜底改造(5 hooks + 15 deny) · 2026-08-25 tulingvip-m3u8-download skill v3.2 + douyin-mp4-download v1(端到端 17/17 + 15/15 验证) · 2026-08-22 darwin 优化 web-protocol-recovery 93.2→95.0 + playwright 修复 · 2026-08-21 opencode failover wrapper 双前缀 bug 修复 + 默认模型切智谱 glm-5.3 · 2026-08-17 OpenCode 多 provider + 全局 git 安全防御 + wuzuapi 双域名 failover · 2026-08-16 P1 重构 + 进度条 UX + Dioxus Store 修复 · 2026-08-13 GUI 性能 + runtime 升级 · 2026-08-09 小鹅通端到端 6 节 8.5GB 验证通过。
+
+---
+
+## 最新 Session: 2026-09-06 — SHANHU session cookie 复用 (commit `2a68896`)
+
+> 用户在 Phase 1-3 (`54bbe4d`..`1164286`) 后选 Path "扩展 SHANHU: 抓 hash 算法反推",JS 逆向证明 hash **不可算法反推**,改为 Path A "一次性登录 + session cookie 复用"。
+
+### 1. JS 逆向发现(3 件否决"算法反推"路径)
+
+| 发现 | 证据 | 否决什么 |
+|------|------|---------|
+| **`cfileid` 是 VOD 服务端分配** | MD5/SHA1/SHA256 of `(file_id / hex(file_id) / file_id+appid / appid+file_id / chapter_id / video_id / course_id)` 全不匹配 `2586671d83683fda9fba38f4ab74225e` | 算法反推(JS bundle 的 hash 计算器是 VOD SDK 黑盒) |
+| **JS bundle 硬编码 COS creds** | `***REDACTED_TENCENT_SECRET_ID***` + `Rt9KNFvbM7nPvIVdArU6jDdv43sVv9Xs` 在 app.js:4823885(`cos.uploadFile` → `huaxia-1396267596` COS bucket) | 客户端 signing;测 `/verify/sign` → 拒签 `SecretID 不存在或已禁用`(COS ≠ VOD) |
+| **唯一返 `cfileid` 端点 100% 需登录** | `POST /onlineapi/stu/course/videoAuth` 匿名返 `code=100067` 非法请求 | 匿名 videoAuth |
+
+### 2. 双层 hash 链(被发现不止一层)
+
+```
+file_id (listSections 匿名)
+  → cfileid (videoAuth 登录态,32 字符 hex)
+    → tenwiseacademy.cn/<cfileid>.m3u8 (匿名 redirect)
+      → cskziwl.cn/<hash1>/<hash2>.m3u8 (VOD 切片)
+```
+**关键**:`<hash1>/<hash2>` 与 `<cfileid>` 完全无关;我们要缓存的是 **`file_id → cfileid`** 映射(VOD 切入点),不是 VOD URL 末段 hash。
+
+### 3. session 模块设计(净 270 行)
+
+| 元素 | 内容 |
+|------|------|
+| 文件 | `~/.config/com.x-video-downloader.x-video-downloader/shanhu-session.json`(同 hash cache 目录) |
+| 格式 | `{saved_at, token?, cookies: [{name, value, domain: ".wanzibook.com" 默认, path: "/" 默认}]}` |
+| API | `load_session()` / `save_session()` (dead_code allow,待 `--shanhu-login`) / `cookies_to_header()` / `session_summary()` / `session_from_export()` 接 camoufox `export_state` 格式 |
+| 测试 | 4 个: `cookies_to_header_format` / `session_round_trip` / `session_from_export_skips_malformed` / `session_summary_default_no_file` |
+
+### 4. `fetch_cfileid_via_video_auth` 集成
+
+```rust
+// src/platform/shanhu.rs (新增 ~100 行)
+async fn fetch_cfileid_via_video_auth(
+    &self, file_id: &str, course_id: u64, class_id: u64,
+    chapter_id: u64, video_id: Option<u64>,
+) -> Result<String, ResolverError> {
+    // POST /onlineapi/stu/course/videoAuth
+    // Body: {noteCourseId, class_id, chapter_id, video_id}
+    // Headers: Cookie (from session), Referer, Origin
+    // Returns: data.video.cfileid (校验 32 字符 hex)
+    // 错误: code=100067 → session expired
+}
+```
+
+`get_video_info` Step 4 缓存未命中分支:
+```
+if hash NOT in cache → load_session()? → fetch_cfileid_via_video_auth() → save_hash_entry(fid, cfileid)
+```
+**后续该章节完全匿名**(cache hit 路径,无需 session)。
+
+### 5. CLI `--shanhu-session-info`
+
+```
+SHANHU login session
+  路径: ~/.config/com.x-video-downloader.x-video-downloader/shanhu-session.json
+  cookie 数: 12
+  含 token:  否
+  保存时间:  epoch:1757185200
+  videoAuth 自动发现可用,缺失章节会通过 session cookie 自动获取 cfileid
+```
+
+未配置时输出友好"配置方式 (二选一)"指引(浏览器 DevTools / camoufox 自动化)。
+
+### 6. 验证
+
+| 项 | 状态 |
+|---|---|
+| `cargo test --bin x-video-downloader` 277 passed (+4) | ✅ |
+| `cargo clippy --bin x-video-downloader -- -D warnings` clean | ✅ |
+| `cargo run --quiet -- --shanhu-session-info` 正确输出 | ✅ |
+| src/ 改动:`src/platform/shanhu_session.rs` (新,270 行) + `src/platform/shanhu.rs` (+198/-40) + `src/platform/mod.rs` (+4) + `src/cli.rs` (+5) + `src/main.rs` (+29) = 净 +296 行 | ✅ |
+| stashed 无关 gui_dioxus batch-video checkbox 改动(待用户后续处理) | ✅ |
+
+### 7. 待办
+
+- `--shanhu-login` CLI 子命令(从浏览器交互/import 落地 cookie)— 当前靠用户手工或 camoufox 自动化
+- session 过期检测 token timestamp + 自动重试(当前靠 `code=100067` 错误信号)
 
 ---
 
