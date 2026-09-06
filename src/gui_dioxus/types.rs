@@ -25,6 +25,8 @@ pub(super) struct VideoInfoDisplay {
     pub(super) duration: String,
     pub(super) formats: Vec<VideoFormatDisplay>, // 存储可选择的格式列表
     pub(super) download_strategy: crate::types::DownloadStrategy,
+    /// 批量视频面板是否选中此项（默认全选，与 CourseItemDisplay.selected 对齐）
+    pub(super) selected: bool,
 }
 
 #[derive(Default, Clone, Store)]
