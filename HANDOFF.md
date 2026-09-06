@@ -4,6 +4,7 @@
 **再新**: 2026-09-02 Resolver Skeleton 共享基类 SDD — 8 SDD commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50` docs/handoff + `4f59255` chore/gitignore) on `gitbutler/workspace`,head `4f59255`;4 个 yt-dlp resolver (YouTube/TikTok/Bilibili/DouYin) + FxTwitter 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` (131 行) + `src/http_client.rs` `RESOLVER_UA`/`apply_resolver_defaults`/`build_resolver_client` (46 行);242 tests pass / 0 failed / clippy clean;下次新加 yt-dlp 平台从 ~100 行降到 ~30 行。Spec `docs/superpowers/specs/2026-09-02-resolver-skeleton-design.md` + Plan `docs/superpowers/plans/2026-09-02-resolver-skeleton.md`。
 **再新**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 — commit `756d49d` 决策回滚日志 D-001~D-021(21 决策,4 pending)+ `.teach/` 归入 .gitignore + LR 计数 7→8;副产物 `.teach/index.md` (106 行 三视图索引) + `~/.claude/skills/zhixueyun-analyzer/PURPOSE.md` (119 行 why-exists);同日 skill 健康度盘点:mattpocock 11 skill 全部已最新(2026-08-24 batch 已覆盖,本地 fork write-a-skill hash 守门通过)+ obra/superpowers v6.3.0 已是最新(2 skill,brainstorming + systematic-debugging)。
 **再新**: 2026-09-06 SHANHU session cookie复用 — commit `2a68896` on `gitbutler/workspace`;新模块 `src/platform/shanhu_session.rs` (270 行,4 unit tests) + `ShanhuResolver::fetch_cfileid_via_video_auth` 自动 fallback;JS 逆向发现 **`cfileid` 是腾讯云 VOD 服务端分配的 FileID 不可算法反推**(MD5/SHA1/SHA256 of file_id 全不匹配),JS bundle 硬编码 COS AKID `***REDACTED_TENCENT_SECRET_ID***` 仅 COS 上传可用 / VOD `/verify/sign` 拒签("SecretID 不存在或已禁用");链路是双层 hash: `tenwiseacademy.cn/<cfileid>` 匿名 redirect → `cskziwl.cn/<hash1>/<hash2>`(两组完全不同);唯一返 `cfileid` 端点 `videoAuth` 100% 需登录(`code=100067`);`get_video_info` 缓存未命中 → 自动 videoAuth + 写 hash cache → 后续全匿名;CLI `--shanhu-session-info` 显示状态+配置指引;277 tests pass(+4)/ clippy clean。Memory 已更新。
+**再新**: 2026-09-06 SHANHU `--shanhu-login` CLI 落地 — commit `bd2dfeb` on `gitbutler/workspace`;**SHANHU 全自动闭环完成**: 用户用 camoufox MCP `export_state()` 导出 cookies JSON → `--shanhu-login <state.json>` 过滤 wanzibook/rexxi/tenwiseacademy 三域 → 原子写本地 session 文件 → 缺失章节自动 videoAuth;新增 `is_shanhu_cookie_domain()` helper (substr 匹配,2 unit tests),`handle_shanhu_login()` (~75 行,兼容 camoufox 两种 export 格式 `{"cookies":[…]}` / 顶层 `[…]`),移除 `save_session` / `session_from_export` 上的 `#[allow(dead_code)]`;4 错误路径友好提示 (文件缺失/JSON 损坏/无 cookies 字段/全非 SHANHU 域);279 tests pass(+2)/ clippy clean。Memory 已更新。
 **再新**: 2026-09-06 SHANHU/万字 SaaS 京峰教育接入落地 — 4 commits (`54bbe4d`..`1164286`) on `gitbutler/workspace`,head `1164286`;Phase 1 ShanhuResolver 骨架+匿名 listSections / Phase 2 get_video_info+hash 缓存+CLI 缓存管理 / Phase 3 **class_id 自动发现**(JS bundle 反推 listClass 端点,SPA fallback `data[0].id`)+URL 2 段路由解析+进程内缓存 / fix CLI global_registry 漏注册;E2E 实测 1920x1080 H.264 端到端 2 章节 (884.7MB+590.2MB,81s+56s);camoufox bootstrap 一次性拦截 `tenwiseacademy.cn/<hash>.m3u8` 拿 2 个 file_id→hash 映射写本地缓存;`--shanhu-add-hash <FID>:<HASH>` + `--shanhu-cache-info` CLI 子命令独立可用;30/30 unit tests + clippy clean。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/jfedu-rexxi-shanhu-m3u8-download.md`。
 **再新**: 2026-09-01 京峰教育/SHANHU 珊瑚在线平台逆向(无 commit) — `wx-bgfcbieh.rexxi.cn` 是白标域名,真后端 `study.wanzibook.com` + 腾讯 TRTC WebRTC;3 种 play_style(3=标直/4=tcicMiddlePage/fakeLiveJump=VOD 伪装);首课 2026-09-02 20:00 未开,83 章节 `videos[]` 全空,**当前不可下载**;3 路下载路径待用户决定。报告 `docs/shanhu-jfedu-rexxi-platform-report-2026-09-01.md`。
 **再新**: 2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e 验证(短码 → 69 视频 / 单课详情 → 3 媒体含 2 PDF / 另一单课 → 0 媒体);新发现 `sectionType=1=PDF` + `sectionType=3=国考云跳转`;无 src/ 改动。
@@ -13,7 +14,68 @@
 
 ---
 
-## 最新 Session: 2026-09-06 — SHANHU session cookie 复用 (commit `2a68896`)
+## 最新 Session: 2026-09-06 — SHANHU `--shanhu-login` CLI (commit `bd2dfeb`)
+
+> 用户在前一 commit (`2a68896`) 完成后选 "实现 --shanhu-login CLI (Recommended)"。本 commit **完成 SHANHU 全自动闭环**。
+
+### 1. 设计权衡
+
+| 候选 | 否决原因 | 选定 |
+|------|---------|------|
+| Python camoufox SDK subprocess | 用户机器不一定装 (`python3 -c 'import camoufox'` 报 No module);新增 pip 依赖 | ❌ |
+| **camoufox MCP `export_state()` JSON 文件导入** | 用户用 MCP 登录 + 导出文件 → CLI 导入,零额外依赖 | ✅ |
+| (后续) ego-lite Keychain 解密路径 | mirrors `tulingpyton` 模式 (见 `chromium-macos-cookie-decryption.md`),工作量大 | follow-up |
+
+### 2. 实现要点 (4 文件,净 +148 行)
+
+| 文件 | 改动 |
+|------|------|
+| `src/cli.rs` | `--shanhu-login <STATE_JSON>` flag |
+| `src/main.rs` | `handle_shanhu_login(path)` (~75 行) — 6 步流程 + dispatch 条件扩展 |
+| `src/platform/shanhu_session.rs` | `is_shanhu_cookie_domain()` + 2 unit tests + 移除 `save_session` / `session_from_export` 的 `#[allow(dead_code)]` |
+| `src/platform/mod.rs` | re-export `is_shanhu_cookie_domain` + `save_session` + `session_from_export` |
+
+### 3. handler 6 步流程
+
+1. 读 state 文件 (`std::fs::read_to_string`)
+2. 解析 JSON (`serde_json::from_str`)
+3. 提取 cookies 数组 (兼容 `{"cookies":[…]}` 与顶层 `[…]`)
+4. 过滤 SHANHU 域 (`.wanzibook.com` / `.rexxi.cn` / `.tenwiseacademy.cn` 子串匹配)
+5. `session_from_export()` + `save_session()` (原子写 `.tmp` + rename)
+6. 输出 session_summary + "videoAuth 已可用" 提示
+
+### 4. 错误路径 (4 种,各自友好提示)
+
+| 错误 | 提示 |
+|------|------|
+| 文件不存在 | `读取 <path> 失败: No such file or directory` |
+| JSON 损坏 | `JSON 解析失败: ...` + 提示 camoufox 导出格式 |
+| 无 cookies 字段 | 提示两种格式 (顶层 / nested) + 当前文件路径 |
+| 全是非 SHANHU 域 | 提示 "请在 camoufox 中登录 wx-bgfcbieh.rexxi.cn 后再 export_state" |
+
+### 5. 验证
+
+| 项 | 状态 |
+|---|---|
+| `cargo test --bin x-video-downloader` 279 passed (+2) | ✅ |
+| `cargo clippy --bin x-video-downloader -- -D warnings` clean | ✅ |
+| 烟雾测试三路径 (3 cookies 跳过 1 / missing file / only-google) | ✅ |
+| Intent: 行通过 commit-msg hook | ✅ |
+
+### 6. SHANHU 完整能力矩阵 (4 commits `54bbe4d` → `bd2dfeb`)
+
+| 步骤 | 方式 | 是否需浏览器 |
+|------|------|--------------|
+| 1. 解析 URL → 课程/章节列表 | `list_collection` 匿名 | ❌ |
+| 2. 已知 file_id 下载 (已缓存 hash) | `get_video_info` 匿名 | ❌ |
+| 3. **缺失 file_id 自动发现** | `videoAuth` + session cookie | **仅首次** |
+| 4. **session 一次性导入** | `--shanhu-login <state.json>` | **仅首次** |
+
+**全自动 + 仅一次性浏览器** 闭环完成。
+
+---
+
+## Session: 2026-09-06 — SHANHU session cookie 复用 (commit `2a68896`)
 
 > 用户在 Phase 1-3 (`54bbe4d`..`1164286`) 后选 Path "扩展 SHANHU: 抓 hash 算法反推",JS 逆向证明 hash **不可算法反推**,改为 Path A "一次性登录 + session cookie 复用"。
 
