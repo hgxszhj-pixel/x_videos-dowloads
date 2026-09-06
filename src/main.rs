@@ -69,6 +69,13 @@ fn main() {
         }
     };
 
+    // SHANHU/万字 SaaS: 管理本地 hash 缓存(用于解析 file_id → m3u8 URL 映射)。
+    // 此处必须先于 --gui / --history / 其它 dispatch,确保 CLI 子命令独立可用。
+    if cli.shanhu_cache_info || cli.shanhu_add_hash.is_some() {
+        handle_shanhu_cache_commands(&cli);
+        return;
+    }
+
     // 如果指定了 --gui，则启动GUI模式
     if cli.gui {
         gui_dioxus::run_gui();
@@ -163,4 +170,74 @@ fn main() {
             error!("错误: {}", e);
         });
     std::process::exit(0);
+}
+
+/// 处理 SHANHU/万字 SaaS 的本地 hash 缓存子命令(纯 CLI,无须 runtime)。
+///
+/// - `--shanhu-cache-info` 显示缓存路径与条目数
+/// - `--shanhu-add-hash <FILE_ID:HASH>` 写入单条映射
+fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
+    use crate::platform::{hash_cache_path, load_hash_cache, save_hash_entry};
+
+    if cli.shanhu_cache_info {
+        match hash_cache_path() {
+            Some(p) => {
+                let map = load_hash_cache();
+                println!("SHANHU hash 缓存");
+                println!("  路径: {}", p.display());
+                println!("  条目数: {}", map.len());
+                if !map.is_empty() {
+                    println!("  内容:");
+                    for (k, v) in map.iter().take(10) {
+                        println!("    {} → {}", k, v);
+                    }
+                    if map.len() > 10 {
+                        println!("    ... 还有 {} 条", map.len() - 10);
+                    }
+                }
+            }
+            None => {
+                eprintln!("错误: 无法定位 XDG config dir");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if let Some(ref pair) = cli.shanhu_add_hash {
+        let (file_id, hash) = match pair.split_once(':') {
+            Some((f, h)) => (f.trim(), h.trim()),
+            None => {
+                eprintln!(
+                    "错误: 格式应为 <FILE_ID>:<HASH>,实际: {}\n  示例: --shanhu-add-hash 3877025xxx:2586671d83683fda9fba38f4ab74225e",
+                    pair
+                );
+                std::process::exit(1);
+            }
+        };
+        if file_id.is_empty() || hash.is_empty() {
+            eprintln!("错误: file_id 与 hash 均不可为空");
+            std::process::exit(1);
+        }
+        // hash 简单合法性校验:32 字符 hex
+        if hash.len() != 32 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            eprintln!(
+                "警告: hash 长度 {} 应为 32 字符,内容: {}\n  仍然写入(用户可能用了非标准 hash)",
+                hash.len(),
+                hash
+            );
+        }
+        match save_hash_entry(file_id, hash) {
+            Ok(()) => {
+                println!("✓ 已写入: {} → {}", file_id, hash);
+                if let Some(p) = hash_cache_path() {
+                    println!("  缓存: {}", p.display());
+                }
+            }
+            Err(e) => {
+                eprintln!("错误: 写入失败: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 }

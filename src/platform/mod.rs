@@ -31,6 +31,9 @@ pub use douyin::DouYinResolver;
 pub use douyin_api::{extract_modal_id, DouYinApiClient};
 pub use nnyy::NnyyResolver;
 pub use shanhu::ShanhuResolver;
+// main.rs 用到的 SHANHU 缓存管理(CLI `--shanhu-add-hash` / `--shanhu-cache-info`)。
+// 模块本身保持私有,只暴露必要的工具函数。
+pub use shanhu::{hash_cache_path, load_hash_cache, save_hash_entry};
 pub use tiktok::TikTokResolver;
 pub use token_manager::TokenManager;
 pub use tulingpython::TulingPythonResolver;

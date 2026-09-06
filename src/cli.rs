@@ -122,6 +122,17 @@ pub struct Cli {
     #[cfg(feature = "collaboration")]
     #[arg(long = "port", default_value = "9000")]
     pub server_port: u16,
+
+    /// SHANHU/万字 SaaS: 添加 file_id → hash 映射到本地缓存。
+    /// 格式: `<file_id>:<hash>` (hash 为 32 字符 hex)。
+    /// 用法:浏览器抓包拿到 `<hash>.m3u8` 后,执行
+    /// `--shanhu-add-hash 3877025xxx:2586671d83683fda9fba38f4ab74225e`。
+    #[arg(long = "shanhu-add-hash", value_name = "FILE_ID:HASH")]
+    pub shanhu_add_hash: Option<String>,
+
+    /// SHANHU/万字 SaaS: 显示本地 hash 缓存路径与条目数。
+    #[arg(long = "shanhu-cache-info")]
+    pub shanhu_cache_info: bool,
 }
 
 /// 下载模式

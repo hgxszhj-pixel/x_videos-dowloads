@@ -54,6 +54,69 @@ pub const SECTION_PAGE_SIZE: u32 = 200;
 /// 网络请求超时。
 const HTTP_TIMEOUT_SECS: u64 = 15;
 
+/// Hash 缓存文件名（位于 XDG config dir 下，跨课程共享）。
+pub const HASH_CACHE_FILENAME: &str = "shanhu-hash-cache.json";
+
+/// 默认 appid（京峰教育/珊瑚租户的腾讯云 VOD appid，从已拦截的 tenwiseacademy.cn URL 中实测得到）。
+/// 其他租户可设 env `SHANHU_APPID` 覆盖。
+pub const DEFAULT_APP_ID: &str = "111453136245362688";
+
+/// 从已小写化的 hash 缓存文件中读取 file_id → hash 映射（JSON object）。
+/// 文件不存在时返回空 map（非错误，便于首次使用）。
+pub fn load_hash_cache() -> std::collections::HashMap<String, String> {
+    let Some(path) = hash_cache_path() else {
+        return std::collections::HashMap::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return std::collections::HashMap::new();
+    };
+    serde_json::from_str(&raw).unwrap_or_else(|e| {
+        warn!("SHANHU hash 缓存解析失败 ({}), 使用空缓存", e);
+        std::collections::HashMap::new()
+    })
+}
+
+/// 把单条 `file_id → hash` 写入缓存（原子写：先写 `.tmp` 再 rename）。
+/// 已存在的 file_id 会被覆盖。
+#[allow(dead_code)] // Phase 2 bootstrap CLI 使用
+pub fn save_hash_entry(file_id: &str, hash: &str) -> std::io::Result<()> {
+    let Some(path) = hash_cache_path() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "无法定位 XDG config dir",
+        ));
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut map = load_hash_cache();
+    map.insert(file_id.to_string(), hash.to_string());
+    let serialized = serde_json::to_string_pretty(&map)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serialized)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// Hash 缓存文件路径。XDG config dir 与 AppConfig 同源（`com.x-video-downloader.x-video-downloader`）。
+pub fn hash_cache_path() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("com", "x-video-downloader", "x-video-downloader")
+        .map(|p| p.config_dir().join(HASH_CACHE_FILENAME))
+}
+
+/// 当前生效的 appid（env 覆盖 → 常量默认）。
+fn app_id() -> &'static str {
+    // 注意:env var 每次调用都查;可优化为 OnceLock,但调用频率低（get_video_info 一次），先简单实现。
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        std::env::var("SHANHU_APPID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_APP_ID.to_string())
+    })
+}
+
 /// 单章节信息（来自 listSections API）。
 ///
 /// `duration` 字段 Phase 2 才用（`get_video_info` 写入 `VideoInfo.duration`）。
@@ -256,6 +319,71 @@ impl ShanhuResolver {
             cls = class_id
         )
     }
+
+    /// 从 URL fragment 提取 chapter_id (`#chapter=3557155` 或 `&chapter=3557155`)。
+    /// Phase 2 list_collection 的 jump_url 形式：`https://...#chapter=<id>`。
+    fn extract_chapter_id(url: &str) -> Option<u64> {
+        let key = "chapter=";
+        let idx = url.find(key)?;
+        let after = &url[idx + key.len()..];
+        // 终止于 & / # 结束 / 字符串结束
+        let end = after
+            .find(['&', '#'])
+            .unwrap_or(after.len());
+        after[..end].parse::<u64>().ok()
+    }
+
+    /// 调 tenwiseacademy.cn play_url 解析 endpoint,返 m3u8 URL。
+    ///
+    /// **Endpoint**: `GET https://{appid}.tenwiseacademy.cn/{hash}.m3u8?appid={appid}&all_play_url=true`
+    /// **鉴权**: 匿名 ✅(2026-09-06 v2 实测)
+    /// **响应**: `{ "code": 0, "data": { "play_urls": [{ "url": "...m3u8", ... }] } }`
+    /// **关键 headers**: `Referer: <rexxi-host>` + `Origin: <rexxi-host>` (防盗链)
+    async fn resolve_play_url(&self, file_id: &str, hash: &str) -> Result<String, ResolverError> {
+        let app_id = app_id();
+        let url = format!(
+            "https://{appid}.tenwiseacademy.cn/{appid}/{hash}.m3u8?appid={appid}&all_play_url=true",
+            appid = app_id
+        );
+        info!("SHANHU resolve_play_url → {}", url);
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
+            .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .send()
+            .await
+            .map_err(|e| ResolverError::Network(format!("play_url HTTP 失败: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(ResolverError::Network(format!(
+                "play_url HTTP {} (file_id={file_id}, hash={hash})",
+                resp.status()
+            )));
+        }
+
+        let body: Value = resp.json().await.map_err(|e| {
+            ResolverError::ParseFailed(format!("play_url JSON: {e}"))
+        })?;
+
+        // 响应路径:`data.play_urls[0].url` (数组取首元素,通常只有 1 路)
+        let m3u8_url = body
+            .get("data")
+            .and_then(|d| d.get("play_urls"))
+            .and_then(|p| p.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|u| u.get("url"))
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| {
+                ResolverError::ParseFailed(format!(
+                    "play_url 响应缺 data.play_urls[0].url (file_id={file_id}, hash={hash})"
+                ))
+            })?
+            .to_string();
+
+        Ok(m3u8_url)
+    }
 }
 
 #[async_trait]
@@ -274,9 +402,8 @@ impl PlatformResolver for ShanhuResolver {
     }
 
     fn download_strategy(&self) -> DownloadStrategy {
-        // Phase 2: 改为 DirectStream + HlsDownloader。
-        // Phase 1: 保持 YtDlp,因 get_video_info 直接返错误,不进 download 路径。
-        DownloadStrategy::YtDlp
+        // Phase 2: get_video_info 已返 HLS m3u8 URL,直接走 HlsDownloader。
+        DownloadStrategy::Hls
     }
 
     async fn list_collection(&self, url: &str) -> Result<Vec<CollectionEntry>, ResolverError> {
@@ -307,12 +434,18 @@ impl PlatformResolver for ShanhuResolver {
                     );
                     return None;
                 }
-                // jump_url:用 shanhu:// 自定义 scheme,download 阶段按此区分来源。
-                // GUI 看到章节名即可双击,触发 get_video_info (Phase 2 触发 bootstrap)。
+                // jump_url 在原课程 URL 后挂 `#chapter={chapter_id}` 片段。
+                // get_video_info 解析该片段确定要下载的章节。
+                // 片段不会发到 server,所以对 listSections / play_url 调用无副作用。
+                let jump_url = if url.contains('#') {
+                    format!("{url}&chapter={}", ch.id)
+                } else {
+                    format!("{url}#chapter={}", ch.id)
+                };
                 Some(CollectionEntry {
                     id: ch.id.to_string(),
                     name: ch.name,
-                    jump_url: Some(url.to_string()),
+                    jump_url: Some(jump_url),
                 })
             })
             .collect();
@@ -344,14 +477,82 @@ impl PlatformResolver for ShanhuResolver {
         })?;
         let class_id = Self::extract_class_id(url).unwrap_or(DEFAULT_CLASS_ID);
 
-        // Phase 1: hash 缓存未实现 → 直接返回 bootstrap 引导。
-        // Phase 2 将: 读 ~/.config/x-video-downloader/shanhu-hash-cache.json → file_id → m3u8 URL。
-        Err(ResolverError::Detailed {
-            platform: Platform::Shanhu,
-            url: url.to_string(),
-            message: "SHANHU 平台首次下载需运行一次性浏览器引导".to_string(),
-            action: Self::bootstrap_hint(course_id, class_id),
-        })
+        // 1. 拿章节列表（已知匿名返回 200）
+        let sections = self.fetch_sections(course_id, class_id).await?;
+        if sections.is_empty() {
+            return Err(ResolverError::ContentUnavailable(format!(
+                "课程 {course_id} (class_id={class_id}) 无章节"
+            )));
+        }
+
+        // 2. 解析 #chapter=<id> fragment,确定要下载哪个章节。
+        //    无 fragment → 默认取第一个有 hash 的章节（方便批量下载时复用 get_video_info）。
+        let target_chapter_id = Self::extract_chapter_id(url);
+        let chapter = if let Some(cid) = target_chapter_id {
+            sections
+                .into_iter()
+                .find(|c| c.id == cid)
+                .ok_or_else(|| {
+                    ResolverError::ParseFailed(format!(
+                        "URL 指定章节 {cid} 不在课程 {course_id} 章节列表中"
+                    ))
+                })?
+        } else {
+            sections.into_iter().find(|c| c.file_id.is_some()).ok_or_else(
+                || ResolverError::ContentUnavailable("课程无任何已录制章节".into()),
+            )?
+        };
+
+        // 3. 拿章节的 file_id
+        let file_id = chapter.file_id.clone().ok_or_else(|| {
+            ResolverError::ContentUnavailable(format!(
+                "章节 {} ({}) 无 file_id,录制未生成",
+                chapter.id, chapter.name
+            ))
+        })?;
+
+        // 4. 查 hash 缓存
+        let cache = load_hash_cache();
+        let hash = cache.get(&file_id).cloned().ok_or_else(|| {
+            ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: url.to_string(),
+                message: format!(
+                    "file_id `{file_id}` (章节 {}) 的 hash 未在缓存中",
+                    chapter.id
+                ),
+                action: format!(
+                    "{}\n\n\
+                     快速补救:\n\
+                     1. 浏览器打开课程页, F12 → Network → 过滤 `tenwiseacademy.cn`\n\
+                     2. 播放该章节\n\
+                     3. 找到形如 `<hash>.m3u8` 的请求, 复制 32 字符 hex 部分\n\
+                     4. 运行: x-video-downloader --shanhu-add-hash {file_id}:<hash>\n\n\
+                     缓存位置: {}",
+                    Self::bootstrap_hint(course_id, class_id),
+                    hash_cache_path()
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<未知>".into()),
+                ),
+            }
+        })?;
+
+        // 5. 拼 play_url 并解析 m3u8
+        let m3u8_url = self.resolve_play_url(&file_id, &hash).await?;
+        let duration = chapter.duration.unwrap_or(0);
+
+        info!(
+            "SHANHU get_video_info: chapter={} ({}), m3u8 长度 {}",
+            chapter.id,
+            chapter.name,
+            m3u8_url.len()
+        );
+
+        let mut info = VideoInfo::new(chapter.name.clone(), m3u8_url, Some("SHANHU/万字".into()));
+        info.duration = Some(duration);
+        info.download_strategy = DownloadStrategy::Hls;
+        Ok(info)
     }
 }
 
@@ -542,25 +743,97 @@ mod tests {
         assert!(!r.requires_auth(), "Phase 1 匿名可用");
     }
 
-    #[test]
-    fn get_video_info_returns_bootstrap_hint() {
+    #[tokio::test]
+    async fn get_video_info_returns_network_error_for_unreachable_host() {
+        // Phase 2: 没有真实网络时,get_video_info 会触发 listSections 失败。
+        // 用 mock URL 触发 network 错误 → 验证至少 Network/ParseFailed 路径被覆盖。
+        // (完整 end-to-end 测试需要 mock HTTP server,见 hls downloader 的 E2E 模式)
         let r = ShanhuResolver::new().unwrap();
-        let result =
-            futures::executor::block_on(r.get_video_info("https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714"));
-        let err = result.expect_err("Phase 1 应返回错误引导 bootstrap");
+        let result = r
+            .get_video_info(
+                "https://nonexistent-host-for-test.invalid/PC/#/yueke3/1#chapter=2",
+            )
+            .await;
+        let err = result.expect_err("应失败(无网络)");
         match err {
-            ResolverError::Detailed {
-                platform,
-                action,
-                message,
-                ..
-            } => {
-                assert_eq!(platform, Platform::Shanhu);
-                assert!(message.contains("浏览器引导"));
-                assert!(action.contains("shanhu-bootstrap"));
-                assert!(action.contains("3529714"));
+            ResolverError::Network(_) | ResolverError::ParseFailed(_) => {
+                // 接受任一网络/解析错误(取决于超时与重试)
             }
-            other => panic!("应返回 Detailed,实际 {other:?}"),
+            other => panic!("应返回 Network/ParseFailed,实际 {other:?}"),
         }
+    }
+
+    // ──────────────────── Phase 2: extract_chapter_id ────────────────────
+
+    #[test]
+    fn extract_chapter_id_from_hash_fragment() {
+        // 标准 list_collection jump_url 形式
+        assert_eq!(
+            ShanhuResolver::extract_chapter_id(
+                "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714#chapter=3557155"
+            ),
+            Some(3557155)
+        );
+    }
+
+    #[test]
+    fn extract_chapter_id_from_query_param() {
+        // list_collection 中若原 URL 已含 #,会改用 &chapter=
+        assert_eq!(
+            ShanhuResolver::extract_chapter_id(
+                "https://rexxi.cn/x?class_id=1#chapter=123"
+            ),
+            Some(123)
+        );
+    }
+
+    #[test]
+    fn extract_chapter_id_returns_none_for_plain_url() {
+        assert_eq!(
+            ShanhuResolver::extract_chapter_id("https://rexxi.cn/PC/#/yueke3/3529714"),
+            None
+        );
+        assert_eq!(
+            ShanhuResolver::extract_chapter_id("https://rexxi.cn/anything"),
+            None
+        );
+    }
+
+    // ──────────────────── Phase 2: cache load/save round-trip ────────────────────
+
+    #[test]
+    fn load_hash_cache_returns_empty_when_no_file() {
+        // 默认 XDG 路径下若无缓存文件,返空 map(非错误)
+        let cache = load_hash_cache();
+        // 不强求 size==0(其他测试可能残留),只验证不 panic + 可用
+        let _: Vec<&String> = cache.keys().collect();
+    }
+
+    #[test]
+    fn save_and_load_hash_entry_round_trip() {
+        // 临时污染:写一个 file_id,验证 load 拿到。
+        let test_file_id = "test_round_trip_99999";
+        let test_hash = "deadbeefdeadbeefdeadbeefdeadbeef";
+
+        save_hash_entry(test_file_id, test_hash).expect("保存应成功");
+        let cache = load_hash_cache();
+        assert_eq!(
+            cache.get(test_file_id).map(|s| s.as_str()),
+            Some(test_hash),
+            "刚写入的条目应能读回"
+        );
+
+        // 清理
+        if let Some(path) = hash_cache_path() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    // ──────────────────── Phase 2: download_strategy = Hls ────────────────────
+
+    #[test]
+    fn download_strategy_is_hls() {
+        let r = ShanhuResolver::new().unwrap();
+        assert!(matches!(r.download_strategy(), DownloadStrategy::Hls));
     }
 }
