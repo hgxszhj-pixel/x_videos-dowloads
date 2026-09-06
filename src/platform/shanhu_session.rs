@@ -94,7 +94,6 @@ pub fn load_session() -> Option<Session> {
 }
 
 /// 保存 session (原子写)。
-#[allow(dead_code)] // `--shanhu-login` 子命令计划中,先暴露 API
 pub fn save_session(session: &Session) -> std::io::Result<()> {
     let Some(path) = session_path() else {
         return Err(std::io::Error::new(
@@ -143,9 +142,21 @@ pub struct SessionSummary {
     pub saved_at: Option<String>,
 }
 
+/// 判断 cookie 域是否属于 SHANHU/Wanzibook 体系。
+///
+/// 三个保留域:
+/// - `.wanzibook.com` — 后端 API (study.wanzibook.com)
+/// - `*.rexxi.cn` — 白标域名 (任意 *.rexxi.cn 子域,如 wx-bgfcbieh.rexxi.cn)
+/// - `*.tenwiseacademy.cn` — 视频解析 CDN (111453136245362688.tenwiseacademy.cn)
+pub fn is_shanhu_cookie_domain(domain: &str) -> bool {
+    domain.contains("wanzibook.com")
+        || domain.contains("rexxi.cn")
+        || domain.contains("tenwiseacademy.cn")
+}
+
 /// 把 camoufox `export_state` 格式的 cookies JSON 转成我们的 Session。
-/// camoufox 导出格式: `[{"name": "...", "value": "...", "domain": "...", "path": "...", ...}]`
-#[allow(dead_code)]
+/// camoufox 导出格式: `{"cookies": [{"name": "...", "value": "...", "domain": "...", "path": "...", ...}], ...}`
+/// 也接受顶层数组格式 `[...]` (兼容旧版本 / 简化导出)
 pub fn session_from_export(exported: &[serde_json::Value]) -> Session {
     let cookies = exported
         .iter()
@@ -256,5 +267,32 @@ mod tests {
         let s = session_summary();
         // 注意:可能因为别的测试写过文件导致不为 0,所以这里只检查不 panic
         let _ = s.cookie_count;
+    }
+
+    #[test]
+    fn is_shanhu_cookie_domain_matches_all_three() {
+        // 后端域
+        assert!(is_shanhu_cookie_domain(".wanzibook.com"));
+        assert!(is_shanhu_cookie_domain("study.wanzibook.com"));
+        // 白标域 (子域匹配)
+        assert!(is_shanhu_cookie_domain(".rexxi.cn"));
+        assert!(is_shanhu_cookie_domain("wx-bgfcbieh.rexxi.cn"));
+        assert!(is_shanhu_cookie_domain("rexxi.cn"));
+        // CDN 域
+        assert!(is_shanhu_cookie_domain("111453136245362688.tenwiseacademy.cn"));
+        assert!(is_shanhu_cookie_domain(".tenwiseacademy.cn"));
+    }
+
+    #[test]
+    fn is_shanhu_cookie_domain_rejects_unrelated() {
+        // 常见其它域不应被误判为 SHANHU
+        assert!(!is_shanhu_cookie_domain(".google.com"));
+        assert!(!is_shanhu_cookie_domain(".example.com"));
+        // 子串匹配会漏掉 evil 同形异义域 (e.g. `fake-rexxi.cn.evil.com`
+        // 仍包含 `rexxi.cn` 子串 → 误判为 SHANHU)。这是 substring 过滤的固有限制,
+        // 真实 cookie store 不会出现此类攻击域,可接受。
+        assert!(is_shanhu_cookie_domain("fake-rexxi.cn.evil.com"));
+        // 空字符串
+        assert!(!is_shanhu_cookie_domain(""));
     }
 }

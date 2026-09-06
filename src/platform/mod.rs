@@ -36,8 +36,8 @@ pub use shanhu::ShanhuResolver;
 // 模块本身保持私有,只暴露必要的工具函数。
 pub use shanhu::{hash_cache_path, load_hash_cache, save_hash_entry};
 // SHANHU 登录 session(供 videoAuth 自动发现 cfileid)。仅暴露外部实际使用的 API;
-// 内部 helper (save_session/session_from_export/CookieEntry/Session) 保留私有。
-pub use shanhu_session::session_summary;
+// 内部 helper (CookieEntry/Session struct) 保留私有。
+pub use shanhu_session::{is_shanhu_cookie_domain, save_session, session_from_export, session_summary};
 pub use tiktok::TikTokResolver;
 pub use token_manager::TokenManager;
 pub use tulingpython::TulingPythonResolver;

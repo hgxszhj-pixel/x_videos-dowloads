@@ -138,6 +138,15 @@ pub struct Cli {
     /// 用于排查 videoAuth 自动发现失效时,确认 session 是否过期。
     #[arg(long = "shanhu-session-info")]
     pub shanhu_session_info: bool,
+
+    /// SHANHU/万字 SaaS: 从 camoufox MCP `export_state()` 导出的 JSON 文件
+    /// 导入登录态 cookies,写入本地 session 文件。
+    ///
+    /// 用法:在 camoufox 中扫码登录 wx-bgfcbieh.rexxi.cn,调 `export_state()`
+    /// 保存到本地,然后运行 `--shanhu-login <path-to-state.json>`。
+    /// 会自动过滤非 `.wanzibook.com` 域 cookie (保留 wx-bgfcbieh.rexxi.cn 等 SHANHU 租户子域)。
+    #[arg(long = "shanhu-login", value_name = "STATE_JSON")]
+    pub shanhu_login: Option<PathBuf>,
 }
 
 /// 下载模式

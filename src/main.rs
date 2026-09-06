@@ -71,7 +71,11 @@ fn main() {
 
     // SHANHU/万字 SaaS: 管理本地 hash 缓存(用于解析 file_id → m3u8 URL 映射)。
     // 此处必须先于 --gui / --history / 其它 dispatch,确保 CLI 子命令独立可用。
-    if cli.shanhu_cache_info || cli.shanhu_add_hash.is_some() || cli.shanhu_session_info {
+    if cli.shanhu_cache_info
+        || cli.shanhu_add_hash.is_some()
+        || cli.shanhu_session_info
+        || cli.shanhu_login.is_some()
+    {
         handle_shanhu_cache_commands(&cli);
         return;
     }
@@ -266,5 +270,102 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
                 std::process::exit(1);
             }
         }
+        return;
     }
+
+    if let Some(ref state_path) = cli.shanhu_login {
+        handle_shanhu_login(state_path);
+    }
+}
+
+/// 从 camoufox MCP `export_state()` 导出的 JSON 文件导入登录态到本地 session。
+///
+/// 流程:读 JSON → 解析 cookies 数组 → 过滤 wanzibook / rexxi / tenwiseacademy 域 →
+/// 转 Session → 原子写入 session 文件 → 输出 session_summary。
+fn handle_shanhu_login(state_path: &std::path::PathBuf) {
+    use crate::platform::{save_session, session_from_export, session_summary};
+
+    // 1. 读文件
+    let raw = match std::fs::read_to_string(state_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("错误: 读取 {} 失败: {}", state_path.display(), e);
+            std::process::exit(1);
+        }
+    };
+
+    // 2. 解析 JSON
+    let v: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "错误: JSON 解析失败: {}\n  提示: 文件应为 camoufox MCP `export_state()` 导出格式",
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+
+    // 3. 提取 cookies 数组 (兼容 `{"cookies": [...]}` 与顶层 `[...]`)
+    let cookies = v
+        .get("cookies")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .or_else(|| v.as_array().cloned())
+        .unwrap_or_default();
+
+    if cookies.is_empty() {
+        eprintln!(
+            "错误: state 文件中没有 cookies 字段\n  提示: camoufox MCP `export_state()` 导出格式 {{\"cookies\": [...]}} 或顶层数组\n  当前文件: {}",
+            state_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    // 4. 过滤 SHANHU 相关域 (wanzibook.com 后端 / rexxi.cn 白标 / tenwiseacademy.cn CDN)
+    let total = cookies.len();
+    let shanhu_cookies: Vec<serde_json::Value> = cookies
+        .into_iter()
+        .filter(|c| {
+            let domain = c.get("domain").and_then(|d| d.as_str()).unwrap_or("");
+            crate::platform::is_shanhu_cookie_domain(domain)
+        })
+        .collect();
+    let kept = shanhu_cookies.len();
+    let skipped = total - kept;
+
+    if kept == 0 {
+        eprintln!(
+            "错误: state 文件中无 SHANHU 相关域 cookies (wanzibook.com / rexxi.cn / tenwiseacademy.cn)\n  提示: 请在 camoufox 中登录 wx-bgfcbieh.rexxi.cn 后再 export_state\n  当前文件: {}",
+            state_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    // 5. 转换 + 原子写
+    let session = session_from_export(&shanhu_cookies);
+    if let Err(e) = save_session(&session) {
+        eprintln!("错误: 写入 session 文件失败: {}", e);
+        std::process::exit(1);
+    }
+
+    // 6. 输出摘要
+    println!("✓ SHANHU session 已导入");
+    println!("  源:   {}", state_path.display());
+    println!(
+        "  cookie 数: {} (跳过 {} 个非 SHANHU 域)",
+        kept, skipped
+    );
+    let s = session_summary();
+    if let Some(p) = s.path {
+        println!("  保存到: {}", p);
+    }
+    println!("  含 token:  {}", if s.has_token { "是" } else { "否" });
+    println!(
+        "  保存时间:  {}",
+        s.saved_at.as_deref().unwrap_or("<未知>")
+    );
+    println!();
+    println!("  videoAuth 自动发现已可用 — 缺失章节会通过 session cookie 自动获取 cfileid");
+    println!("  更新:重新 export_state 后再跑本命令 (覆盖保存)");
 }
