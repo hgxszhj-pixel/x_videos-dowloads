@@ -317,7 +317,19 @@ pub(super) async fn fetch_smart_impl(url: &str) -> Result<super::types::FetchRes
         }
     }
     if items.is_empty() {
-        // 全部解析失败 → fallback
+        // 全部解析失败 → 检查 session 是否过期,过期时给明确提示
+        // (P3 UX 修复 2026-09-13:原 fallback 到 fetch_video_info_impl 单视频路径
+        //  会让用户看到误导的"URL 无效或平台不支持",根因是每章 fetch_video_info_impl
+        //  在 stale session 下全失败,而 fallback 路径无 resolver 匹配 rexxi URL)
+        let summary = crate::platform::session_summary();
+        if summary.is_stale {
+            let days = summary.age_days.unwrap_or(0);
+            return Err(format!(
+                "SHANHU session 已过期(距今 {} 天,阈值 7 天),请重跑 \
+                 `x-video-downloader --shanhu-login <state.json>` 后再试",
+                days
+            ));
+        }
         return fetch_video_info_impl(url)
             .await
             .map(super::types::FetchResult::Single);
