@@ -775,8 +775,8 @@ impl PlatformResolver for ShanhuResolver {
     }
 
     fn requires_auth(&self) -> bool {
-        // Phase 1: list_collection 匿名可用。download 阶段(Phase 2)需 bootstrap。
-        false
+        // listClass/listSections/videoAuth 全部需要 session.token (2026-09-13 P0 推翻 v2 匿名结论)
+        true
     }
 
     fn download_strategy(&self) -> DownloadStrategy {
@@ -1141,7 +1141,7 @@ mod tests {
         assert!(pats.contains(&"rexxi.cn"));
         assert!(pats.contains(&"wanzibook.com"));
         assert!(pats.contains(&"tenwiseacademy.cn"));
-        assert!(!r.requires_auth(), "Phase 1 匿名可用");
+        assert!(r.requires_auth(), "SHANHU 现在需要 session.token 鉴权 (2026-09-13 P0 推翻 v2 匿名)");
     }
 
     #[tokio::test]
