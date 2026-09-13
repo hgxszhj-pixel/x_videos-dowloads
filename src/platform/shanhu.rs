@@ -562,8 +562,14 @@ impl ShanhuResolver {
         )
     }
 
-    /// 从 URL fragment 提取 chapter_id (`#chapter=3557155` 或 `&chapter=3557155`)。
-    /// Phase 2 list_collection 的 jump_url 形式：`https://...#chapter=<id>`。
+    /// 从 URL 提取 chapter_id。
+    ///
+    /// 支持的两种 jump_url 形式:
+    /// - **query string (2026-09-13 后默认)**:`https://.../PC/#/yueke3/<id>?chapter=<chapter_id>`
+    ///   — Vue 2 SPA hash 路由场景下唯一不会破坏路由的形式
+    /// - **hash fragment (旧/兼容)**:`https://...#chapter=<chapter_id>`
+    ///
+    /// 实现:`url.find("chapter=")` 找子串,直到 `&`/`#`/字符串结束。两种形式都识别。
     fn extract_chapter_id(url: &str) -> Option<u64> {
         let key = "chapter=";
         let idx = url.find(key)?;
@@ -812,13 +818,16 @@ impl PlatformResolver for ShanhuResolver {
                     );
                     return None;
                 }
-                // jump_url 在原课程 URL 后挂 `#chapter={chapter_id}` 片段。
-                // get_video_info 解析该片段确定要下载的章节。
-                // 片段不会发到 server,所以对 listSections / play_url 调用无副作用。
-                let jump_url = if url.contains('#') {
+                // jump_url 在原课程 URL 后挂 `?chapter={chapter_id}` query string。
+                // get_video_info 解析该 query 确定要下载的章节。
+                // 选用 query 而非 hash 片段的原因:SHANHU Vue 2 SPA 路由本身用 `#/yueke3/<id>`,
+                // 若再用 `#chapter=<id>` 会破坏 SPA hash 路由,而 query string 对 Vue router 无副作用。
+                // 早期实现用 `#chapter=` 拼接, 当 url 已含 `#` 时 (`https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714`)
+                // 退化为 `&chapter=<id>` 被吃进 hash fragment,导致 YtDlpResolver 解析失败。
+                let jump_url = if url.contains('?') {
                     format!("{url}&chapter={}", ch.id)
                 } else {
-                    format!("{url}#chapter={}", ch.id)
+                    format!("{url}?chapter={}", ch.id)
                 };
                 Some(CollectionEntry {
                     id: ch.id.to_string(),
@@ -1168,7 +1177,7 @@ mod tests {
 
     #[test]
     fn extract_chapter_id_from_hash_fragment() {
-        // 标准 list_collection jump_url 形式
+        // 早期 list_collection jump_url 形式 (现被 query 形式取代,但仍兼容)
         assert_eq!(
             ShanhuResolver::extract_chapter_id(
                 "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714#chapter=3557155"
@@ -1179,7 +1188,25 @@ mod tests {
 
     #[test]
     fn extract_chapter_id_from_query_param() {
-        // list_collection 中若原 URL 已含 #,会改用 &chapter=
+        // 2026-09-13 P0: list_collection jump_url 改为 query 形式(避免 Vue 2 hash 路由吞 chapter=)。
+        // 原 URL `https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714` 无 query → 拼 `?chapter=<id>`
+        // 新形式 `https://wx-bgfcbieh.rexxi.cn/PC/?chapter=3557155#/yueke3/3529714` 不存在 (我们没拼)
+        // 实际是 `https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714?chapter=3557155`
+        // (query 在 hash 之前 — fragment 整体对 server 透明,所以 query 参数能识别)
+        assert_eq!(
+            ShanhuResolver::extract_chapter_id(
+                "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714?chapter=3557155"
+            ),
+            Some(3557155)
+        );
+        // 原 URL 已含 query (其他参数)→ 拼 `&chapter=<id>`
+        assert_eq!(
+            ShanhuResolver::extract_chapter_id(
+                "https://rexxi.cn/x?class_id=1&chapter=123"
+            ),
+            Some(123)
+        );
+        // 旧 hash 形式仍兼容 (防御性)
         assert_eq!(
             ShanhuResolver::extract_chapter_id(
                 "https://rexxi.cn/x?class_id=1#chapter=123"
