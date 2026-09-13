@@ -35,7 +35,8 @@ KEYCHAIN_SERVICE = "Chrome Safe Storage"
 PBKDF2_SALT = b"saltysalt"
 PBKDF2_ITERATIONS = 1003
 V10_PREFIX = b"v10"
-DEFAULT_PROFILE = Path.home() / "Library/Application Support/Google/Chrome/Default"
+CHROME_ROOT = Path.home() / "Library/Application Support/Google/Chrome"
+DEFAULT_PROFILE = CHROME_ROOT / "Default"
 DEFAULT_DOMAINS = ["wanzibook.com", "rexxi.cn", "tenwiseacademy.cn"]
 
 
@@ -108,6 +109,45 @@ def chrome_epoch_to_unix(expires_utc: int) -> int:
     return expires_utc // 1_000_000 - 11_644_473_600
 
 
+def list_chrome_profiles() -> list[tuple[Path, int, int]]:
+    """扫 ~/Library/Application Support/Google/Chrome 下所有 profile 子目录,
+    返回 (path, mtime_epoch, cookies_size_bytes) 元组,按 mtime 倒序。
+
+    设计动机(2026-09-13):用户的 Chrome Default profile 半年没用过,日常 profile
+    是 "Profile 1"。硬编码 DEFAULT_PROFILE=Default 会让用户卡在"未找到 cookie"。
+    --auto-detect 让脚本自动选最活跃的 profile。
+    """
+    if not CHROME_ROOT.exists():
+        return []
+    profiles = []
+    for entry in CHROME_ROOT.iterdir():
+        if not entry.is_dir():
+            continue
+        cookies_db = entry / "Cookies"
+        if not cookies_db.exists():
+            continue
+        mtime = int(cookies_db.stat().st_mtime)
+        size = cookies_db.stat().st_size
+        profiles.append((entry, mtime, size))
+    profiles.sort(key=lambda x: x[1], reverse=True)
+    return profiles
+
+
+def auto_detect_profile() -> Path:
+    """选最活跃的 Chrome profile (mtime 最新)。"""
+    profiles = list_chrome_profiles()
+    if not profiles:
+        sys.exit(f"❌ 在 {CHROME_ROOT} 下找不到任何含 Cookies 的 profile")
+    best = profiles[0]
+    print(f"🔍 自动选择 profile: {best[0].name} (mtime 排序最活跃, {best[2] // 1024}KB)",
+          file=sys.stderr)
+    if len(profiles) > 1:
+        print(f"   (其他 profile: {', '.join(p[0].name for p in profiles[1:5])}"
+              f"{' ...' if len(profiles) > 5 else ''})", file=sys.stderr)
+        print(f"   强制指定: --profile-dir '/full/path/to/Profile 1'", file=sys.stderr)
+    return best[0]
+
+
 def extract_cookies(profile_dir: Path, domains: list[str], include_expired: bool):
     """读 profile_dir/Cookies SQLite,过滤 + 解密 SHANHU 域 cookie。"""
     cookies_db = profile_dir / "Cookies"
@@ -159,7 +199,17 @@ def main():
         "--profile-dir",
         type=Path,
         default=DEFAULT_PROFILE,
-        help=f"Chrome profile 目录 (默认: {DEFAULT_PROFILE})",
+        help=f"Chrome profile 目录 (默认: {DEFAULT_PROFILE};推荐 --auto-detect 自动选活跃 profile)",
+    )
+    ap.add_argument(
+        "--auto-detect",
+        action="store_true",
+        help="自动选 mtime 最新的 Chrome profile (推荐用于多 profile 用户)",
+    )
+    ap.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="列出所有 Chrome profile 及其 Cookies 文件大小/mtime,不执行解密",
     )
     ap.add_argument(
         "--domains",
@@ -184,6 +234,25 @@ def main():
         help="输出 camoufox 风格 state.json 路径",
     )
     args = ap.parse_args()
+
+    # --list-profiles 调试模式
+    if args.list_profiles:
+        profiles = list_chrome_profiles()
+        if not profiles:
+            print(f"❌ 在 {CHROME_ROOT} 下找不到任何含 Cookies 的 profile")
+        else:
+            print(f"Chrome profiles (按 mtime 倒序):")
+            print(f"{'NAME':<20} {'MTIME':<20} {'COOKIES SIZE':<15}")
+            print("-" * 60)
+            for path, mtime, size in profiles:
+                import datetime
+                mtime_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                print(f"{path.name:<20} {mtime_str:<20} {size:>10} bytes")
+        sys.exit(0)
+
+    # --auto-detect 模式
+    if args.auto_detect:
+        args.profile_dir = auto_detect_profile()
 
     # 1. Keychain 密码 → AES key
     print(f"🔑 读 Keychain '{KEYCHAIN_SERVICE}' (会弹 macOS 授权框,选'总是允许')...", file=sys.stderr)
