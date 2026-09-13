@@ -147,6 +147,15 @@ pub struct Cli {
     /// 会自动过滤非 `.wanzibook.com` 域 cookie (保留 wx-bgfcbieh.rexxi.cn 等 SHANHU 租户子域)。
     #[arg(long = "shanhu-login", value_name = "STATE_JSON")]
     pub shanhu_login: Option<PathBuf>,
+
+    /// SHANHU/万字 SaaS: 从 Chrome DevTools Cookie header 字符串直接导入登录态
+    /// (跳过 state.json 中间文件,适合 camoufox MCP 不可用时手动 fallback)。
+    ///
+    /// 用法:Chrome DevTools → Network → 任意 wanzibook 请求 → Request Headers
+    /// → Cookie: 行 → 复制 cookie 值(裸字符串,不要 "Cookie:" 前缀)→ 喂本参数。
+    /// 建议用环境变量避免 shell history 泄露:`COOKIE="..."; x-video-downloader --shanhu-login-cookie "$COOKIE"`。
+    #[arg(long = "shanhu-login-cookie", value_name = "COOKIE_STRING")]
+    pub shanhu_login_cookie: Option<String>,
 }
 
 /// 下载模式

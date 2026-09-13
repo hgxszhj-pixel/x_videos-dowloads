@@ -75,6 +75,7 @@ fn main() {
         || cli.shanhu_add_hash.is_some()
         || cli.shanhu_session_info
         || cli.shanhu_login.is_some()
+        || cli.shanhu_login_cookie.is_some()
     {
         handle_shanhu_cache_commands(&cli);
         return;
@@ -285,6 +286,9 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
     if let Some(ref state_path) = cli.shanhu_login {
         handle_shanhu_login(state_path);
     }
+    if let Some(ref cookie_str) = cli.shanhu_login_cookie {
+        handle_shanhu_login_cookie(cookie_str);
+    }
 }
 
 /// 从 camoufox MCP `export_state()` 导出的 JSON 文件导入登录态到本地 session。
@@ -377,4 +381,96 @@ fn handle_shanhu_login(state_path: &std::path::PathBuf) {
     println!();
     println!("  videoAuth 自动发现已可用 — 缺失章节会通过 session cookie 自动获取 cfileid");
     println!("  更新:重新 export_state 后再跑本命令 (覆盖保存)");
+}
+
+/// 从 Chrome DevTools Cookie header 字符串导入登录态(跳过 state.json 中间文件)。
+///
+/// 与 `handle_shanhu_login` 的区别:不读 JSON 文件,直接解析裸 cookie 字符串
+/// `name=value; name2=value2`,统一标 `.wanzibook.com` 域(HttpOnly cookie 没法
+/// inspect host)。复用 `session_from_export` + `save_session`。
+///
+/// 设计动机(2026-09-13):camoufox MCP v1.2.0 `export_state()` 不导出 HttpOnly cookie,
+/// 用户反馈 `--shanhu-login <state.json>` 流程因 state.json 文件不存在/格式错而
+/// 卡住。本入口让用户 1 分钟从 Chrome DevTools Network → Cookie header 复制后直接
+/// 喂命令行,省去中间脚本与文件。
+fn handle_shanhu_login_cookie(cookie_str: &str) {
+    use crate::platform::{is_shanhu_cookie_domain, save_session, session_from_export, session_summary};
+
+    // 1. 解析 cookie 字符串 → JSON cookies 数组(统一 .wanzibook.com)
+    let cookies: Vec<serde_json::Value> = cookie_str
+        .split(';')
+        .filter_map(|piece| {
+            let piece = piece.trim();
+            if piece.is_empty() {
+                return None;
+            }
+            let (name, value) = piece.split_once('=')?;
+            let name = name.trim();
+            let value = value.trim();
+            if name.is_empty() || value.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({
+                "name": name,
+                "value": value,
+                "domain": ".wanzibook.com",
+                "path": "/",
+                "expires": -1,
+                "httpOnly": true,
+                "secure": true,
+                "sameSite": "Lax",
+            }))
+        })
+        .collect();
+
+    if cookies.is_empty() {
+        eprintln!(
+            "错误: cookie 字符串解析后为空\n  提示: 格式 'name1=value1; name2=value2; ...'\n  示例: --shanhu-login-cookie 'PHPSESSID=abc; tengface_user_login_uuid=xyz'"
+        );
+        std::process::exit(1);
+    }
+
+    // 2. 过滤 SHANHU 域(全标 .wanzibook.com,理论上全过;保留 filter 是为防御)
+    let total = cookies.len();
+    let shanhu_cookies: Vec<serde_json::Value> = cookies
+        .into_iter()
+        .filter(|c| {
+            let domain = c.get("domain").and_then(|d| d.as_str()).unwrap_or("");
+            is_shanhu_cookie_domain(domain)
+        })
+        .collect();
+    let kept = shanhu_cookies.len();
+    let skipped = total - kept;
+
+    if kept == 0 {
+        eprintln!(
+            "错误: 解析的 cookies 均不属 SHANHU 域(意外)\n  当前解析到 {} 个,domain 全部为 .wanzibook.com",
+            total
+        );
+        std::process::exit(1);
+    }
+
+    // 3. 转换 + 原子写
+    let session = session_from_export(&shanhu_cookies);
+    if let Err(e) = save_session(&session) {
+        eprintln!("错误: 写入 session 文件失败: {}", e);
+        std::process::exit(1);
+    }
+
+    // 4. 输出摘要(与 handle_shanhu_login 风格对齐)
+    println!("✓ SHANHU session 已导入(从 Chrome DevTools Cookie 字符串)");
+    println!("  源:   Chrome DevTools Network → Request Headers → Cookie 行");
+    println!("  cookie 数: {} (跳过 {} 个非 SHANHU 域)", kept, skipped);
+    let s = session_summary();
+    if let Some(p) = s.path {
+        println!("  保存到: {}", p);
+    }
+    println!("  含 token:  {}", if s.has_token { "是" } else { "否" });
+    println!(
+        "  保存时间:  {}",
+        s.saved_at.as_deref().unwrap_or("<未知>")
+    );
+    println!();
+    println!("  videoAuth 自动发现已可用 — 缺失章节会通过 session cookie 自动获取 cfileid");
+    println!("  更新:Chrome DevTools 重新复制 Cookie 后再跑本命令 (覆盖保存)");
 }
