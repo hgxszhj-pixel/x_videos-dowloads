@@ -24,6 +24,18 @@
 | Triage labels | `docs/agents/triage-labels.md` |
 | GitNexus | See `.claude/skills/gitnexus/*/` |
 
+# DNA（分档派 + 消灭派，2026-09-13 采纳）
+
+AI 编辑代码前**必读**三份文档，把"踩过的坑不再踩"从口头约定升级为流程约束：
+
+| 文档 | 何时读 | 核心规则 |
+|------|--------|---------|
+| [`docs/dna/三档地盘.md`](docs/dna/三档地盘.md) | **任何编辑前** | 🟢 自由档 / 🟡 审查档 / 🔴 禁止档 — 🔴 档改前必 grep `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/MEMORY.md` |
+| [`docs/dna/新功能前必查.md`](docs/dna/新功能前必查.md) | **写新代码前** | 30 秒 grep 3 项：skill / 项目内模块 / 血泪教训 |
+| [`docs/dna/review-checklist.md`](docs/dna/review-checklist.md) | **PR/review 时** | 5 阶段 pre-merge 清单：机械门禁 → 三档合规 → 变异测试 → 文档同步 → Commit 模板 |
+
+变异测试（防 AI 假测试）：`bash scripts/mutation_smoke.sh` [smoke|full|manual]
+
 ---
 
 **核心洞见**: 过度复杂的代码往往遵循设计模式和最佳实践。问题在于**时机**：在需要之前添加复杂性会导致代码更难理解、引入更多 bug，花更长时间实现，更难测试。
