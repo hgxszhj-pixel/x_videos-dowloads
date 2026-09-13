@@ -1493,4 +1493,63 @@ mod tests {
             eprintln!("     {}. {}", i + 1, e.name);
         }
     }
+
+    /// 2026-09-13 新增:端到端 get_video_info smoke
+    ///
+    /// 这是 GUI 卡死点的核心路径:
+    ///   videoAuth (取 cfileid / mp4Url) → m3u8 URL → download_strategy = Hls
+    ///
+    /// 验证:
+    ///   1. m3u8 URL 是 https://*.tenwiseacademy.cn/*.m3u8 形式
+    ///   2. download_strategy 是 Hls(不是 Direct)
+    ///   3. URL 长度合理(>50 字符,排除空串/截断)
+    ///
+    /// 不发起 m3u8 真实下载(避免 smoke test 拉百兆流量)
+    #[tokio::test]
+    #[ignore = "需本机 SHANHU session + 章节 3557155 已开回看;--shanhu-login-token 后跑 --ignored 启用"]
+    async fn smoke_get_video_info_rexxi_3529714_chapter_3557155() {
+        use crate::types::DownloadStrategy;
+        use crate::platform::session_summary;
+
+        let summary = session_summary();
+        assert!(
+            summary.cookie_count > 0 || summary.has_token,
+            "本地无 session — 先跑 `cargo run -- --shanhu-login-token <TOKEN>`"
+        );
+
+        let resolver = ShanhuResolver::new().expect("ShanhuResolver::new");
+        let url = "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714?chapter=3557155";
+        let info = resolver
+            .get_video_info(url)
+            .await
+            .expect("get_video_info 应成功(mp4Url 直接拿 m3u8)");
+
+        // 1. m3u8 URL 必为 tenwiseacademy 域
+        assert!(
+            info.url.contains("tenwiseacademy.cn") && info.url.ends_with(".m3u8"),
+            "m3u8 URL 形如 https://*.tenwiseacademy.cn/*.m3u8,实测: {}",
+            info.url
+        );
+
+        // 2. 下载策略必须是 Hls
+        assert_eq!(
+            info.download_strategy,
+            DownloadStrategy::Hls,
+            "SHANHU 视频是 HLS,实测: {:?}",
+            info.download_strategy
+        );
+
+        // 3. URL 长度合理(防空串或截断)
+        assert!(
+            info.url.len() >= 50,
+            "m3u8 URL 长度异常: {} (len={})",
+            info.url,
+            info.url.len()
+        );
+
+        eprintln!(
+            "✅ get_video_info 成功: name={:?} m3u8={} strategy={:?}",
+            info.title, info.url, info.download_strategy
+        );
+    }
 }
