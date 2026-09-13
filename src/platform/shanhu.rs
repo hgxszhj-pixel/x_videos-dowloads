@@ -20,7 +20,8 @@
 //! `wx_<hash>_<org_id>_<fans_id>`(v2 报告未抓 token 误判为匿名),front-end 把 token
 //! 直接 POST 在 form body 里(`application/x-www-form-urlencoded`)而非 Authorization header。
 //!
-//! **唯一卡点**:videoAuth 返回的 cfileid 是 32 字符 hex,**不是 file_id 直接算出**（MD5/SHA256/SHA1 都不匹配）。
+//! **唯一卡点**:videoAuth 返回的 `mp4Url` 字段含完整 m3u8 URL,直接可用。
+//! 早期实现误取 `cfileid` (32 hex 假设),现已改用 `mp4Url` 字段(2026-09-13 实测:cfileid 是 19 字符十进制)。
 //! cfileid 来自腾讯云 VOD 的 PlayKey/SignURL 算法,**JS bundle 硬编码**。需要一次性浏览器引导（bootstrap）
 //! 抓取并写入本地缓存,后续全部复用。
 //!
@@ -587,6 +588,10 @@ impl ShanhuResolver {
     /// **鉴权**: 匿名 ✅(2026-09-06 v2 实测)
     /// **响应**: `{ "code": 0, "data": { "play_urls": [{ "url": "...m3u8", ... }] } }`
     /// **关键 headers**: `Referer: <rexxi-host>` + `Origin: <rexxi-host>` (防盗链)
+    ///
+    /// **2026-09-13 现状**:此函数已不被 get_video_info 主流程调用(videoAuth 直接返 mp4Url),
+    /// 保留为 public-but-unused,作为离线 / 老格式 cache 的兜底。手写脚本仍可调用。
+    #[allow(dead_code)]
     async fn resolve_play_url(&self, file_id: &str, hash: &str) -> Result<String, ResolverError> {
         let app_id = app_id();
         let url = format!(
@@ -633,14 +638,15 @@ impl ShanhuResolver {
         Ok(m3u8_url)
     }
 
-    /// 调 videoAuth 拿 cfileid (32 字符 hex,tenwiseacademy URL 中的 `<hash>` 部分)。
+    /// 调 videoAuth 拿 m3u8 URL (从 `data.video.mp4Url` 字段)。
     ///
     /// **前置**: 用户必须先运行一次浏览器登录,把 cookies 导出到 `shanhu-session.json`
     /// (运行 `--shanhu-session-info` 查看路径与状态)。
     ///
     /// **Endpoint**: `POST {SHANHU_ONLINE_API}/onlineapi/stu/course/videoAuth`
-    /// **鉴权**: 🔒 需要 session cookies (否则 100067 非法请求)
-    /// **响应**: `data.video.cfileid` (32 字符 hex) — 这就是 tenwiseacademy URL 用的 hash。
+    /// **鉴权**: 🔒 需要 session (cookies 或 token,否则 100067 非法请求)
+    /// **响应**: `data.video.mp4Url` — tenwiseacademy.cn 上的完整 m3u8 URL,直接可下。
+    /// 早期实现返回 cfileid 再拼 URL,但 cfileid 字段现可能是 19 字符十进制,无法直接拼。
     ///
     /// 入参 `file_id` 用于日志对照,实际传给 server 的是 `video_id` (来自 listSections `videos[].id`)。
     async fn fetch_cfileid_via_video_auth(
@@ -741,32 +747,36 @@ impl ShanhuResolver {
             });
         }
 
-        // 提取 cfileid — 响应路径: data.video.cfileid
+        // 提取 mp4Url (完整 m3u8 URL) — 响应路径: data.video.mp4Url
+        // 2026-09-13 实测:这个 URL 已经是 tenwiseacademy.cn 上的明文 HLS m3u8,
+        // 带 <32hex>.m3u8 路径,直接可下,无需再走 resolve_play_url 二次解析。
+        // 早期实现去取 cfileid 再拼 URL,但 cfileid 在新响应里是 19 字符十进制
+        // (例 `220903970091175937`),不能直接拼 tenwiseacademy URL。
+        let mp4_url = body
+            .get("data")
+            .and_then(|d| d.get("video"))
+            .and_then(|v| v.get("mp4Url"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ResolverError::ParseFailed(format!(
+                    "videoAuth 响应缺 data.video.mp4Url,body={text}"
+                ))
+            })?
+            .to_string();
+
+        // cfileid 仍记录 (供日志 + 兜底),但格式不再硬性要求 32 hex (实测可能是 19-20 位十进制)
         let cfileid = body
             .get("data")
             .and_then(|d| d.get("video"))
             .and_then(|v| v.get("cfileid"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ResolverError::ParseFailed(format!(
-                    "videoAuth 响应缺 data.video.cfileid,body={text}"
-                ))
-            })?
-            .to_string();
-
-        // 防御性校验: 必须是 32 字符 hex
-        if cfileid.len() != 32 || !cfileid.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(ResolverError::ParseFailed(format!(
-                "videoAuth 返回的 cfileid 长度或格式异常: `{cfileid}` (len={})",
-                cfileid.len()
-            )));
-        }
+            .unwrap_or("<missing>");
 
         info!(
-            "SHANHU videoAuth → chapter={chapter_id} cfileid={}",
-            &cfileid[..8]
+            "SHANHU videoAuth → chapter={chapter_id} cfileid={cfileid} mp4Url 前缀: {}",
+            &mp4_url[..mp4_url.len().min(80)]
         );
-        Ok(cfileid)
+        Ok(mp4_url)
     }
 }
 
@@ -933,23 +943,24 @@ impl PlatformResolver for ShanhuResolver {
                 .fetch_cfileid_via_video_auth(&file_id, course_id, class_id, chapter.id, video_id)
                 .await?;
             // 自动写入缓存,后续章节无需再走 videoAuth
+            // 缓存的是完整 mp4Url (m3u8 URL),不再只是 hash — 避免重复二次解析
             if let Err(e) = save_hash_entry(&file_id, &discovered) {
                 warn!(
-                    "SHANHU 自动写入 hash 缓存失败: {e} (file_id={file_id}, cfileid={})",
-                    &discovered[..8]
+                    "SHANHU 自动写入 hash 缓存失败: {e} (file_id={file_id}, url 前缀: {})",
+                    &discovered[..discovered.len().min(40)]
                 );
             } else {
                 info!(
                     "SHANHU 自动写入 hash 缓存: {file_id} → {}",
-                    &discovered[..8]
+                    &discovered[..discovered.len().min(40)]
                 );
                 cache.insert(file_id.clone(), discovered.clone());
             }
             discovered
         };
 
-        // 5. 拼 play_url 并解析 m3u8
-        let m3u8_url = self.resolve_play_url(&file_id, &hash).await?;
+        // 5. m3u8 URL 直接来自缓存 / videoAuth 响应 (mp4Url),无需 resolve_play_url 二次调用
+        let m3u8_url = hash;
         let duration = chapter.duration.unwrap_or(0);
 
         info!(

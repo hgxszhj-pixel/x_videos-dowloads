@@ -254,21 +254,20 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
             Some((f, h)) => (f.trim(), h.trim()),
             None => {
                 eprintln!(
-                    "错误: 格式应为 <FILE_ID>:<HASH>,实际: {}\n  示例: --shanhu-add-hash 3877025xxx:2586671d83683fda9fba38f4ab74225e",
+                    "错误: 格式应为 <FILE_ID>:<MP4_URL>,实际: {}\n  示例: --shanhu-add-hash 3877025xxx:https://11145xxx.tenwiseacademy.cn/11145xxx/<32hex>.m3u8",
                     pair
                 );
                 std::process::exit(1);
             }
         };
         if file_id.is_empty() || hash.is_empty() {
-            eprintln!("错误: file_id 与 hash 均不可为空");
+            eprintln!("错误: file_id 与 mp4_url 均不可为空");
             std::process::exit(1);
         }
-        // hash 简单合法性校验:32 字符 hex
-        if hash.len() != 32 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        // m3u8 URL 简单合法性校验:必须以 http(s):// 开头,以 .m3u8 结尾
+        if !(hash.starts_with("http://") || hash.starts_with("https://")) || !hash.ends_with(".m3u8") {
             eprintln!(
-                "警告: hash 长度 {} 应为 32 字符,内容: {}\n  仍然写入(用户可能用了非标准 hash)",
-                hash.len(),
+                "警告: mp4_url 格式异常 (期望 http(s)://.../*.m3u8): {}\n  仍然写入(用户可能知道自己在做什么)",
                 hash
             );
         }
