@@ -1291,4 +1291,52 @@ mod tests {
         assert_eq!(cl, Some(3023639));
         assert_ne!(cl, Some(DEFAULT_CLASS_ID), "3023639 != 0,resolve_class_id 不触发自动发现");
     }
+
+    // ──────────────────── 2026-09-13 smoke: GUI smart dispatch 数据层 ────────────────────
+
+    /// list_collection 端到端 smoke:等价于 `gui_dioxus::handlers::fetch_smart_impl` 阶段 1。
+    ///
+    /// 跑法:`cargo test --release smoke_list_collection_rexxi_3529714 -- --ignored --nocapture`
+    ///
+    /// 前置:本机已有 SHANHU session 文件(`cargo run -- --shanhu-login <state.json>`),
+    /// 否则 list_collection 401/403 → 测失败,这是预期(告知用户 session 缺失)。
+    ///
+    /// 不进默认 cargo test(CI 会卡),靠 `#[ignore]` 守护:
+    /// 任何时候想跑: `cargo test --release smoke_list_collection -- --ignored`
+    #[tokio::test]
+    #[ignore = "需本机 SHANHU session;--shanhu-login 后跑 --ignored 启用"]
+    async fn smoke_list_collection_rexxi_3529714() {
+        use crate::platform::session_summary;
+
+        let summary = session_summary();
+        assert!(
+            summary.cookie_count > 0,
+            "本地无 session — 先跑 `cargo run -- --shanhu-login <state.json>`"
+        );
+
+        let resolver = ShanhuResolver::new().expect("ShanhuResolver::new");
+        let url = "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714";
+        let entries = resolver
+            .list_collection(url)
+            .await
+            .expect("list_collection 应成功");
+
+        // 与 camoufox MCP 读 DOM 验证一致:页面渲染 83 章节
+        assert_eq!(
+            entries.len(),
+            83,
+            "本课程应返回 83 章节(与 DOM 计数一致),实测 {}",
+            entries.len()
+        );
+
+        // Python 脚本已知:有回看的章节从 #2 开始,首条 file_id = None 跳过
+        let with_jump = entries.iter().filter(|e| e.jump_url.is_some()).count();
+        eprintln!("✅ list_collection 返回 {} 章节,其中 {} 有 jump_url", entries.len(), with_jump);
+        eprintln!("   前 3 个名称:");
+        for (i, e) in entries.iter().take(3).enumerate() {
+            eprintln!("     {}. {}", i + 1, e.name);
+        }
+        // 关键断言:首条是 "Linux的基本概念和系统搭建"(Python 已知有回看的第 1 章)
+        assert_eq!(entries[0].name, "Linux的基本概念和系统搭建");
+    }
 }
