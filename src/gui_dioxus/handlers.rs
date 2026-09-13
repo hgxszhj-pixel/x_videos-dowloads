@@ -106,12 +106,16 @@ pub(super) async fn start_download_impl(
 }
 
 /// 批量下载实现
+///
+/// BUG-B 修复 (2026-09-14): 返回 `Vec<(idx, url, success, status, progress)>`
+/// 让 spawn wrapper 把每个 item 的最终状态写回 `state.batch_state.items[idx].status`,
+/// 否则 fetch/start 失败路径只 log 不写回 → UI 永远停在 "pending" (BUG-A 的兄弟问题)。
 pub(super) async fn batch_download_impl(
     urls: Vec<String>,
     progress_arcs: Vec<Option<Arc<AtomicU32>>>,
     speed_arcs: Vec<Option<Arc<AtomicU64>>>,
     cancel_flags: Vec<Option<Arc<AtomicBool>>>,
-) {
+) -> Vec<(usize, String, bool, String, f32)> {
     let concurrency = 3; // 最多同时下载3个
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
 
@@ -160,7 +164,10 @@ pub(super) async fn batch_download_impl(
                                     idx,
                                     url
                                 );
-                                (url, true, "completed".to_string(), 1.0)
+                                // BUG-B 修复 (2026-09-14): 携带 idx 让 spawn wrapper
+                                // 写回 state.batch_state.items[idx].status,否则 fetch/start
+                                // 失败时 items[i] 永远 "pending",poller 也永远 0%。
+                                (idx, url.clone(), true, "completed".to_string(), 1.0)
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -169,7 +176,7 @@ pub(super) async fn batch_download_impl(
                                     url,
                                     e.message
                                 );
-                                (url, false, format!("failed: {}", e.message), 0.0)
+                                (idx, url.clone(), false, format!("failed: {}", e.message), 0.0)
                             }
                         }
                     }
@@ -180,7 +187,7 @@ pub(super) async fn batch_download_impl(
                             url,
                             e
                         );
-                        (url, false, format!("解析失败: {}", e), 0.0)
+                        (idx, url.clone(), false, format!("解析失败: {}", e), 0.0)
                     }
                 }
             })
@@ -188,6 +195,9 @@ pub(super) async fn batch_download_impl(
         .collect();
 
     // 等待所有下载完成
+    // BUG-B 修复 (2026-09-14): 收集每个 task 的 (idx, url, success, status, progress),
+    // 由 spawn wrapper 统一写回 store。
+    let mut results: Vec<(usize, String, bool, String, f32)> = Vec::with_capacity(handles.len());
     let mut completed = 0;
     let total = handles.len();
 
@@ -195,15 +205,16 @@ pub(super) async fn batch_download_impl(
         match handle.await {
             Ok(result) => {
                 completed += 1;
-                let (url, _success, status, _progress) = result;
-                // 更新状态（这里简化处理，实际需要通过状态管理）
+                let (idx, url, _success, status, _progress) = &result;
                 info!(
-                    "批量下载进度: {}/{} - {} - {}",
-                    completed, total, url, status
+                    "批量下载进度: {}/{} - {} (idx={}) - {}",
+                    completed, total, url, idx, status
                 );
+                results.push(result);
             }
             Err(join_err) => {
-                // spawn task panic/cancel 不再静默:记 warning,completed 计入但状态标 failed
+                // spawn task panic/cancel 不再静默:记 warning,completed 计入
+                // 注意:这里丢失了 idx,无法写回具体 item.status,只记总进度。
                 tracing::warn!(
                     "批量下载 task join 失败 (panic/cancel): {} - {}/{}",
                     join_err,
@@ -215,7 +226,9 @@ pub(super) async fn batch_download_impl(
         }
     }
 
-    info!("批量下载完成: {}/{} 成功", completed, total);
+    let success_count = results.iter().filter(|r| r.2).count();
+    info!("批量下载完成: {}/{} 成功", success_count, total);
+    results
 }
 
 pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay, String> {

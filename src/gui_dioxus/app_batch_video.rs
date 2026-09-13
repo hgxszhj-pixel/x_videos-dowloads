@@ -185,9 +185,24 @@ pub(super) fn BatchVideoPanel(
                     });
                     let mut state = state;
                     spawn(async move {
-                        batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags).await;
-                        state.write().batch_state.visible = false;
-                        state.write().is_downloading = false;
+                        // BUG-B 修复 (2026-09-14): 消费 batch_download_impl 返回的
+                        // (idx, url, success, status, progress) 结果,写回 store。
+                        //
+                        // Reviewer Suggestion #1 (2026-09-14): items 写回与
+                        // is_downloading = false 合并到同一事务,避免 poller tick
+                        // 落在两次写之间回写 progress = 0。
+                        let results = batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags).await;
+                        {
+                            let mut s = state.write();
+                            for (idx, _url, _success, status, progress) in results {
+                                if let Some(item) = s.batch_state.items.get_mut(idx) {
+                                    item.status = status;
+                                    item.progress = progress;
+                                }
+                            }
+                            s.batch_state.visible = false;
+                            s.is_downloading = false;
+                        }
                     });
                 },
                 style: "{state.read().theme.btn_success(\"14px\", \"12px\", \"15px\")} flex: 1;",

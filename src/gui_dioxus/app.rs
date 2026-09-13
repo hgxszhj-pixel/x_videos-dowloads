@@ -534,9 +534,33 @@ pub(super) fn AppComponent() -> Element {
                             // 使用 spawn 在后台异步执行批量下载
                             let mut state = state;
                             spawn(async move {
-                                batch_download_impl(url_list, progress_arcs, speed_arcs, cancel_flags).await;
-                                state.write().batch_state.visible = false;
-                                state.write().is_downloading = false;
+                                // BUG-B 修复 (2026-09-14): 消费 batch_download_impl 返回的
+                                // (idx, url, success, status, progress) 结果,把每个 item
+                                // 的最终状态写回 store。否则 fetch/start 失败时
+                                // batch_state.items[i].status 永远 "pending",UI 不更新。
+                                //
+                                // Reviewer Suggestion #1 (2026-09-14): items 写回与
+                                // is_downloading = false 合并到同一事务,避免 poller tick
+                                // 落在两次写之间回写 progress = 0 (虽然 visible 效果"benign",
+                                // 但与 poller.rs:144-155 单事务写回风格对齐)。
+                                let results = batch_download_impl(
+                                    url_list,
+                                    progress_arcs,
+                                    speed_arcs,
+                                    cancel_flags,
+                                )
+                                .await;
+                                {
+                                    let mut s = state.write();
+                                    for (idx, _url, _success, status, progress) in results {
+                                        if let Some(item) = s.batch_state.items.get_mut(idx) {
+                                            item.status = status;
+                                            item.progress = progress;
+                                        }
+                                    }
+                                    s.batch_state.visible = false;
+                                    s.is_downloading = false;
+                                }
                             });
                         },
                         style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"12px\", \"6px\", \"14px\")} flex: 1; font-weight: 500;",
