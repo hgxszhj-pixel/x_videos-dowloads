@@ -201,6 +201,9 @@ pub fn is_shanhu_cookie_domain(domain: &str) -> bool {
 /// 把 camoufox `export_state` 格式的 cookies JSON 转成我们的 Session。
 /// camoufox 导出格式: `{"cookies": [{"name": "...", "value": "...", "domain": "...", "path": "...", ...}], ...}`
 /// 也接受顶层数组格式 `[...]` (兼容旧版本 / 简化导出)
+///
+/// 注意:此函数**只读 cookies**,token 提取见 [`extract_token_from_state`]。Session 构造由调用方
+/// 合并 cookies + token 后完成。这样保持单一职责,也方便测试。
 pub fn session_from_export(exported: &[serde_json::Value]) -> Session {
     let cookies = exported
         .iter()
@@ -231,6 +234,50 @@ pub fn session_from_export(exported: &[serde_json::Value]) -> Session {
         token: None,
         cookies,
     }
+}
+
+/// 从 camoufox `export_state` 顶层 JSON 抽取 token。
+///
+/// 三种识别路径(2026-09-13 实测 + 防御性):
+/// 1. 顶层 `{"token": "..."}` — 用户手工加在 state.json 顶层(最简)
+/// 2. `origins[].localStorage[].name == "token"` — 完整 camoufox 格式
+/// 3. 顶层数组 / 单 cookie 对象 — 不含 token,返 None
+///
+/// 调用方应先读 state.json 顶层 Value,再 `extract_token_from_state(&v)`,避免遍历每条 cookie。
+pub fn extract_token_from_state(state: &serde_json::Value) -> Option<String> {
+    // 路径 1:顶层 token 字段
+    if let Some(t) = state.get("token").and_then(|v| v.as_str()) {
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    // 路径 2:origins[].localStorage[].name == "token"
+    if let Some(origins) = state.get("origins").and_then(|o| o.as_array()) {
+        for origin in origins {
+            if let Some(ls) = origin.get("localStorage").and_then(|l| l.as_array()) {
+                for entry in ls {
+                    if entry.get("name").and_then(|n| n.as_str()) == Some("token") {
+                        if let Some(value) = entry.get("value").and_then(|v| v.as_str()) {
+                            if !value.is_empty() {
+                                return Some(value.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 路径 3:本身是 cookie 对象但带 token 兄弟字段(防御)
+    if let Some(arr) = state.as_array() {
+        for v in arr {
+            if let Some(t) = v.get("token").and_then(|vv| vv.as_str()) {
+                if !t.is_empty() {
+                    return Some(t.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 简易时间戳 (RFC3339-ish, 不用 chrono 依赖)。
@@ -303,6 +350,61 @@ mod tests {
         assert_eq!(s.cookies[0].name, "a");
         assert_eq!(s.cookies[1].name, "c");
         assert_eq!(s.cookies[1].domain, ".wanzibook.com"); // default
+    }
+
+    #[test]
+    fn extract_token_from_state_top_level() {
+        // 2026-09-13 P0: state.json 顶层 token 字段被识别
+        let state = serde_json::json!({
+            "cookies": [],
+            "token": "wx_abcdef0123456789_27632958_103425439"
+        });
+        assert_eq!(
+            extract_token_from_state(&state).as_deref(),
+            Some("wx_abcdef0123456789_27632958_103425439")
+        );
+    }
+
+    #[test]
+    fn extract_token_from_state_origins_localstorage() {
+        // 完整 camoufox 格式: {origins: [{origin, localStorage: [{name, value}]}]}
+        let state = serde_json::json!({
+            "cookies": [],
+            "origins": [{
+                "origin": "https://study.wanzibook.com",
+                "localStorage": [
+                    {"name": "unrelated", "value": "skip-me"},
+                    {"name": "token", "value": "wx_origins_format_token"}
+                ]
+            }]
+        });
+        assert_eq!(
+            extract_token_from_state(&state).as_deref(),
+            Some("wx_origins_format_token")
+        );
+    }
+
+    #[test]
+    fn extract_token_from_state_no_token_yields_none() {
+        // 老 state.json 无 token → None
+        let state = serde_json::json!({
+            "cookies": [{"name": "PHPSESSID", "value": "abc"}]
+        });
+        assert_eq!(extract_token_from_state(&state), None);
+    }
+
+    #[test]
+    fn extract_token_from_state_empty_token_skipped() {
+        // 顶层 token 字段为空字符串 → 不返回,继续找 origins
+        let state = serde_json::json!({
+            "cookies": [],
+            "token": "",
+            "origins": [{
+                "origin": "https://study.wanzibook.com",
+                "localStorage": [{"name": "token", "value": "wx_fallback"}]
+            }]
+        });
+        assert_eq!(extract_token_from_state(&state).as_deref(), Some("wx_fallback"));
     }
 
     #[test]
@@ -398,7 +500,7 @@ mod tests {
         let three_days_ago = now_secs - 3 * 86400;
         let s = make_session_with_saved_at(&format!("epoch:{three_days_ago}"));
         assert!(!s.is_expired(7 * 86400), "7 天阈值下 3 天前不老化");
-        assert!(s.is_expired(1 * 86400), "1 天阈值下 3 天前老化");
+        assert!(s.is_expired(86400), "1 天阈值下 3 天前老化");
         assert!(s.is_expired(0), "0 阈值下任何 age > 0 即过期 (这里 age ≈ 3 天)");
     }
 }

@@ -76,6 +76,7 @@ fn main() {
         || cli.shanhu_session_info
         || cli.shanhu_login.is_some()
         || cli.shanhu_login_cookie.is_some()
+        || cli.shanhu_login_token.is_some()
     {
         handle_shanhu_cache_commands(&cli);
         return;
@@ -217,15 +218,18 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
             Some(p) => println!("  路径: {}", p),
             None => println!("  路径: <无法定位 XDG config dir>"),
         }
-        if s.cookie_count == 0 {
-            println!("  状态: 未配置 (无 cookies)");
+        if s.cookie_count == 0 && !s.has_token {
+            println!("  状态: 未配置 (无 cookies 也无 token)");
             println!();
             println!("  videoAuth 自动发现当前不可用 — 缺失章节需手工 `--shanhu-add-hash`");
             println!();
-            println!("  配置方式 (二选一):");
-            println!("    1. 浏览器手动:登录 wx-bgfcbieh.rexxi.cn 后,DevTools → Application →");
+            println!("  配置方式 (任选其一):");
+            println!("    1. 浏览器 localStorage token(2026-09-13 P0 推荐,无需 cookie):");
+            println!("       DevTools → Application → Local Storage → token 字段 →");
+            println!("       `--shanhu-login-token <TOKEN> --shanhu-login-org-id <ORG_ID>`");
+            println!("    2. 浏览器 cookies:登录 wx-bgfcbieh.rexxi.cn 后,DevTools → Application →");
             println!("       Cookies → 复制 .wanzibook.com 下的所有 cookie 到上述路径 JSON");
-            println!("    2. 自动化脚本:用 camoufox 打开课程页,扫码登录,export_state → 转 shanhu-session.json");
+            println!("    3. 自动化脚本:用 camoufox 打开课程页,扫码登录,export_state → 转 shanhu-session.json");
         } else {
             println!("  cookie 数: {}", s.cookie_count);
             println!("  含 token:  {}", if s.has_token { "是" } else { "否" });
@@ -288,6 +292,9 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
     }
     if let Some(ref cookie_str) = cli.shanhu_login_cookie {
         handle_shanhu_login_cookie(cookie_str);
+    }
+    if let Some(ref token) = cli.shanhu_login_token {
+        handle_shanhu_login_token(token, cli.shanhu_login_org_id);
     }
 }
 
@@ -355,8 +362,12 @@ fn handle_shanhu_login(state_path: &std::path::PathBuf) {
         std::process::exit(1);
     }
 
-    // 5. 转换 + 原子写
-    let session = session_from_export(&shanhu_cookies);
+    // 5. 转换 + 原子写(含 token 提取 — 2026-09-13 P0)
+    let mut session = session_from_export(&shanhu_cookies);
+    // state.json 顶层可能含 `token` 字段或 `origins[].localStorage` — 尝试提取
+    if let Some(token) = crate::platform::extract_token_from_state(&v) {
+        session.token = Some(token);
+    }
     if let Err(e) = save_session(&session) {
         eprintln!("错误: 写入 session 文件失败: {}", e);
         std::process::exit(1);
@@ -473,4 +484,83 @@ fn handle_shanhu_login_cookie(cookie_str: &str) {
     println!();
     println!("  videoAuth 自动发现已可用 — 缺失章节会通过 session cookie 自动获取 cfileid");
     println!("  更新:Chrome DevTools 重新复制 Cookie 后再跑本命令 (覆盖保存)");
+}
+
+/// 从浏览器 DevTools `localStorage.getItem("token")` 直接导入 SHANHU 登录 token(2026-09-13 P0)。
+///
+/// 与 `handle_shanhu_login_cookie` 的区别:不依赖 cookies,直接写 localStorage token 到 Session。
+/// camoufox 实测发现 SHANHU/万字所有课程 API(`listClass` / `listSections` / `videoAuth`)都把 token
+/// POST 在 form-urlencoded body 里,而非 Cookie/Authorization header,所以拿不到 cookies 也能用。
+///
+/// 用法:DevTools → Application → Local Storage → `token` 字段 → 复制值 → 喂 `--shanhu-login-token`。
+///
+/// `org_id_override` 来自 `--shanhu-login-org-id`(可选,缺省用环境变量或默认值 27632958)。
+fn handle_shanhu_login_token(token: &str, org_id_override: Option<u64>) {
+    use crate::platform::{save_session, session_summary, Session};
+
+    // 1. 验证 token 格式 — 必须是 `wx_<hash>_<org_id>_<fans_id>` 或类似非空字符串
+    let token = token.trim();
+    if token.is_empty() {
+        eprintln!("错误: token 字符串为空\n  提示: DevTools → Application → Local Storage → token 字段");
+        std::process::exit(1);
+    }
+    if token.len() < 8 {
+        eprintln!(
+            "错误: token 长度仅 {} 字符,疑似不完整。\n  完整 token 形如 `wx_<32hex>_<org_id>_<fans_id>` (≥50 字符)",
+            token.len()
+        );
+        std::process::exit(1);
+    }
+
+    // 2. 优先用 --shanhu-login-org-id 覆盖,否则尝试从 token 第二段解析 org_id
+    let org_id = org_id_override.unwrap_or_else(|| {
+        // token 形如 `wx_<hash>_<org_id>_<fans_id>` → 第二段(下划线分隔)是 org_id
+        token
+            .split('_')
+            .nth(2)
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0)
+    });
+
+    // 3. 构造 Session(无 cookies,纯 token + cookies:空)
+    //    保留空数组而非 None,确保 session_summary.cookie_count = 0 (与 handle_shanhu_login_cookie 行为一致)
+    let saved_at_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let session = Session {
+        saved_at: format!("epoch:{saved_at_secs}"),
+        token: Some(token.to_string()),
+        cookies: vec![],
+    };
+
+    // 4. 持久化
+    if let Err(e) = save_session(&session) {
+        eprintln!("错误: 写入 session 文件失败: {}", e);
+        std::process::exit(1);
+    }
+
+    // 5. 设置 org_id 环境变量,供 fetch_default_class_id / fetch_sections 使用
+    if org_id != 0 {
+        std::env::set_var("SHANHU_ORG_ID", org_id.to_string());
+    }
+
+    // 6. 输出摘要
+    println!("✓ SHANHU session 已导入(从浏览器 localStorage token)");
+    println!("  源:   DevTools → Application → Local Storage → token 字段");
+    println!("  token 长度: {} 字符", token.len());
+    println!("  token 前缀: {}...", token.chars().take(12).collect::<String>());
+    println!("  org_id: {}", if org_id != 0 { org_id.to_string() } else { "<无法从 token 解析,使用默认值 27632958>".into() });
+    let s = session_summary();
+    if let Some(p) = s.path {
+        println!("  保存到: {}", p);
+    }
+    println!("  含 token:  是 (cookies: 0)");
+    println!(
+        "  保存时间:  {}",
+        s.saved_at.as_deref().unwrap_or("<未知>")
+    );
+    println!();
+    println!("  listClass/listSections/videoAuth 已可用 — token 在 form body,无需 cookie");
+    println!("  更新:token 过期后从 DevTools 重新复制 token 再跑本命令 (覆盖保存)");
 }

@@ -156,6 +156,22 @@ pub struct Cli {
     /// 建议用环境变量避免 shell history 泄露:`COOKIE="..."; x-video-downloader --shanhu-login-cookie "$COOKIE"`。
     #[arg(long = "shanhu-login-cookie", value_name = "COOKIE_STRING")]
     pub shanhu_login_cookie: Option<String>,
+
+    /// SHANHU/万字 SaaS: 从浏览器 localStorage 导入登录 token。
+    /// token 是 SHANHU/万字 API 鉴权的核心字段(2026-09-13 实测:listClass/listSections/videoAuth
+    /// 全部 POST form-urlencoded 时需要 token in body,不是 Authorization header)。
+    ///
+    /// 用法:浏览器 DevTools → Application → Local Storage → `token` 字段值 →
+    /// 复制(`wx_<hash>_<org_id>_<fans_id>` 格式)→ 喂本参数。
+    /// 通常与 `--shanhu-login-org-id` 配合使用。
+    #[arg(long = "shanhu-login-token", value_name = "TOKEN")]
+    pub shanhu_login_token: Option<String>,
+
+    /// SHANHU/万字 SaaS: 租户 ID (org_id)。SHANHU 是白标平台,不同租户需不同 org_id。
+    /// token 字段通常包含 org_id(`wx_<hash>_<org_id>_<fans_id>`),也可通过 `--shanhu-login-org-id`
+    /// 显式覆盖环境变量 `SHANHU_ORG_ID` 和内置默认值 27632958。
+    #[arg(long = "shanhu-login-org-id", value_name = "ORG_ID")]
+    pub shanhu_login_org_id: Option<u64>,
 }
 
 /// 下载模式

@@ -4,19 +4,25 @@
 //! SHANHU 是珊瑚 / 万字 SaaS 平台的租户品牌，例如 `wx-bgfcbieh.rexxi.cn`（京峰教育）。
 //! 客户端是一个 Vue SPA，课程页 URL 形如 `/PC/#/yueke3/3529714`（hash 路由）。
 //!
-//! ## Phase 1 真实情况（2026-09-06 v2 实测）
-//! 整条 m3u8 链路 **完全匿名**，无需任何 cookie / Authorization：
+//! ## Phase 1 真实情况（2026-09-13 v3 实测,推翻 v2「全匿名」结论）
+//! 课程 API **全部需登录鉴权**(localStorage `token` + session cookies),仅 m3u8 CDN 匿名:
 //!
-//! | 步骤 | Endpoint | 鉴权 |
-//! |------|----------|------|
-//! | 1. 章节列表 | `GET study.wanzibook.com/.../listSections` | 匿名 ✅ |
-//! | 2. play_url 解析 | `GET <appid>.tenwiseacademy.cn/<hash>.m3u8?appid=...&all_play_url=true` | 匿名 ✅ |
-//! | 3. HLS playlist | `GET vod-volcengine.cskziwl.cn/<hash>/<hash>.m3u8` | 匿名, 只要 `Referer: <rexxi-host>` + `Origin` |
-//! | 4. TS segments | `GET ...ts?start=X&end=Y` (byte-range) | 同上 |
+//! | 步骤 | Endpoint | Method | Body 格式 | 鉴权 |
+//! |------|----------|--------|-----------|------|
+//! | 1. 班级列表 | `/onlineapi/stu/course/listClass` | POST | form-urlencoded | 🔒 token in body |
+//! | 2. 章节列表 | `/onlineapi/stu/course/listSections` | POST | form-urlencoded | 🔒 token in body |
+//! | 3. videoAuth | `/onlineapi/stu/course/videoAuth` | POST | form-urlencoded | 🔒 token in body |
+//! | 4. m3u8 解析 | `<appid>.tenwiseacademy.cn/<hash>.m3u8?appid=...&all_play_url=true` | GET | - | 匿名 ✅ |
+//! | 5. HLS playlist | `vod-volcengine.cskziwl.cn/<hash>/<hash>.m3u8` | GET | - | 匿名, 需 `Referer: <rexxi-host>` |
+//! | 6. TS segments | `...ts?start=X&end=Y` (byte-range) | GET | - | 同上 |
 //!
-//! **唯一卡点**：第 2 步的 `<hash>` 是 32 字符 hex，**不是 file_id 直接算出**（MD5/SHA256/SHA1 都不匹配）。
-//! hash 来自腾讯云 VOD SDK 的 PlayKey/SignURL 算法，**JS bundle 硬编码**。需要一次性浏览器引导（bootstrap）
-//! 抓取并写入本地缓存，后续全部匿名下载。
+//! **鉴权来源**: camoufox MCP `evaluate_js('localStorage.getItem("token")')` 实测获
+//! `wx_<hash>_<org_id>_<fans_id>`(v2 报告未抓 token 误判为匿名),front-end 把 token
+//! 直接 POST 在 form body 里(`application/x-www-form-urlencoded`)而非 Authorization header。
+//!
+//! **唯一卡点**:videoAuth 返回的 cfileid 是 32 字符 hex,**不是 file_id 直接算出**（MD5/SHA256/SHA1 都不匹配）。
+//! cfileid 来自腾讯云 VOD 的 PlayKey/SignURL 算法,**JS bundle 硬编码**。需要一次性浏览器引导（bootstrap）
+//! 抓取并写入本地缓存,后续全部复用。
 //!
 //! ## 阶段
 //! - **Phase 1 (此文件)**: URL 识别 + `list_collection` 完全匿名返回 83 章节（仅暴露有 `file_id` 的可下载章节）。
@@ -295,10 +301,11 @@ impl ShanhuResolver {
         ))
     }
 
-    /// 匿名调 listClass 自动发现 course 的默认 class_id。
+    /// 调 listClass 自动发现 course 的默认 class_id。
     ///
-    /// **Endpoint**: `GET {SHANHU_ONLINE_API}/onlineapi/stu/course/listClass?org_id=...&course_id=...`
-    /// **鉴权**: 匿名 ✅（2026-09-06 实测返 class_id=3023639 对 course=3529714）
+    /// **Endpoint**: `POST {SHANHU_ONLINE_API}/onlineapi/stu/course/listClass`
+    /// **Body**: `application/x-www-form-urlencoded`,字段 `token + org_id + course_id`
+    /// **鉴权**: 🔒 需要 session.token（2026-09-13 camoufox 实测,推翻 v2「匿名」结论）
     /// **命中**: `data[0].id` 即为 SPA fallback 的默认 class。
     /// **缓存**: 进程内 HashMap（一次解析后续 0 网络）。
     async fn fetch_default_class_id(&self, course_id: u64) -> Result<u64, ResolverError> {
@@ -311,18 +318,47 @@ impl ShanhuResolver {
             info!("SHANHU class_id 缓存命中: course_id={} → {}", course_id, cached);
             return Ok(cached);
         }
-        // 2. 匿名拉 listClass
+        // 2. 需要登录 session (token 在 form body)
+        let session = load_session().ok_or_else(|| {
+            ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: String::new(),
+                message: format!("listClass 需要登录 token (course_id={course_id})"),
+                action: "请运行 `x-video-downloader --shanhu-login-token <TOKEN> --shanhu-login-org-id <ORG_ID>`\n\
+                         (token 来自浏览器 DevTools → Application → Local Storage → token 字段)"
+                    .into(),
+            }
+        })?;
+        let token = session.token.as_deref().ok_or_else(|| {
+            ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: String::new(),
+                message: "session 缺 token 字段".into(),
+                action: "用 `--shanhu-login-token` 重导".into(),
+            }
+        })?;
+        // 3. POST form-urlencoded
         let org_id = Self::org_id();
         let url = format!(
-            "{}/onlineapi/stu/course/listClass?org_id={}&course_id={}",
-            SHANHU_ONLINE_API, org_id, course_id
+            "{}/onlineapi/stu/course/listClass",
+            SHANHU_ONLINE_API
         );
-        info!("SHANHU listClass (auto-discover) → {}", url);
+        info!(
+            "SHANHU listClass (auto-discover) → course_id={} org_id={}",
+            course_id, org_id
+        );
+        let cookie_header = cookies_to_header(&session);
         let resp = self
             .client
-            .get(&url)
+            .post(&url)
             .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
             .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .header("Cookie", cookie_header)
+            .form(&[
+                ("token", token),
+                ("org_id", &org_id.to_string()),
+                ("course_id", &course_id.to_string()),
+            ])
             .send()
             .await
             .map_err(|e| ResolverError::Network(format!("listClass HTTP 失败: {e}")))?;
@@ -336,7 +372,7 @@ impl ShanhuResolver {
             ResolverError::ParseFailed(format!("listClass JSON: {e}"))
         })?;
         let id = Self::parse_first_class_id(&body)?;
-        // 3. 写缓存
+        // 4. 写缓存
         if let Ok(mut cache) = Self::class_id_cache().lock() {
             cache.insert(course_id, id);
         }
@@ -370,29 +406,65 @@ impl ShanhuResolver {
         self.fetch_default_class_id(course_id).await
     }
 
-    /// 匿名调 listSections 拉章节列表。
+    /// 调 listSections 拉章节列表。
     ///
-    /// **Endpoint**: `GET {SHANHU_ONLINE_API}/onlineapi/stu/course/listSections?org_id=...&course_id=...&class_id=...&page=1&num=200`
+    /// **Endpoint**: `POST {SHANHU_ONLINE_API}/onlineapi/stu/course/listSections`
+    /// **Body**: `application/x-www-form-urlencoded`,字段 `token + org_id + course_id + class_id + page + num`
+    /// **鉴权**: 🔒 需要 session.token（2026-09-13 camoufox 实测,推翻 v2「匿名」结论）
     ///
-    /// **实测 (2026-09-06)**: 无 cookie / Authorization,返 200 + 完整 chapters[].videos[].file_id。
-    /// 与 v1 报告"开课前无法下载、videos[] 全空"矛盾 —— 实测是平台 / 端点差异或 v1 旧版 fix。
+    /// 返 200 + 完整 chapters[].videos[].file_id。
     async fn fetch_sections(
         &self,
         course_id: u64,
         class_id: u64,
     ) -> Result<Vec<ChapterInfo>, ResolverError> {
+        // 1. 需要登录 session
+        let session = load_session().ok_or_else(|| {
+            ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: String::new(),
+                message: format!(
+                    "listSections 需要登录 token (course_id={course_id} class_id={class_id})"
+                ),
+                action: "请运行 `x-video-downloader --shanhu-login-token <TOKEN> --shanhu-login-org-id <ORG_ID>`\n\
+                         (token 来自浏览器 DevTools → Application → Local Storage → token 字段)"
+                    .into(),
+            }
+        })?;
+        let token = session.token.as_deref().ok_or_else(|| {
+            ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: String::new(),
+                message: "session 缺 token 字段".into(),
+                action: "用 `--shanhu-login-token` 重导".into(),
+            }
+        })?;
+
         let org_id = Self::org_id();
         let url = format!(
-            "{}/onlineapi/stu/course/listSections?org_id={}&course_id={}&class_id={}&page=1&num={}",
-            SHANHU_ONLINE_API, org_id, course_id, class_id, SECTION_PAGE_SIZE
+            "{}/onlineapi/stu/course/listSections",
+            SHANHU_ONLINE_API
         );
-        info!("SHANHU listSections → {}", url);
+        info!(
+            "SHANHU listSections → course_id={} class_id={} org_id={}",
+            course_id, class_id, org_id
+        );
 
+        let cookie_header = cookies_to_header(&session);
         let resp = self
             .client
-            .get(&url)
+            .post(&url)
             .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
             .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .header("Cookie", cookie_header)
+            .form(&[
+                ("token", token),
+                ("org_id", &org_id.to_string()),
+                ("course_id", &course_id.to_string()),
+                ("class_id", &class_id.to_string()),
+                ("page", "1"),
+                ("num", &SECTION_PAGE_SIZE.to_string()),
+            ])
             .send()
             .await
             .map_err(|e| ResolverError::Network(format!("listSections HTTP 失败: {e}")))?;
@@ -597,16 +669,18 @@ impl ShanhuResolver {
             );
         }
 
+        let token = session.token.as_deref().ok_or_else(|| {
+            ResolverError::Detailed {
+                platform: Platform::Shanhu,
+                url: String::new(),
+                message: "session 缺 token 字段 (videoAuth 必须)".into(),
+                action: "用 `--shanhu-login-token` 重导".into(),
+            }
+        })?;
         let url = format!(
             "{}/onlineapi/stu/course/videoAuth",
             SHANHU_ONLINE_API
         );
-        let body = serde_json::json!({
-            "noteCourseId": course_id,
-            "class_id": class_id,
-            "chapter_id": chapter_id,
-            "video_id": video_id,
-        });
         let cookie_header = cookies_to_header(&session);
         info!(
             "SHANHU videoAuth → chapter={chapter_id} video_id={video_id} cookies={}",
@@ -619,8 +693,13 @@ impl ShanhuResolver {
             .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
             .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
             .header("Cookie", cookie_header)
-            .header("Content-Type", "application/json")
-            .json(&body)
+            .form(&[
+                ("token", token),
+                ("course_id", &course_id.to_string()),
+                ("class_id", &class_id.to_string()),
+                ("chapter_id", &chapter_id.to_string()),
+                ("video_id", &video_id.to_string()),
+            ])
             .send()
             .await
             .map_err(|e| ResolverError::Network(format!("videoAuth HTTP 失败: {e}")))?;
@@ -1298,20 +1377,27 @@ mod tests {
     ///
     /// 跑法:`cargo test --release smoke_list_collection_rexxi_3529714 -- --ignored --nocapture`
     ///
-    /// 前置:本机已有 SHANHU session 文件(`cargo run -- --shanhu-login <state.json>`),
-    /// 否则 list_collection 401/403 → 测失败,这是预期(告知用户 session 缺失)。
+    /// 前置:本机已有 SHANHU session 文件(`cargo run -- --shanhu-login-token <TOKEN>` 或
+    /// `--shanhu-login <state.json>`),否则 listClass/listSections 401/403 → 测失败,这是预期
+    /// (告知用户 session 缺失)。
     ///
     /// 不进默认 cargo test(CI 会卡),靠 `#[ignore]` 守护:
     /// 任何时候想跑: `cargo test --release smoke_list_collection -- --ignored`
+    ///
+    /// 2026-09-13 修订:不再硬编码 83 章节 — 那是 DOM 渲染总数,list_collection 只返回**有 file_id**
+    /// 的章节(已生成回看的)。当前课程进度下约 3 章节有回看,但会随课程进度增长。新断言:
+    /// 1. list_class/listSections 真实调通(auth 通 + 服务端返 200 + 83 章节)
+    /// 2. list_collection 至少返回 1 条 entry(至少有 1 个章节已生成回看)
+    /// 3. 首条 name 匹配已知有回看的第 1 章 "Linux的基本概念和系统搭建"
     #[tokio::test]
-    #[ignore = "需本机 SHANHU session;--shanhu-login 后跑 --ignored 启用"]
+    #[ignore = "需本机 SHANHU session;--shanhu-login-token 后跑 --ignored 启用"]
     async fn smoke_list_collection_rexxi_3529714() {
         use crate::platform::session_summary;
 
         let summary = session_summary();
         assert!(
-            summary.cookie_count > 0,
-            "本地无 session — 先跑 `cargo run -- --shanhu-login <state.json>`"
+            summary.cookie_count > 0 || summary.has_token,
+            "本地无 session — 先跑 `cargo run -- --shanhu-login-token <TOKEN>` 或 `--shanhu-login <state.json>`"
         );
 
         let resolver = ShanhuResolver::new().expect("ShanhuResolver::new");
@@ -1321,22 +1407,52 @@ mod tests {
             .await
             .expect("list_collection 应成功");
 
-        // 与 camoufox MCP 读 DOM 验证一致:页面渲染 83 章节
-        assert_eq!(
-            entries.len(),
-            83,
-            "本课程应返回 83 章节(与 DOM 计数一致),实测 {}",
+        // 1. 至少 1 条 entry(课程至少要有 1 个已录制章节才能下载)
+        assert!(
+            !entries.is_empty(),
+            "list_collection 应至少返回 1 条 entry(有 file_id 的章节),实测 {}",
             entries.len()
         );
 
-        // Python 脚本已知:有回看的章节从 #2 开始,首条 file_id = None 跳过
+        // 2. 首条 name 与 camoufox MCP 实测一致(京峰教育 Linux 课第 1 个有回看的章节)
+        assert_eq!(entries[0].name, "Linux的基本概念和系统搭建");
+
+        // 3. 所有 entry 必须有 jump_url (没 jump_url 的章节被 filter_map 已过滤掉,这里再校验一次)
         let with_jump = entries.iter().filter(|e| e.jump_url.is_some()).count();
-        eprintln!("✅ list_collection 返回 {} 章节,其中 {} 有 jump_url", entries.len(), with_jump);
-        eprintln!("   前 3 个名称:");
+        assert_eq!(
+            with_jump,
+            entries.len(),
+            "所有 entry 都应有 jump_url,实测 {}/{}",
+            with_jump,
+            entries.len()
+        );
+
+        // 4. 直接调 raw fetch_sections 验证服务端返 83 章节(2026-09-13 curl 实测),防分页截断 bug
+        let course_id = ShanhuResolver::extract_course_id(url).expect("extract_course_id");
+        let class_id = resolver
+            .resolve_class_id(url, course_id)
+            .await
+            .expect("resolve_class_id 应成功");
+        let raw_sections = resolver
+            .fetch_sections(course_id, class_id)
+            .await
+            .expect("fetch_sections 应成功");
+        assert_eq!(
+            raw_sections.len(),
+            83,
+            "服务端 listSections 应返 83 章节(DOM 一致),实测 {} (可能分页截断)",
+            raw_sections.len()
+        );
+
+        eprintln!(
+            "✅ list_collection 返回 {} 条 entry(有回看);\
+             raw listSections 返回 {} 章节(服务端总数,与 DOM 一致)",
+            entries.len(),
+            raw_sections.len()
+        );
+        eprintln!("   前 3 条 entry 名称:");
         for (i, e) in entries.iter().take(3).enumerate() {
             eprintln!("     {}. {}", i + 1, e.name);
         }
-        // 关键断言:首条是 "Linux的基本概念和系统搭建"(Python 已知有回看的第 1 章)
-        assert_eq!(entries[0].name, "Linux的基本概念和系统搭建");
     }
 }
