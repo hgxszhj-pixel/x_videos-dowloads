@@ -1,6 +1,8 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-14 SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 — 1 commit (`33f02f6` `BatchVideoPanel` 加 `poller` prop + `app_batch_video.rs:166` 补 `poller.send(PollMsg::Batch)` + `app.rs:399` 透传 + `handlers.rs:127` 加 `[batch_download]` sub-task 4 条 tracing 诊断) on `gitbutler/workspace`,head `33f02f6`;**根因** — 复制旧 Batch Download 入口 (`app.rs:498-540`) 到新 batch_video_state (`app_batch_video.rs:132-171`) 时漏了步骤 4 `poller.send(PollMsg::Batch { progress_arcs, total_count })`,Coroutine 永远 idle,UI 进度原子无人读;**修复**:`BatchVideoPanel` 加 `poller: Coroutine<PollMsg>` prop,`app.rs:399` 调用处透传 poller,新入口补全 5 步;**BUG-B (未触发)**:`fetch_video_info_impl` 失败路径不写回 `batch_state.items[i].status`,本次 3 条全成功未暴露,仅加 log 备下次定位;287 tests pass / clippy clean / 0 回归;**待 GUI 实测** — 用户跑 "▶ 全部下载" 后日志应出现 `[batch_download] sub-task 启动/fetch 成功/下载完成` 三段,确认 BUG-A 关闭。Memory `projects/x-videos-dowloads.md` 已追加教训 #18 "复制异步 UI 状态机入口时,镜像完整 N 步清单" + 5 步 checklist 表 + 诊断日志格式。
+**最新**: 2026-09-14 (cont.) SHANHU batch_video_state 失败状态写回 BUG-B + DownloadResult.success 检查 BUG-C 修复 — 2 commits (`b96a104` `app_batch_video.rs:194-205` batch_download_impl 结果消费 + store 写回 + 合并 is_downloading 翻事务避免 poller race / `286accd` `handlers.rs:97-117` start_download_impl 检查 DownloadResult.success + ErrorDisplay 镜像 DownloadError 结构化字段) on `gitbutler/workspace`,head `286accd`;**根因链** — BUG-B: spawn 块不消费 `Vec<(idx, url, success, status, progress)>`,直接关闭 visible → store 永远保留 "pending" → UI 不显示 status;BUG-C: 上层 `VideoDownloader::download()` 在所有 404 时返 `Ok(DownloadResult{success=false})`,旧代码 `let result = ...?; Ok(())` 吞掉 success 标志 → 假成功传到 BUG-B → 假 completed 写到 UI (镜像 `download_one` `handlers.rs:868-876` 正确处理);**教训 #19** — 失败路径可见性: 任何 Result 透传必须双重检查 success 标志 + 调用层必须显式消费返回数组 (`let _ = ...` 是危险信号);**教训 #20** — ultragoal 5 步验证矩阵 (build/test/lint/review/runtime) 待加进 review-checklist.md;三轮 ultragoal 迭代每轮从 cancel 按钮 / 过期 m3u8 复现新 bug;287 tests / clippy clean / code-reviewer 0/0/0/0;GUI 二进制 78.2M 重编完成 (mtime 07:14:23 CST),待用户实测失败路径 (预期 item 显示 "下载失败: HTTP 404") + 成功路径 (预期 completed 不回归)。
+
+**次新**: 2026-09-14 SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 — 1 commit (`33f02f6` `BatchVideoPanel` 加 `poller` prop + `app_batch_video.rs:166` 补 `poller.send(PollMsg::Batch)` + `app.rs:399` 透传 + `handlers.rs:127` 加 `[batch_download]` sub-task 4 条 tracing 诊断) on `gitbutler/workspace`,head `33f02f6`;**根因** — 复制旧 Batch Download 入口 (`app.rs:498-540`) 到新 batch_video_state (`app_batch_video.rs:132-171`) 时漏了步骤 4 `poller.send(PollMsg::Batch { progress_arcs, total_count })`,Coroutine 永远 idle,UI 进度原子无人读;**修复**:`BatchVideoPanel` 加 `poller: Coroutine<PollMsg>` prop,`app.rs:399` 调用处透传 poller,新入口补全 5 步;**BUG-B (未触发但识别)**:`fetch_video_info_impl` 失败路径不写回 `batch_state.items[i].status`,本次 3 条全成功未暴露,仅加 log 备下次定位;287 tests pass / clippy clean / 0 回归;**待 GUI 实测** — 用户跑 "▶ 全部下载" 后日志应出现 `[batch_download] sub-task 启动/fetch 成功/下载完成` 三段,确认 BUG-A 关闭。Memory `projects/x-videos-dowloads.md` 已追加教训 #18 "复制异步 UI 状态机入口时,镜像完整 N 步清单" + 5 步 checklist 表 + 诊断日志格式。
 
 **次新**: 2026-09-13 SHANHU GUI "Status: Fetching..." 永久卡死两层叠加 bug 修复 — 4 commits (`4f2128b` token-in-body form-urlencoded 推翻 v2 匿名 / `ad4aae1` `requires_auth=true` 同步 / `0664fbb` jump_url 改 query string 避 Vue hash 路由 / `6691737` videoAuth 用 mp4Url 直接拿 m3u8 推翻 32hex 假设 / `d939cab` 端到端 smoke test) on `gitbutler/workspace`,head `d939cab`;**根因链** — 第一层:`list_collection` jump_url `&chapter=` 被吃进 Vue hash fragment;第二层:videoAuth 响应 `cfileid=220903970091175937`(19 字符十进制)≠ 32 hex → `ParseFailed` → YtDlp fallback 报 "Unsupported URL" → 永久 loading;**修复**:`jump_url` 改 `?chapter=` / `&chapter=`;`fetch_cfileid_via_video_auth` 改返 `data.video.mp4Url`(完整 m3u8 URL,跳过 `resolve_play_url` 二次 HTTP);`hash` 缓存语义改存完整 m3u8 URL;`--shanhu-add-hash` CLI 同步;`resolve_play_url` 保留 `#[allow(dead_code)]` 兜底;新增 `extract_token_from_state(&Value)` 3 路径(top-level / origins.localStorage / 数组元素);新 `extract_token_from_state_top_level/origins_localstorage/no_token/empty_token` 4 unit tests;287 passed / 0 failed / clippy `-D warnings` clean;GUI 实测 3 entry 全显示 (Linux的基本概念和系统搭建/基础命令讲解/文件权限),Status "Video info fetched";**P3 stale GUI 提示**未做(优先级低,CLI 兜底)。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/` 已追加 5 条新教训 (#13–#17)。
 
@@ -16,6 +18,99 @@
 
 ---
 
+## 最新 Session: 2026-09-14 (cont.) — SHANHU batch_video_state 失败状态写回 BUG-B + DownloadResult.success 检查 BUG-C 修复 (commits `b96a104` → `286accd`)
+
+### 1. 症状
+BUG-A (33f02f6) 修完后,BatchState UI 进度条会动了 (0% → 100%),但每条 status 永远显示 "completed"。事实上 m3u8 段全部 HTTP 404 (URL 几分钟过期),磁盘 0 字节。
+
+### 2. 根因链 — 失败路径"看不见"的两层串联
+- **BUG-B** (`batch_download_impl`): 改了 `Vec<(idx, url, success, status, progress)>` 返回,但 `app_batch_video.rs:194` spawn 块**不消费**这个 Vec,直接 `s.batch_state.visible = false` → store 永远保留初始 "pending" → UI 不显示 status。
+- **BUG-C** (`start_download_impl`): 上层 `VideoDownloader::download()` 在所有 404 时返 `Ok(DownloadResult{success=false, ..})`,旧代码 `let result = ...?; Ok(())` 直接吞掉 success 标志 → 假成功传到 BUG-B → 假 completed 写到 UI。
+
+**正确参考**: `handlers.rs:868-876` `download_one` (Course pool 路径) 本来就有 `if result.success { Ok(()) } else { Err(...) }`,只是 batch 路径漏写。两 bug 是同一类 — 错误处理透传到 UI 时的"双重检查"。
+
+### 3. ultragoal 三轮迭代
+本次按 ultragoal 模式循环,3 轮命中 3 个独立 bug。每轮都跑 5 步验证矩阵:
+
+| Iter | Bug | 验证 ✅ | 失败现象 | 根因 | 修复 | Commit |
+|------|-----|---------|---------|------|------|--------|
+| 1 | A | b/t/l/r | UI 卡 0% pending | `poller.send(Batch)` 漏 | `app_batch_video.rs:166` + `app.rs:399` 透传 | `33f02f6` |
+| 2 | B | b/t/l/r | status 永远 completed | `batch_download_impl` 结果不消费 | `app_batch_video.rs:194-205` 写回 store | `b96a104` |
+| 3 | C | b/t/l/r | status 仍 completed (success 标志丢失) | `start_download_impl` 不检查 `result.success` | `handlers.rs:97-117` 加 success check | `286accd` |
+
+**5 步验证矩阵 (写入 DNA `docs/dna/review-checklist.md` §待加)**:
+1. `cargo build --bin x-video-downloader` ✅
+2. `cargo test --bin` ✅ **287 passed / 0 failed / 10 ignored**
+3. `cargo clippy -- -D warnings` ✅ clean
+4. `code-reviewer` agent ✅ APPROVE 0 CRITICAL/HIGH/MEDIUM/LOW
+5. **运行时** — 用户实测 GUI (Cancel 按钮压测 + m3u8 过期 404 场景)
+
+Stop 条件: 5 步全 ✅ → `result:`; 任一 ❌ → 下一轮; 3 轮后仍未通过 → Rule 13 如实汇报。
+
+### 4. 修复
+
+**`b96a104` — BUG-B 结果写回 store**:
+```rust
+// app_batch_video.rs:194-205
+let results = batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags).await;
+{
+    let mut s = state.write();
+    for (idx, _url, _success, status, progress) in results {
+        if let Some(item) = s.batch_state.items.get_mut(idx) {
+            item.status = status;
+            item.progress = progress;
+        }
+    }
+    s.batch_state.visible = false;
+    s.is_downloading = false;  // Reviewer Sugg #1: 合并到同一事务,避免 poller tick race
+}
+```
+
+**`286accd` — BUG-C success 检查**:
+```rust
+// handlers.rs:97-117
+let result = downloader.download(&request, callback).await
+    .map_err(|e| { /* downcast DownloadError → ErrorDisplay 结构化 */ })?;
+if result.success {
+    Ok(())
+} else {
+    Err(ErrorDisplay::new(
+        "download",
+        result.error_message.unwrap_or_else(|| "下载失败 (未知错误)".to_string()),
+        "检查视频 URL 是否过期,或重新 Analyze Course 刷新 m3u8 后再下载",
+    ))
+}
+```
+
+### 5. 教训 #19 + #20
+
+**#19 失败路径可见性原则**:任何把 `Result<Success, Err>` 透传到 UI 的路径必须**双重检查**:
+- 上层"下载/网络/解析"函数:不仅要 `?` 转换,还要检查 `.success` / `.is_ok()` 标志字段 (例如 `DownloadResult.success`)
+- 调用层:必须**显式消费**函数返回的中间结果数组,不允许丢弃 (`let _ = ...` 是危险信号)
+
+**#20 ultragoal 5 步验证矩阵**: 不可省略任何一步。代码静态通过 ≠ 运行时正确 (BUG-A 静态无问题但 GUI 卡死;BUG-B 静态无问题但 UI 假 completed;BUG-C 同)。`runtime` 步是 BUG-A/B/C 全部命中的关键。
+
+### 6. 验证
+- `b96a104`: cargo ✅ / 287 ✅ / clippy ✅ / reviewer ✅
+- `286accd`: cargo ✅ / 287 ✅ / clippy ✅ / reviewer ✅ (0/0/0/0, 1 NIT optional)
+- GUI binary 重编 78.2M (`mtime 07:14:23 CST`)
+- 旧 GUI PID 74690 已自然退出
+
+### 7. 待用户实测 (final)
+1. **失败路径**: Analyze Course → 等几分钟让 m3u8 URL 过期 → Batch Download
+   - 预期: item 显示 "下载失败: HTTP 404..." (红色),不是 "completed"
+2. **成功路径**: 下载一个有效 m3u8
+   - 预期: item 仍 "completed" (假阳性场景回归)
+
+### 8. 关联
+- BUG-A session (33f02f6) — 上游, poller 消息机制
+- 教训 #18 "复制异步 UI 状态机入口时,镜像完整 N 步清单" → BUG-B/C 是它在错误处理层的变种
+- 教训 #14 "第三方协议不仅指 HTTP API,也指 Coroutine 协议" → BUG-C 是它的 `DownloadResult` 变种
+- ultragoal 模板 → `~/.claude/projects/.../memory/ultragoal-methodology-loop.md` (新增)
+- `docs/dna/review-checklist.md` → 待加 §5 验证矩阵
+
+---
+
 ## 最新 Session: 2026-09-14 — SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 (commit `33f02f6`)
 
 ### 1. 症状
@@ -26,7 +121,7 @@
 
 `use_progress_poller` 是 `Coroutine<PollMsg>`，只在收 `PollMsg::Batch` 后才进入批量轮询循环（`poller.rs:101-159`）。新代码没发这条消息 → poller 永远 idle → `batch_state.items[i].progress` 永远 = 0.0 → UI 卡 "0% pending"。
 
-下载器 (`batch_download_impl` → `start_download_impl`) 内部 `progress_arc.store(percent, Ordering::Relaxed)` 真在写原子 — 磁盘上 .mp4 应该是在长的（待用户实测确认）。
+下载器 (`batch_download_impl` → `start_download_impl`) 内部 `progress_arc.store(percent, Ordering::Relaxed)` 真在写原子 — 进度条修复后实际验证见 2026-09-14 (cont.) BUG-B/C session。
 
 ### 3. 异步 UI 状态机复制 5 步清单
 
@@ -46,23 +141,24 @@
 - `app_batch_video.rs:166` 之前补 `poller.send(PollMsg::Batch { progress_arcs_for_poll, total_count })`
 - `handlers.rs:127` 加 `[batch_download]` sub-task 入口/出口/失败 4 条 tracing 日志
 
-### 5. BUG-B (本次未触发但识别)
-`handlers.rs:127` 子任务 `fetch_video_info_impl` 失败时只 `info!(解析失败)`，**未写回 `state.batch_state.items[i].status`**。本次 3 条全成功（m3u8 length 101）未暴露；按 surgical change 规则本次仅补 BUG-A + 加 log，下次写回 UI status。
+### 5. BUG-B / BUG-C (同日同会话触发并修复)
+`fetch_video_info_impl` 失败路径不写回 store 的问题在用户实测时暴露 — 同日触发并修复,见 [## 最新 Session: 2026-09-14 (cont.)](#) (`b96a104` + `286accd`),3 轮 ultragoal 迭代命中 3 个独立 bug。
 
 ### 6. 验证
 - `cargo check` ✅ (只有 block 0.1.6 future-incompat 与本次无关)
 - `cargo test --bin` ✅ **287 passed; 0 failed** (无回归)
 - `cargo clippy --bin` ✅ clean
 - `git diff --stat` ✅ 3 文件 +59/-5 (surgical)
+- 用户实测: BUG-A 关闭 (进度条动),但暴露 BUG-B (status 永远 completed) + BUG-C (success 标志丢失),同日修复见新 session
 
-### 7. 待用户实测
-跑 GUI "▶ 全部下载"，日志应出现：
+### 7. 验证日志格式 (sub-task 4 条,实测 3 条齐全)
+跑 GUI "▶ 全部下载"，日志应出现:
 ```
 [batch_download] sub-task 启动 idx=0 url=https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714?chapter=3557155
 [batch_download] fetch 成功 idx=0 title=xxx resolved_url=https://...m3u8
-[batch_download] 下载完成 idx=0 url=...
+[batch_download] 下载完成 idx=0 url=...    (或 [batch_download] 下载失败 idx=0 url=... err=...)
 ```
-3 段日志齐全 = BUG-A 关闭。
+3 段齐全 = BUG-A 关闭。第 4 段失败日志格式见 §8。
 
 ### 8. 诊断日志格式（sub-task 统一约定）
 ```
