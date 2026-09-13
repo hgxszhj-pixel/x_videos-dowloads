@@ -94,7 +94,7 @@ pub(super) async fn start_download_impl(
 
     let mut downloader = VideoDownloader::new()
         .map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查下载器初始化"))?;
-    downloader.download(&request, callback).await.map_err(|e| {
+    let result = downloader.download(&request, callback).await.map_err(|e| {
         // 尝试 downcast 到结构化 DownloadError，否则 fallback
         if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
             ErrorDisplay::from(de.clone())
@@ -102,7 +102,21 @@ pub(super) async fn start_download_impl(
             ErrorDisplay::new("download", e.to_string(), "")
         }
     })?;
-    Ok(())
+    // BUG-C 修复 (2026-09-14): 检查 DownloadResult.success — 上层 download() 在所有
+    // 分段 404 时仍返回 Ok(result{success=false}),旧代码直接 ? 后 Ok(()),
+    // BUG-B 把 success=true 写回 store → UI 显示 completed 而文件实际未下载。
+    // 镜像 src/gui_dioxus/handlers.rs:868-876 (download_one) 的处理。
+    if result.success {
+        Ok(())
+    } else {
+        Err(ErrorDisplay::new(
+            "download",
+            result
+                .error_message
+                .unwrap_or_else(|| "下载失败 (未知错误)".to_string()),
+            "检查视频 URL 是否过期,或重新 Analyze Course 刷新 m3u8 后再下载",
+        ))
+    }
 }
 
 /// 批量下载实现
