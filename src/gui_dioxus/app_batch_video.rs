@@ -13,6 +13,7 @@ use dioxus::prelude::*;
 
 use super::components::{CardShadow, WhiteCard};
 use super::handlers::batch_download_impl;
+use super::poller::PollMsg;
 use super::theme::{TEXT_MUTED, TEXT_PRIMARY};
 use super::types::{
     AppState, AppStateStoreExt, BatchItemState, BatchState, BatchVideoStateStoreExt,
@@ -20,8 +21,15 @@ use super::types::{
 };
 
 /// 批量视频列表面板 (含下载/取消按钮)
+///
+/// 接受 `poller` 参数以便触发进度轮询。`use_progress_poller` 是 AppComponent 创建的
+/// 全局 Coroutine,新入口必须显式 `poller.send(PollMsg::Batch { ... })`,否则
+/// poller 永远 idle,UI 进度条停在 0% (2026-09-14 BUG-A 修复,见 HANDOFF)。
 #[component]
-pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
+pub(super) fn BatchVideoPanel(
+    state: Store<AppState>,
+    poller: Coroutine<PollMsg>,
+) -> Element {
     // 列表只读 —— 此面板渲染期间 items 不再变化 —— 旧代码 `items().iter()` 也能用。
     // 仍提取 sub-store 让结构与 batch_progress/course_pool 一致,未来要加交互(checkbox/删除)
     // 时不会因裸引用而无订阅翻车。
@@ -163,6 +171,18 @@ pub(super) fn BatchVideoPanel(state: Store<AppState>) -> Element {
                     // 同步 canonical flag,poller.rs:66 gate 才能正常轮询
                     state.write().is_downloading = true;
                     state.write().batch_video_state.visible = false;
+                    // BUG-A 修复 (2026-09-14): 必须通知 poller 进入批量轮询循环,
+                    // 否则 poller 永远 idle,batch_state.items[i].progress 永远 = 0。
+                    // 镜像 app.rs:525-532 老入口的步骤 4。
+                    let progress_arcs_for_poll: Vec<Arc<AtomicU32>> = progress_arcs
+                        .iter()
+                        .filter_map(|a| a.clone())
+                        .collect();
+                    let total_count = urls.len();
+                    poller.send(PollMsg::Batch {
+                        progress_arcs: progress_arcs_for_poll,
+                        total_count,
+                    });
                     let mut state = state;
                     spawn(async move {
                         batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags).await;

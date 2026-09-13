@@ -126,9 +126,20 @@ pub(super) async fn batch_download_impl(
             let cancel_flag = cancel_flags.get(idx).cloned().flatten();
             tokio::spawn(async move {
                 let _permit = semaphore.acquire_owned().await;
+                tracing::info!(
+                    "[batch_download] sub-task 启动 idx={} url={}",
+                    idx,
+                    url
+                );
                 // 获取视频信息
                 match fetch_video_info_impl(&url).await {
                     Ok(info) => {
+                        tracing::info!(
+                            "[batch_download] fetch 成功 idx={} title={} resolved_url={}",
+                            idx,
+                            info.title,
+                            info.url
+                        );
                         // 下载视频
                         match start_download_impl(
                             &info.url,
@@ -143,11 +154,34 @@ pub(super) async fn batch_download_impl(
                         )
                         .await
                         {
-                            Ok(_) => (url, true, "completed".to_string(), 1.0),
-                            Err(e) => (url, false, format!("failed: {}", e.message), 0.0),
+                            Ok(_) => {
+                                tracing::info!(
+                                    "[batch_download] 下载完成 idx={} url={}",
+                                    idx,
+                                    url
+                                );
+                                (url, true, "completed".to_string(), 1.0)
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[batch_download] 下载失败 idx={} url={} err={}",
+                                    idx,
+                                    url,
+                                    e.message
+                                );
+                                (url, false, format!("failed: {}", e.message), 0.0)
+                            }
                         }
                     }
-                    Err(e) => (url, false, format!("解析失败: {}", e), 0.0),
+                    Err(e) => {
+                        tracing::warn!(
+                            "[batch_download] 解析失败 idx={} url={} err={}",
+                            idx,
+                            url,
+                            e
+                        );
+                        (url, false, format!("解析失败: {}", e), 0.0)
+                    }
                 }
             })
         })

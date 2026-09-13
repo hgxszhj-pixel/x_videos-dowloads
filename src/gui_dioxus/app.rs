@@ -396,7 +396,7 @@ pub(super) fn AppComponent() -> Element {
 
             // 批量视频信息显示 - 拆到 app_batch_video.rs (Step 4)
             if state.read().batch_video_state.visible {
-                BatchVideoPanel { state }
+                BatchVideoPanel { state, poller }
             }
 
             // 课程池下载面板 - 拆到 app_course_pool.rs (Step 6)
