@@ -1,6 +1,8 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-13 SHANHU GUI "Status: Fetching..." 永久卡死两层叠加 bug 修复 — 4 commits (`4f2128b` token-in-body form-urlencoded 推翻 v2 匿名 / `ad4aae1` `requires_auth=true` 同步 / `0664fbb` jump_url 改 query string 避 Vue hash 路由 / `6691737` videoAuth 用 mp4Url 直接拿 m3u8 推翻 32hex 假设 / `d939cab` 端到端 smoke test) on `gitbutler/workspace`,head `d939cab`;**根因链** — 第一层:`list_collection` jump_url `&chapter=` 被吃进 Vue hash fragment;第二层:videoAuth 响应 `cfileid=220903970091175937`(19 字符十进制)≠ 32 hex → `ParseFailed` → YtDlp fallback 报 "Unsupported URL" → 永久 loading;**修复**:`jump_url` 改 `?chapter=` / `&chapter=`;`fetch_cfileid_via_video_auth` 改返 `data.video.mp4Url`(完整 m3u8 URL,跳过 `resolve_play_url` 二次 HTTP);`hash` 缓存语义改存完整 m3u8 URL;`--shanhu-add-hash` CLI 同步;`resolve_play_url` 保留 `#[allow(dead_code)]` 兜底;新增 `extract_token_from_state(&Value)` 3 路径(top-level / origins.localStorage / 数组元素);新 `extract_token_from_state_top_level/origins_localstorage/no_token/empty_token` 4 unit tests;287 passed / 0 failed / clippy `-D warnings` clean;GUI 实测 3 entry 全显示 (Linux的基本概念和系统搭建/基础命令讲解/文件权限),Status "Video info fetched";**P3 stale GUI 提示**未做(优先级低,CLI 兜底)。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/` 已追加 5 条新教训 (#13–#17)。
+**最新**: 2026-09-14 SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 — 1 commit (`33f02f6` `BatchVideoPanel` 加 `poller` prop + `app_batch_video.rs:166` 补 `poller.send(PollMsg::Batch)` + `app.rs:399` 透传 + `handlers.rs:127` 加 `[batch_download]` sub-task 4 条 tracing 诊断) on `gitbutler/workspace`,head `33f02f6`;**根因** — 复制旧 Batch Download 入口 (`app.rs:498-540`) 到新 batch_video_state (`app_batch_video.rs:132-171`) 时漏了步骤 4 `poller.send(PollMsg::Batch { progress_arcs, total_count })`,Coroutine 永远 idle,UI 进度原子无人读;**修复**:`BatchVideoPanel` 加 `poller: Coroutine<PollMsg>` prop,`app.rs:399` 调用处透传 poller,新入口补全 5 步;**BUG-B (未触发)**:`fetch_video_info_impl` 失败路径不写回 `batch_state.items[i].status`,本次 3 条全成功未暴露,仅加 log 备下次定位;287 tests pass / clippy clean / 0 回归;**待 GUI 实测** — 用户跑 "▶ 全部下载" 后日志应出现 `[batch_download] sub-task 启动/fetch 成功/下载完成` 三段,确认 BUG-A 关闭。Memory `projects/x-videos-dowloads.md` 已追加教训 #18 "复制异步 UI 状态机入口时,镜像完整 N 步清单" + 5 步 checklist 表 + 诊断日志格式。
+
+**次新**: 2026-09-13 SHANHU GUI "Status: Fetching..." 永久卡死两层叠加 bug 修复 — 4 commits (`4f2128b` token-in-body form-urlencoded 推翻 v2 匿名 / `ad4aae1` `requires_auth=true` 同步 / `0664fbb` jump_url 改 query string 避 Vue hash 路由 / `6691737` videoAuth 用 mp4Url 直接拿 m3u8 推翻 32hex 假设 / `d939cab` 端到端 smoke test) on `gitbutler/workspace`,head `d939cab`;**根因链** — 第一层:`list_collection` jump_url `&chapter=` 被吃进 Vue hash fragment;第二层:videoAuth 响应 `cfileid=220903970091175937`(19 字符十进制)≠ 32 hex → `ParseFailed` → YtDlp fallback 报 "Unsupported URL" → 永久 loading;**修复**:`jump_url` 改 `?chapter=` / `&chapter=`;`fetch_cfileid_via_video_auth` 改返 `data.video.mp4Url`(完整 m3u8 URL,跳过 `resolve_play_url` 二次 HTTP);`hash` 缓存语义改存完整 m3u8 URL;`--shanhu-add-hash` CLI 同步;`resolve_play_url` 保留 `#[allow(dead_code)]` 兜底;新增 `extract_token_from_state(&Value)` 3 路径(top-level / origins.localStorage / 数组元素);新 `extract_token_from_state_top_level/origins_localstorage/no_token/empty_token` 4 unit tests;287 passed / 0 failed / clippy `-D warnings` clean;GUI 实测 3 entry 全显示 (Linux的基本概念和系统搭建/基础命令讲解/文件权限),Status "Video info fetched";**P3 stale GUI 提示**未做(优先级低,CLI 兜底)。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/` 已追加 5 条新教训 (#13–#17)。
 
 **最新**: 2026-09-13 SHANHU smart dispatch 数据层 smoke 守门 + DNA 套装落地 — 3 commits (`8aecd83` DNA / `c9065f3` rexxi_extract / `80f18a0` smoke) on `gitbutler/workspace`,head `aa61f16`;用户报"rexxi URL 集成进 GUI 实现批量下载",DNA 30 秒必查命中——`ShanhuResolver` + `fetch_smart_impl` (a9ca186) + batch checkbox UI (f4bf425) **已落地**,无需重写(消灭派反例);新 `src/platform/shanhu.rs::tests::smoke_list_collection_rexxi_3529714` (`#[ignore]`) 直接调 list_collection 断言 83 章节 + 首条 "Linux的基本概念和系统搭建",与 camoufox DOM 数 `.chapter-item-title`=83 一致、与 [[jfedu-rexxi-shanhu-m3u8-download]] Python 3 mp4 输出一致;40 passed / 1 ignored / clippy clean;**HttpOnly cookie export blocker 三条 fallback 全落地** (`fda9e02` P3 跟踪 / `e2dca1f` fetch_smart_impl items.is_empty 区分 stale vs URL 无效 / `773bb79` `--shanhu-login-cookie <STRING>` 直传 Cookie header / `aa61f16` `scripts/chrome_cookie_extract.py` 直接读 Chrome SQLite + Keychain 一键解密 → pipe `--shanhu-login-cookie`);**P3 stale GUI 视觉提示** 未修(已并入本日"最新"一并记录)。
 
@@ -11,6 +13,71 @@
 **再新(09-02)**: WikiSkill 三层架构全局落地(`~/.claude/WIKI_INDEX.md` 5.1KB + 3 skill-impact 账本 + SessionStart 双模式拆分)+ Resolver Skeleton 共享基类 SDD 8 commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50`/`4f59255`),4 个 yt-dlp resolver 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` + `src/http_client.rs` `RESOLVER_UA` 等;242 tests / clippy clean。
 
 **更早**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021) + 京峰教育/SHANHU 珊瑚 v1 报告"已推翻"。2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e + 同日 5 commit (`0011caa` 小鹅通 HLS 403 / `86e497e` 覆盖开关 / `9ab3813` 解析盲区 / `c7b0fe4` 暂存落库 / `deb54c3` bench 修复) + `63c9f53` home-v + `6cd927e` ego-lite SQLite 兜底。2026-08-28 全局 Claude Code 配置改造(5 hooks + 15 deny) · 08-25 tulingvip-m3u8-download skill v3.2 + douyin-mp4-download v1 · 08-22 darwin 优化 web-protocol-recovery · 08-21 opencode failover wrapper · 08-17 OpenCode 多 provider · 08-16 P1 重构 · 08-13 GUI 性能 · 08-09 小鹅通端到端 6 节 8.5GB。
+
+---
+
+## 最新 Session: 2026-09-14 — SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 (commit `33f02f6`)
+
+### 1. 症状
+用户点新 `batch_video_state` 面板 "▶ 全部下载" → BatchState UI 永远停在 "0% pending"。3 条 `get_video_info` 解析成功（m3u8 length 101），下载器日志也出，但 BatchState 进度条不动。
+
+### 2. 根因 — 异步 UI 状态机复制漏步
+复制旧 Batch Download 入口 (`app.rs:498-540`) 到新 `batch_video_state` 入口 (`app_batch_video.rs:132-171`) 时漏了第 4 步 `poller.send(PollMsg::Batch { progress_arcs, total_count })`。
+
+`use_progress_poller` 是 `Coroutine<PollMsg>`，只在收 `PollMsg::Batch` 后才进入批量轮询循环（`poller.rs:101-159`）。新代码没发这条消息 → poller 永远 idle → `batch_state.items[i].progress` 永远 = 0.0 → UI 卡 "0% pending"。
+
+下载器 (`batch_download_impl` → `start_download_impl`) 内部 `progress_arc.store(percent, Ordering::Relaxed)` 真在写原子 — 磁盘上 .mp4 应该是在长的（待用户实测确认）。
+
+### 3. 异步 UI 状态机复制 5 步清单
+
+| # | 步骤 | `app.rs:498-540` 旧入口 | `app_batch_video.rs:132-171` 新入口 |
+|---|------|---|---|
+| 1 | 创建 atomic arcs (progress/speed/cancel) | ✅ L498-500 | ✅ L145-147 |
+| 2 | 初始化 `batch_state` | ✅ L514-520 | ✅ L156-162 |
+| 3 | `is_downloading = true`（poller gate） | ✅ L522 | ✅ L164 |
+| **4** | **poller.send(PollMsg::Batch)** | **✅ L529-532** | **❌ 漏** ← BUG-A |
+| 5 | `spawn(batch_download_impl(...))` | ✅ L535-540 | ✅ L167-171 |
+
+**规则 #18**:复制异步 UI 状态机入口时，镜像完整 N 步清单；任何「依赖外部 Coroutine 收消息才进入轮询」的入口必须显式 `poller.send`，否则 poller 永远 idle，UI 进度原子无消费者。
+
+### 4. 修复（`33f02f6`）
+- `BatchVideoPanel` 加 `poller: Coroutine<PollMsg>` prop
+- `app.rs:399` 调用处透传 `poller`
+- `app_batch_video.rs:166` 之前补 `poller.send(PollMsg::Batch { progress_arcs_for_poll, total_count })`
+- `handlers.rs:127` 加 `[batch_download]` sub-task 入口/出口/失败 4 条 tracing 日志
+
+### 5. BUG-B (本次未触发但识别)
+`handlers.rs:127` 子任务 `fetch_video_info_impl` 失败时只 `info!(解析失败)`，**未写回 `state.batch_state.items[i].status`**。本次 3 条全成功（m3u8 length 101）未暴露；按 surgical change 规则本次仅补 BUG-A + 加 log，下次写回 UI status。
+
+### 6. 验证
+- `cargo check` ✅ (只有 block 0.1.6 future-incompat 与本次无关)
+- `cargo test --bin` ✅ **287 passed; 0 failed** (无回归)
+- `cargo clippy --bin` ✅ clean
+- `git diff --stat` ✅ 3 文件 +59/-5 (surgical)
+
+### 7. 待用户实测
+跑 GUI "▶ 全部下载"，日志应出现：
+```
+[batch_download] sub-task 启动 idx=0 url=https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714?chapter=3557155
+[batch_download] fetch 成功 idx=0 title=xxx resolved_url=https://...m3u8
+[batch_download] 下载完成 idx=0 url=...
+```
+3 段日志齐全 = BUG-A 关闭。
+
+### 8. 诊断日志格式（sub-task 统一约定）
+```
+[batch_download] sub-task 启动 idx={} url={}
+[batch_download] fetch 成功 idx={} title={} resolved_url={}
+[batch_download] 下载完成 idx={} url={}
+[batch_download] 下载失败 idx={} url={} err={}
+[batch_download] 解析失败 idx={} url={} err={}
+```
+前缀 `[<feature_name>]` 让 `tracing` 输出可 grep 快速过滤。
+
+### 9. 关联
+- 教训 #14「第三方 API 响应字段格式永远不能硬编码假设」→ BUG-A 是它的 GUI 层变种（**第三方协议不仅指 HTTP API，也指 Coroutine 协议**）
+- `docs/dna/review-checklist.md` → 待加「异步 UI 入口复制」专项 checklist
+- `docs/dna/三档地盘.md` → batch_video_state / poller 标 🟡 审查档（GUI runtime 难单测覆盖）
 
 ---
 
