@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tracing::info;
 
@@ -154,8 +155,23 @@ pub(super) async fn batch_download_impl(
                     idx,
                     url
                 );
+                // BUG-D fix (2026-09-14): wrap fetch_video_info_impl with 30s timeout.
+                // 隔离测试已确认 `registry.try_resolve_all` 串行 await 7+ resolver + yt-dlp
+                // fallback, 单 URL 不可达时整个 batch 卡死 (1-item 10s/3-item 15s timeout).
+                // 30s 给慢 URL 充足时间 (tulingpython resolver 15s × 2 = 30s) 但不卡 batch.
+                // `.unwrap_or_else(|_| Err(...))` 把 Elapsed 转成 Err 让下游 match 走失败路径,
+                // 不改动现有 fetch 成功 / 解析失败 / 下载分支的 nested match 结构.
+                // Code-reviewer MEDIUM #1 (2026-09-14): 20s 偏紧, tulingpython 配 15s,
+                // 串行 7 resolver 理论最坏 105s. 提 30s 给 2 个 resolver 失败空间.
+                // 根本修复 follow-up: try_resolve_all 改 join_all 并发 (handlers 待开新任务).
+                let fetch_result = tokio::time::timeout(
+                    Duration::from_secs(30),
+                    fetch_video_info_impl(&url),
+                )
+                .await
+                .unwrap_or_else(|_| Err(format!("fetch timeout after 30s: {}", url)));
                 // 获取视频信息
-                match fetch_video_info_impl(&url).await {
+                match fetch_result {
                     Ok(info) => {
                         tracing::info!(
                             "[batch_download] fetch 成功 idx={} title={} resolved_url={}",
@@ -210,7 +226,7 @@ pub(super) async fn batch_download_impl(
                     }
                 }
             })
-        })
+            })
         .collect();
 
     // BUG-D 诊断 (2026-09-14): 确认 iterator 把 tokio::spawn 都跑完了
@@ -1139,6 +1155,16 @@ mod bug_d_isolation_tests {
     use super::*;
     use std::time::Duration;
 
+    /// 一次性 tracing 初始化 — #[tokio::test] 默认无 subscriber,
+    /// tracing::info! 静默丢弃. init 返回 Result, 重复调忽略 Err.
+    /// 用 stdout writer (不是 test_writer) — test_writer 在 panic 时丢 buffer.
+    fn init_trace() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(std::io::stdout)
+            .try_init();
+    }
+
     /// 关键: 喂本地端口 1 (通常关闭, TCP connect 立即 RST), 触发 fetch 失败
     /// 而非真实 m3u8 下载. timeout 15s 远超 fetch 失败典型时长 (~1s),
     /// 但留足余量给 3 并发 + first-poll 调度.
@@ -1149,6 +1175,7 @@ mod bug_d_isolation_tests {
     #[tokio::test]
     #[ignore = "诊断模板, fetch_video_info_impl 对 invalid URL 也长 timeout, 无法隔离. 见模块 doc."]
     async fn test_three_item_batch_invalid_urls_all_fail_fast() {
+        init_trace();
         let urls = vec![
             "http://127.0.0.1:1/bug-d-1".to_string(),
             "http://127.0.0.1:1/bug-d-2".to_string(),
@@ -1163,7 +1190,7 @@ mod bug_d_isolation_tests {
 
         let start = std::time::Instant::now();
         let result = tokio::time::timeout(
-            Duration::from_secs(15),
+            Duration::from_secs(40),
             batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags),
         )
         .await;
@@ -1203,6 +1230,7 @@ mod bug_d_isolation_tests {
     #[tokio::test]
     #[ignore = "诊断模板, 1-item 也卡死, 与 batch 大小无关. 见模块 doc."]
     async fn test_single_item_batch_invalid_url_fails_fast() {
+        init_trace();
         let urls = vec!["http://127.0.0.1:1/bug-d-control".to_string()];
         let progress_arcs: Vec<Option<Arc<AtomicU32>>> = vec![None];
         let speed_arcs: Vec<Option<Arc<AtomicU64>>> = vec![None];
@@ -1210,7 +1238,7 @@ mod bug_d_isolation_tests {
 
         let start = std::time::Instant::now();
         let result = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(40),
             batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags),
         )
         .await;
