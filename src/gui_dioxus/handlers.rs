@@ -180,19 +180,96 @@ pub(super) async fn batch_download_impl(
                             info.url
                         );
                         // 下载视频
-                        match start_download_impl(
-                            &info.url,
-                            info.original_url,
-                            &info.title,
-                            progress_arc,
-                            speed_arc,
-                            None,
-                            cancel_flag,
-                            None,
-                            info.download_strategy,
-                        )
-                        .await
-                        {
+                        //
+                        // BUG-E 修复 (2026-09-14 cont.6): stall 检测 + 硬超时 双层防护.
+                        //
+                        // 设计演进 (code-reviewer CRITICAL 反馈):
+                        //
+                        // 之前设计 (v1): watchdog 写 cancel_flag=true, 等 downloader 响应.
+                        //   问题: YtDlp (mod.rs:526-602 child.wait 零 cancel check) /
+                        //         HLS (hls/downloader.rs:204 自建本地 cancel_flag) /
+                        //         parallel_download (无 cancel) 都不读 request.cancel_flag,
+                        //         watchdog 触发但底层 subprocess/HLS tasks 继续跑 → 任务泄漏 +
+                        //         tmp dir 泄漏. cancel_flag 对 direct HTTP (mod.rs:307) 才生效.
+                        //
+                        // 当前设计 (v2): 两层防护, 都不依赖 cancel_flag 传播.
+                        //   Layer 1 — `tokio::time::timeout(120s, download_fut)`:
+                        //     硬超时, timeout drop future 时所有 spawned subtask (yt-dlp subprocess
+                        //     通过 tokio::process::Command::spawn / HLS segment tasks) **自动 abort**
+                        //     (BUG-D 同款模式, 已验证 commit 04c3200).
+                        //     兜底: 任何 stall 都能在 120s 内强制终止.
+                        //   Layer 2 — bytes-unchanged 检测器 (sentinel pattern, 30s grace + 15s 间隔):
+                        //     在 timeout 之前主动检测 "bytes 完全没动" 提前返 Err 省最多 ~60s.
+                        //     **不**用 speed (是历史平均, 不会归零, 假阴性). 只看 bytes 一致.
+                        //
+                        // select! 三路竞争: download_fut / stall_detector / timeout 兜底.
+                        // 任一返 Err 写回 "stall" 或 "timeout" 状态, 不卡 batch.
+                        // 范围: 仅 batch 路径, 单 URL 用户可手动 cancel.
+                        let progress_arc_wd = progress_arc.clone();
+                        let stall_detector = async {
+                            // grace period: 让初始 connect / TLS 握手 / yt-dlp 子进程启动
+                            // 跑完, 否则 warmup 阶段会被误杀.
+                            tokio::time::sleep(Duration::from_secs(30)).await;
+                            let mut last_bytes: u64 = u64::MAX; // sentinel: 首次比较必更新
+                            loop {
+                                tokio::time::sleep(Duration::from_secs(15)).await;
+                                let bytes = progress_arc_wd
+                                    .as_ref()
+                                    .map(|a| a.load(Ordering::Relaxed) as u64)
+                                    .unwrap_or(0);
+                                if bytes == last_bytes {
+                                    // bytes 跨 2 轮 15s 间隔 (= 30s) 不变 → stall
+                                    tracing::warn!(
+                                        "[batch_download] stall 检测 idx={} url={} bytes={} (30s 无进度) → 触发 timeout 终止",
+                                        idx,
+                                        url,
+                                        bytes
+                                    );
+                                    return Err::<(), ErrorDisplay>(ErrorDisplay::new(
+                                        "stall",
+                                        format!(
+                                            "下载停滞 ~60s 无进度 (grace 30s + 2 轮 15s 轮询, url={})",
+                                            url
+                                        ),
+                                        "检查网络 / 视频源是否可达 / 取消后重试",
+                                    ));
+                                }
+                                last_bytes = bytes;
+                            }
+                        };
+                        let download_fut = async {
+                            start_download_impl(
+                                &info.url,
+                                info.original_url,
+                                &info.title,
+                                progress_arc,
+                                speed_arc,
+                                None,
+                                cancel_flag,
+                                None,
+                                info.download_strategy,
+                            )
+                            .await
+                        };
+                        // Layer 1: 硬超时兜底 120s — timeout drop future 自动 abort spawned subtasks
+                        let download_with_timeout = async {
+                            tokio::time::timeout(Duration::from_secs(120), download_fut)
+                                .await
+                                .unwrap_or_else(|_| {
+                                    Err(ErrorDisplay::new(
+                                        "timeout",
+                                        format!("下载超时 120s (硬上限, url={})", url),
+                                        "网络极慢 / 视频源不可达 / 考虑取消重试",
+                                    ))
+                                })
+                        };
+                        let download_res = tokio::select! {
+                            // Layer 2: bytes-unchanged 主动检测, 提前 ~60s 返 Err
+                            stall_res = stall_detector => stall_res,
+                            // Layer 1: 硬超时兜底
+                            timeout_res = download_with_timeout => timeout_res,
+                        };
+                        match download_res {
                             Ok(_) => {
                                 tracing::info!(
                                     "[batch_download] 下载完成 idx={} url={}",
