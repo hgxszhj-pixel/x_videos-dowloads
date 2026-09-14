@@ -1121,3 +1121,115 @@ mod skip_existing_tests {
         assert_eq!(after, None, "删完文件后 exists 检查应返回 None");
     }
 }
+
+/// BUG-D 隔离测试 (2026-09-14): 3-item batch 在 GUI 卡死, 用 invalid URL
+/// 在 #[tokio::test] 隔离环境直接调 batch_download_impl, 触发 fetch_video_info_impl
+/// 失败路径 (快速、纯网络超时/解析失败, 不实际下载任何东西).
+///
+/// **实测结论 (2026-09-14)**: 这种隔离测试**对网络 IO 函数无效**, 因
+/// `fetch_video_info_impl` 走 `registry.try_resolve_all(url)`, 对 `127.0.0.1:1`
+/// 这种不合规 URL 会逐个解析器尝试, 触发长 connect timeout (>10s), **与
+/// batch 大小无关** (1-item 也卡死). 所以这两个测试**默认 `#[ignore]`** —
+/// 仅作诊断模板保留, 用户需要真实 URL 才能触发 SHANHU 特定的卡死行为.
+///
+/// 真正诊断依赖用户重启 GUI + 跑 3-item batch + 贴 log, 由 4 trace 日志定位:
+///   src/gui_dioxus/app_batch_video.rs:189 → handlers.rs:134 → :150 → :216
+#[cfg(test)]
+mod bug_d_isolation_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// 关键: 喂本地端口 1 (通常关闭, TCP connect 立即 RST), 触发 fetch 失败
+    /// 而非真实 m3u8 下载. timeout 15s 远超 fetch 失败典型时长 (~1s),
+    /// 但留足余量给 3 并发 + first-poll 调度.
+    ///
+    /// `#[ignore]` (2026-09-14): fetch_video_info_impl 走完整 resolver 链,
+    /// 对 127.0.0.1:1 也触发长 timeout, 无法隔离 GUI vs impl. 仅作诊断模板保留.
+    /// 跑法: `cargo test -- --ignored bug_d_isolation`.
+    #[tokio::test]
+    #[ignore = "诊断模板, fetch_video_info_impl 对 invalid URL 也长 timeout, 无法隔离. 见模块 doc."]
+    async fn test_three_item_batch_invalid_urls_all_fail_fast() {
+        let urls = vec![
+            "http://127.0.0.1:1/bug-d-1".to_string(),
+            "http://127.0.0.1:1/bug-d-2".to_string(),
+            "http://127.0.0.1:1/bug-d-3".to_string(),
+        ];
+        let progress_arcs: Vec<Option<Arc<AtomicU32>>> =
+            (0..urls.len()).map(|_| None).collect();
+        let speed_arcs: Vec<Option<Arc<AtomicU64>>> =
+            (0..urls.len()).map(|_| None).collect();
+        let cancel_flags: Vec<Option<Arc<AtomicBool>>> =
+            (0..urls.len()).map(|_| None).collect();
+
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(15),
+            batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags),
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        match result {
+            Ok(results) => {
+                eprintln!(
+                    "[BUG-D isolation] 3-item batch completed in {:?}, n={}",
+                    elapsed,
+                    results.len()
+                );
+                assert_eq!(results.len(), 3, "3-item batch 应返回 3 条结果");
+                let any_success = results.iter().any(|(_, _, success, _, _)| *success);
+                assert!(
+                    !any_success,
+                    "invalid URL 不应成功下载, actual: {:?}",
+                    results
+                );
+            }
+            Err(_elapsed) => {
+                panic!(
+                    "[BUG-D isolation] 3-item batch 在 15s 内未完成, batch_download_impl 内部卡死. \
+                     elapsed={elapsed:?}. BUG-D 根因在 semaphore / iterator / inner spawn 调度. \
+                     重读 handlers.rs:127-220, 重点看 semaphore.acquire_owned (line 151) \
+                     与 handles collect 后的 await 循环."
+                );
+            }
+        }
+    }
+
+    /// 对照组: 1-item batch 应该总是工作 (GUI 实测 ✅), 用同一 invalid URL 模式.
+    /// 如果 1-item 工作而 3-item 不工作 → BUG-D 与 items.len() 强相关,
+    /// 优先级: semaphore concurrency > iterator/.collect().
+    ///
+    /// `#[ignore]` (2026-09-14): 同上 — 1-item 也卡死, 推翻 items.len() 相关假设.
+    #[tokio::test]
+    #[ignore = "诊断模板, 1-item 也卡死, 与 batch 大小无关. 见模块 doc."]
+    async fn test_single_item_batch_invalid_url_fails_fast() {
+        let urls = vec!["http://127.0.0.1:1/bug-d-control".to_string()];
+        let progress_arcs: Vec<Option<Arc<AtomicU32>>> = vec![None];
+        let speed_arcs: Vec<Option<Arc<AtomicU64>>> = vec![None];
+        let cancel_flags: Vec<Option<Arc<AtomicBool>>> = vec![None];
+
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            batch_download_impl(urls, progress_arcs, speed_arcs, cancel_flags),
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        match result {
+            Ok(results) => {
+                eprintln!(
+                    "[BUG-D isolation] 1-item batch completed in {:?}, n={}",
+                    elapsed,
+                    results.len()
+                );
+                assert_eq!(results.len(), 1);
+                assert!(!results[0].2, "1-item invalid URL 不应成功");
+            }
+            Err(_) => panic!(
+                "[BUG-D isolation] 1-item batch 也卡死, elapsed={elapsed:?}. \
+                 BUG-D 与 items.len() 无关, 根因更深 (可能 network / 解析器全局状态)."
+            ),
+        }
+    }
+}
