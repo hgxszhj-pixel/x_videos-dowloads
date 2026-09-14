@@ -1,18 +1,10 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-14 (cont. 6) BUG-E batch 下载 stall 检测 + 硬超时双层防护 — `src/gui_dioxus/handlers.rs:182-290` batch_download_impl inner spawn body 内 wrap `start_download_impl` 在 `tokio::time::timeout(Duration::from_secs(120), ...)` 内 (Layer 1 兜底, 自动 abort yt-dlp subprocess / HLS segment tasks, 镜像 BUG-D 04c3200 同款) + `tokio::select!` 三路竞争 (download_with_timeout / stall_detector) — stall_detector 30s grace + 15s 间隔轮询 progress_arc.bytes_downloaded, sentinel `u64::MAX` 首次比较必更新, **bytes 跨 2 轮不变即 stall 提前返 Err** (省最多 ~60s vs 硬超时);on `gitbutler/workspace`, head 待 commit;**设计演进** — v1 设计写 cancel_flag=true 等下载器响应 (code-reviewer CRITICAL 命中: YtDlp 子进程 child.wait 零 cancel check + HLS hls/downloader.rs:204 自建本地 cancel_flag + parallel_download 无 cancel — 都不读 request.cancel_flag, watchdog 触发但 subprocess/HLS tasks 继续跑 = 任务泄漏 + tmp dir 泄漏);v2 改为双层独立防护:Layer 1 `tokio::time::timeout` 真 drop future 自动 abort spawned subtasks (BUG-D 已验证), Layer 2 bytes-only 检测器 (drop speed gate, speed_arc 是历史平均 mid-flight stall 不会归零 → 假阴性);**v1 → v2 改动** — 1) stall_detector 返 `Err` 不写 cancel_flag;2) download_fut 包 `tokio::time::timeout(120s, ...)` 兜底;3) drop speed_arc clone + speed==0 子句 (CRITICAL #2 fix);4) Err 消息改 "下载停滞 ~60s 无进度 (grace 30s + 2 轮 15s 轮询)" (HIGH fix, v1 说 "30s" 误导);**code-reviewer** — 2 CRITICAL + 1 HIGH 已修, 2 MEDIUM (单 URL 路径未覆盖 / 无 unit test) + 2 LOW 列为 follow-up 不阻塞;**范围** — 仅 batch 路径, 单 URL 用户可手动 cancel;**287 tests + clippy clean**;**用户 runtime 验证** — 1-item 不可达 URL stall 检测 ~60s 后返 "stall" 或 120s 后返 "timeout", batch 不再永久卡住;**已知 follow-up (out of scope)** — MEDIUM #1 单 URL 路径未 wrap (用户可手动 cancel);MEDIUM #2 无 unit test (网络 IO 函数隔离测试见 [[bug-d-isolation-and-cookies-zero]] 历史教训, 仅能 e2e 验证)。
+**最新**: 2026-09-14 T-Mem 轻接方法论落地 + L1 commit hook 实装 — `~/memory/projects/x-videos-dowloads.md` 顶部 frontmatter 加 `tmem_schema_version: 1` + `tmem_search_command` + 引用 SOP;5 条教训 (#14/15/16/17/18) 加 `<!-- tmem-triggers -->` 块 (descriptive + associative + related 3 字段);`.git/hooks/post-commit` 末尾追加 `_maybe_tmem_reminder()` (commit msg 关键词 + 改动 ≥ 3 文件双 gate → stderr 6 行 SOP 引导, 保留 agent_did.py 信誉逻辑);**完整测试矩阵 4×2 全过** (A 教训+3 文件 ✅ / B 教训+1 文件 ❌ / C 普通+3 文件 ❌ / D 普通+1 文件 ❌);**修复 2 隐藏 bug** — git swallow stdout → stderr (git 设计: hook stderr 用户可见 / stdout 仅脚本捕获) + test repo hooksPath 继承全局 → `git config core.hooksPath .git/hooks` 强制本地覆盖 (本仓库已正确不受影响);on `gitbutler/workspace`, 无新代码 commit (memory + hook 不入 git), 待下次真实 fix|refactor commit 验证 stderr;**记忆膨胀警告** — `decisions.md` 346 行 (超 300 阈值 46 行) + `projects/x-videos-dowloads.md` 807 行 (接近 800 阈值), 下次写 memory 优先合并到已有 lessons 而非新建。
 
-**次新**: 2026-09-14 (cont. 3) ego-lite 替代 camoufox 方案 B 落地 — 1 commit (5 files: `src/drission_client.rs:295` SQL WHERE +3 OR `LIKE '%rexxi%'/'%wanzibook%'/'%tenwiseacademy%'` surgical / 新 `src/platform/shanhu_session_ego_lite.rs` ~155 行 / `src/platform/mod.rs` +1 cfg-gated `mod` + `pub use` / `src/cli.rs` +1 flag `--shanhu-login-ego-lite` (macOS only) / `src/main.rs` +1 短路分发条件 + +1 `handle_shanhu_login_ego_lite()` ~25 行) on `gitbutler/workspace`, head 待 commit;**触发** — BUG-D 调查发现 `cookies=0` 真因是 camoufox-reverse MCP state.json export 没成功 (memory `bug-d-isolation-and-cookies-zero` 详细记录), 用户已用本机 ego-lite Chromium 浏览器登录 SHANHU, 决定切换工具链;**复用零新增** — 复用 `drission_client::decrypt_ego_lite_cookies_for_host(host, allowed_roots)` 现成的 AES-128-CBC + PBKDF2-HMAC-SHA1("saltysalt", 1003, 16) + Keychain `ego safe storage` (实测小写) 解密管道, 复用 `shanhu_session::{save_session, session_from_export, session_summary, is_shanhu_cookie_domain}` 写盘层, 复用 `handle_shanhu_login_cookie` 的 cookie header 解析逻辑 (镜像 ~20 行, 不提取 helper 按 Rule 3 "Surgical Changes"), 复用 `cli.rs` 的 `--shanhu-login*` flag 风格 + `main.rs:74-83` 短路分发模式;**局限 (Phase 1)** — localStorage token 未自动导入 (Chrome Cookies SQLite 不含 localStorage, 需 LevelDB 解码 = Phase 2 follow-up 需新增 `leveldb` crate), 用户仍需单独 `--shanhu-login-token <TOKEN>` 喂 token, 文档化在 help text + 成功输出 + 失败 stderr;**风险** — macOS Keychain 首次弹授权 (选"总是允许"), ego-lite 正在跑时 SQLite 锁 (Connection::open 默认 wait), Chromium 升级改 v10 格式 (memory 监控);**用户执行** — `cargo build --release` → `--shanhu-login-ego-lite` 跑导入 → `--shanhu-session-info` sanity check → `--shanhu-login-token <TOKEN>` 喂 token → GUI 跑 SHANHU 课程验证 videoAuth 不报 100067;287 tests + clippy `-D warnings` clean;code-reviewer 派发中;**后续** — cont. 4 BUG-D 真凶定位 + 20s timeout wrap 修复 (独立 repro 抓 trace, 排除 outer spawn/semaphore/iterator 假设)。
+**次新**: 2026-09-14 (cont. 6) BUG-E batch 下载 stall 检测 + 硬超时双层防护 — `src/gui_dioxus/handlers.rs:182-290` batch_download_impl inner spawn body 内 wrap `start_download_impl` 在 `tokio::time::timeout(Duration::from_secs(120), ...)` 内 (Layer 1 兜底, 自动 abort yt-dlp subprocess / HLS segment tasks, 镜像 BUG-D 04c3200 同款) + `tokio::select!` 三路竞争 (download_with_timeout / stall_detector) — stall_detector 30s grace + 15s 间隔轮询 progress_arc.bytes_downloaded, sentinel `u64::MAX` 首次比较必更新, **bytes 跨 2 轮不变即 stall 提前返 Err** (省最多 ~60s vs 硬超时);on `gitbutler/workspace`, head 待 commit;**设计演进** — v1 设计写 cancel_flag=true 等下载器响应 (code-reviewer CRITICAL 命中: YtDlp 子进程 child.wait 零 cancel check + HLS hls/downloader.rs:204 自建本地 cancel_flag + parallel_download 无 cancel — 都不读 request.cancel_flag, watchdog 触发但 subprocess/HLS tasks 继续跑 = 任务泄漏 + tmp dir 泄漏);v2 改为双层独立防护:Layer 1 `tokio::time::timeout` 真 drop future 自动 abort spawned subtasks (BUG-D 已验证), Layer 2 bytes-only 检测器 (drop speed gate, speed_arc 是历史平均 mid-flight stall 不会归零 → 假阴性);**v1 → v2 改动** — 1) stall_detector 返 `Err` 不写 cancel_flag;2) download_fut 包 `tokio::time::timeout(120s, ...)` 兜底;3) drop speed_arc clone + speed==0 子句 (CRITICAL #2 fix);4) Err 消息改 "下载停滞 ~60s 无进度 (grace 30s + 2 轮 15s 轮询)" (HIGH fix, v1 说 "30s" 误导);**code-reviewer** — 2 CRITICAL + 1 HIGH 已修, 2 MEDIUM (单 URL 路径未覆盖 / 无 unit test) + 2 LOW 列为 follow-up 不阻塞;**范围** — 仅 batch 路径, 单 URL 用户可手动 cancel;**287 tests + clippy clean**;**用户 runtime 验证** — 1-item 不可达 URL stall 检测 ~60s 后返 "stall" 或 120s 后返 "timeout", batch 不再永久卡住;**已知 follow-up (out of scope)** — MEDIUM #1 单 URL 路径未 wrap (用户可手动 cancel);MEDIUM #2 无 unit test (网络 IO 函数隔离测试见 [[bug-d-isolation-and-cookies-zero]] 历史教训, 仅能 e2e 验证)。
 
-**次新**: 2026-09-14 (cont. 2) SHANHU batch_video_state 3-item batch spawn 卡死 BUG-D 诊断 — 1 commit (`841e56d` `app_batch_video.rs:189` + `handlers.rs:133/148/216` 加 4 处 `tracing::info!` 调用链二分 trace, 不改逻辑) on `gitbutler/workspace`,head `841e56d`;**症状** — 1-item batch ✅ 正常 (Batch 4: BUG-C verified), 3-item batch ❌ 4m27s 无 `[batch_download] sub-task 启动` 日志, GUI 3 items 永远 "pending" (数量相关);**4 个 trace 点** — #1 `[batch_video] outer spawn 启动` (outer closure poll 验证) / #2 `[batch_impl] enter` (impl entry 验证) / #3 `[batch_impl] inner spawn body enter` (tokio inner task 调度验证) / #4 `[batch_impl] handles 收集完成` (iterator/collect 验证) + 现有 `[batch_download] sub-task 启动` (semaphore.acquire 验证);**候选根因** — H1 semaphore 死锁 / H2 dioxus::spawn vs tokio::spawn runtime 不一致 / H3 iterator 卡 / H4 顺序 await 卡死;**判定** — grep log 看哪条缺失 = 卡在上一段;**对照实验** — 隔离测试 1-item 也卡死 (10s timeout), 推翻 batch 大小假设, 真因锁定 outer spawn 调度层 / fetch_video_info_impl resolver 链 (memory `bug-d-isolation-and-cookies-zero`);287 tests / clippy clean / code-reviewer APPROVE 0/0/0/0;GUI 已 kill+重启待用户跑测试 → 贴 log → 按 trace 链给 fix;**后续** — cont. 3 改用 ego-lite 替代 camoufox (cookies=0 真因 = camoufox state.json export 失败), cont. 4 隔离测试 trace 100% 锁定真凶 + 20s timeout wrap 修复。
-
-**次新**: 2026-09-14 (cont.) SHANHU batch_video_state 失败状态写回 BUG-B + DownloadResult.success 检查 BUG-C 修复 — 2 commits (`b96a104` `app_batch_video.rs:194-205` batch_download_impl 结果消费 + store 写回 + 合并 is_downloading 翻事务避免 poller race / `286accd` `handlers.rs:97-117` start_download_impl 检查 DownloadResult.success + ErrorDisplay 镜像 DownloadError 结构化字段) on `gitbutler/workspace`,head `286accd`;**根因链** — BUG-B: spawn 块不消费 `Vec<(idx, url, success, status, progress)>`,直接关闭 visible → store 永远保留 "pending" → UI 不显示 status;BUG-C: 上层 `VideoDownloader::download()` 在所有 404 时返 `Ok(DownloadResult{success=false})`,旧代码 `let result = ...?; Ok(())` 吞掉 success 标志 → 假成功传到 BUG-B → 假 completed 写到 UI (镜像 `download_one` `handlers.rs:868-876` 正确处理);**教训 #19** — 失败路径可见性: 任何 Result 透传必须双重检查 success 标志 + 调用层必须显式消费返回数组 (`let _ = ...` 是危险信号);**教训 #20** — ultragoal 5 步验证矩阵 (build/test/lint/review/runtime) 待加进 review-checklist.md;三轮 ultragoal 迭代每轮从 cancel 按钮 / 过期 m3u8 复现新 bug;287 tests / clippy clean / code-reviewer 0/0/0/0;GUI 二进制 78.2M 重编完成 (mtime 07:14:23 CST),待用户实测失败路径 (预期 item 显示 "下载失败: HTTP 404") + 成功路径 (预期 completed 不回归)。
-
-**次新**: 2026-09-14 SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 — 1 commit (`33f02f6` `BatchVideoPanel` 加 `poller` prop + `app_batch_video.rs:166` 补 `poller.send(PollMsg::Batch)` + `app.rs:399` 透传 + `handlers.rs:127` 加 `[batch_download]` sub-task 4 条 tracing 诊断) on `gitbutler/workspace`,head `33f02f6`;**根因** — 复制旧 Batch Download 入口 (`app.rs:498-540`) 到新 batch_video_state (`app_batch_video.rs:132-171`) 时漏了步骤 4 `poller.send(PollMsg::Batch { progress_arcs, total_count })`,Coroutine 永远 idle,UI 进度原子无人读;**修复**:`BatchVideoPanel` 加 `poller: Coroutine<PollMsg>` prop,`app.rs:399` 调用处透传 poller,新入口补全 5 步;**BUG-B (未触发但识别)**:`fetch_video_info_impl` 失败路径不写回 `batch_state.items[i].status`,本次 3 条全成功未暴露,仅加 log 备下次定位;287 tests pass / clippy clean / 0 回归;**待 GUI 实测** — 用户跑 "▶ 全部下载" 后日志应出现 `[batch_download] sub-task 启动/fetch 成功/下载完成` 三段,确认 BUG-A 关闭。Memory `projects/x-videos-dowloads.md` 已追加教训 #18 "复制异步 UI 状态机入口时,镜像完整 N 步清单" + 5 步 checklist 表 + 诊断日志格式。
-
-**次新**: 2026-09-13 SHANHU GUI "Status: Fetching..." 永久卡死两层叠加 bug 修复 — 4 commits (`4f2128b` token-in-body form-urlencoded 推翻 v2 匿名 / `ad4aae1` `requires_auth=true` 同步 / `0664fbb` jump_url 改 query string 避 Vue hash 路由 / `6691737` videoAuth 用 mp4Url 直接拿 m3u8 推翻 32hex 假设 / `d939cab` 端到端 smoke test) on `gitbutler/workspace`,head `d939cab`;**根因链** — 第一层:`list_collection` jump_url `&chapter=` 被吃进 Vue hash fragment;第二层:videoAuth 响应 `cfileid=220903970091175937`(19 字符十进制)≠ 32 hex → `ParseFailed` → YtDlp fallback 报 "Unsupported URL" → 永久 loading;**修复**:`jump_url` 改 `?chapter=` / `&chapter=`;`fetch_cfileid_via_video_auth` 改返 `data.video.mp4Url`(完整 m3u8 URL,跳过 `resolve_play_url` 二次 HTTP);`hash` 缓存语义改存完整 m3u8 URL;`--shanhu-add-hash` CLI 同步;`resolve_play_url` 保留 `#[allow(dead_code)]` 兜底;新增 `extract_token_from_state(&Value)` 3 路径(top-level / origins.localStorage / 数组元素);新 `extract_token_from_state_top_level/origins_localstorage/no_token/empty_token` 4 unit tests;287 passed / 0 failed / clippy `-D warnings` clean;GUI 实测 3 entry 全显示 (Linux的基本概念和系统搭建/基础命令讲解/文件权限),Status "Video info fetched";**P3 stale GUI 提示**未做(优先级低,CLI 兜底)。Memory `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/` 已追加 5 条新教训 (#13–#17)。
-
-**最新**: 2026-09-13 SHANHU smart dispatch 数据层 smoke 守门 + DNA 套装落地 — 3 commits (`8aecd83` DNA / `c9065f3` rexxi_extract / `80f18a0` smoke) on `gitbutler/workspace`,head `aa61f16`;用户报"rexxi URL 集成进 GUI 实现批量下载",DNA 30 秒必查命中——`ShanhuResolver` + `fetch_smart_impl` (a9ca186) + batch checkbox UI (f4bf425) **已落地**,无需重写(消灭派反例);新 `src/platform/shanhu.rs::tests::smoke_list_collection_rexxi_3529714` (`#[ignore]`) 直接调 list_collection 断言 83 章节 + 首条 "Linux的基本概念和系统搭建",与 camoufox DOM 数 `.chapter-item-title`=83 一致、与 [[jfedu-rexxi-shanhu-m3u8-download]] Python 3 mp4 输出一致;40 passed / 1 ignored / clippy clean;**HttpOnly cookie export blocker 三条 fallback 全落地** (`fda9e02` P3 跟踪 / `e2dca1f` fetch_smart_impl items.is_empty 区分 stale vs URL 无效 / `773bb79` `--shanhu-login-cookie <STRING>` 直传 Cookie header / `aa61f16` `scripts/chrome_cookie_extract.py` 直接读 Chrome SQLite + Keychain 一键解密 → pipe `--shanhu-login-cookie`);**P3 stale GUI 视觉提示** 未修(已并入本日"最新"一并记录)。
+**次新**: 2026-09-14 (cont. 3) ego-lite 替代 camoufox — 1 commit 5 files: 新 `src/platform/shanhu_session_ego_lite.rs` ~155 行 + `drission_client::decrypt_ego_lite_cookies_for_host` (AES-128-CBC + PBKDF2-HMAC-SHA1 + Keychain `ego safe storage` 小写) + CLI `--shanhu-login-ego-lite` (macOS only);**触发** — BUG-D 调查发现 `cookies=0` 真因是 camoufox-reverse MCP state.json export 没成功;**局限 Phase 1** — localStorage token 未自动导入 (Chrome Cookies SQLite 不含, 需 LevelDB = Phase 2);**复用零新增** — 镜像 `handle_shanhu_login_cookie` 解析逻辑 + `shanhu_session` 写盘层 + cli/main.rs 短路分发模式;287 tests + clippy clean。
 
 **新(09-06)**: 批量视频面板 checkbox UI (`f4bf425`) + `fetch_smart_impl` docstring 修正 (`86d9298` #chapter 章节级跳转准确描述) + GUI 单 URL 智能识别 (`a9ca186` listCollection → get_video_info → FetchResult::Batch) + 收录 2 份历史 platform 报告 (`caf4da3`) + `shanhu-analyzer` skill 创建 (`~/.claude/skills/shanhu-analyzer/`, 触发词 `rexxi.cn`/`wanzibook.com`/`cfileid`/`videoAuth`) + SHANHU session 过期主动检测 (`5ca9e1c` SESSION_MAX_AGE_SECS=7 天, 4 unit tests)。283 tests / clippy clean。
 
@@ -21,6 +13,113 @@
 **再新(09-02)**: WikiSkill 三层架构全局落地(`~/.claude/WIKI_INDEX.md` 5.1KB + 3 skill-impact 账本 + SessionStart 双模式拆分)+ Resolver Skeleton 共享基类 SDD 8 commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50`/`4f59255`),4 个 yt-dlp resolver 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` + `src/http_client.rs` `RESOLVER_UA` 等;242 tests / clippy clean。
 
 **更早**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021) + 京峰教育/SHANHU 珊瑚 v1 报告"已推翻"。2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e + 同日 5 commit (`0011caa` 小鹅通 HLS 403 / `86e497e` 覆盖开关 / `9ab3813` 解析盲区 / `c7b0fe4` 暂存落库 / `deb54c3` bench 修复) + `63c9f53` home-v + `6cd927e` ego-lite SQLite 兜底。2026-08-28 全局 Claude Code 配置改造(5 hooks + 15 deny) · 08-25 tulingvip-m3u8-download skill v3.2 + douyin-mp4-download v1 · 08-22 darwin 优化 web-protocol-recovery · 08-21 opencode failover wrapper · 08-17 OpenCode 多 provider · 08-16 P1 重构 · 08-13 GUI 性能 · 08-09 小鹅通端到端 6 节 8.5GB。
+
+---
+
+## 最新 Session: 2026-09-14 — T-Mem 轻接方法论落地 + L1 commit hook 实装 (无 commit, memory + hook only)
+
+### 1. T-Mem 调研结论
+
+用户问 GitHub Sherlockwz/T-Mem repo (EMNLP 2026 论文) 对 Claude Code 记忆体的帮助。T-Mem 核心 idea = **typed graph memory + triggered memory recall**, 4 个 trigger family:
+
+| 家族 | item-level | scene-level |
+|------|-----------|------------|
+| descriptive | 当前任务直接匹配 | 当前场景上下文 |
+| **associative** | **跨概念关联召回 (核心 insight)** | 跨场景迁移 |
+
+**不直接接 T-Mem 的 3 原因**:
+1. T-Mem 用 LLM 做 trigger detection + graph query, 我们已有 grep + memory 索引, 触发准确率难说提升
+2. 论文用自家训练 LLM, 不是 Claude
+3. **核心 insight (associative recall) 零成本可借用**: 在每条 lesson frontmatter 加 `trigger_associative` 字段, grep 时拿全部相关教训
+
+### 2. 🟢 轻接方案 — 做了什么
+
+- `~/memory/projects/x-videos-dowloads.md` 顶部 frontmatter 加 3 字段:
+  - `tmem_schema_version: 1` — schema 版本号, 未来升级判断
+  - `tmem_search_command: "..."` — 标准 grep 查询命令, 一键拿全部触发器
+  - quote 块含 SOP 路径
+- 5 条教训加 `<!-- tmem-triggers -->` 块 (descriptive + associative + related):
+  - 教训 #14 (smart dispatch 5 步)
+  - 教训 #15 (HttpOnly cookie export blocker)
+  - 教训 #16 (camoufox MCP evaluate_js isolated world)
+  - 教训 #17 (新功能前必查 30 秒 3 项)
+  - 教训 #18 (复制异步 UI 状态机入口 N 步清单)
+
+### 3. SOP 5 步流程 (写 projects/x-videos-dowloads.md 第 15-65 行)
+
+1. **触发判断** — 是否值得加触发器? (出现 ≥ 2 次 OR 跨项目通用 OR 教训级别 ≥ MEDIUM)
+2. **grep 已有** — `grep -nE '^## lesson-|<!-- tmem-triggers'` projects/x-videos-dowloads.md, 避免重复
+3. **写 frontmatter** — `<!-- tmem-triggers -->` 块 + descriptive (item) + associative (5-8 keywords) + related (cross-refs)
+4. **grep 验证** — `grep -nE '^<!-- tmem-triggers'` projects/x-videos-dowloads.md 确认格式
+5. **写 ## Session section** — 本次新触发器 ID + 教训改动
+
+### 4. L1 commit hook 实装
+
+**目标**: commit 现固瞬间自动提醒开发者是否需要写教训 (避免写教训靠记忆)
+
+**位置**: `.git/hooks/post-commit` (已有 `agent_did.py` 信誉系统, 末尾追加)
+
+**实现**: `_maybe_tmem_reminder()` 函数 + 调用:
+
+```python
+def _maybe_tmem_reminder() -> None:
+    try:
+        msg = subprocess.check_output(["git", "log", "-1", "--pretty=%B"], text=True).strip()
+        changed = subprocess.check_output(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], text=True).strip().splitlines()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+
+    if not any(kw in msg for kw in ("教训", "经验", "根因", "fix(", "refactor(", "perf(")):
+        return
+    if len(changed) < 3:
+        return
+
+    print("", file=sys.stderr)
+    print("💡 T-Mem 触发器提醒:", file=sys.stderr)
+    # ... 6 行 SOP 引导
+```
+
+**关键设计**:
+
+| 决策 | 理由 |
+|------|------|
+| post-commit 而非 commit-msg | commit 现固后才提醒, 不阻断 commit 流程 (commit-msg 已用于 Intent Lock) |
+| 关键词 + 文件数双 gate | 单关键词易误报 (e.g. `fix typo`), 单文件数易误报 (e.g. README typo) |
+| **stderr 而非 stdout** | **git 仅显示 hook stderr 给用户** (隐藏 bug #1: stdout 被 swallow) |
+| 6 行提示而非 1 行 | grep 命令 + SOP 路径 + 模板位置 + 验证命令 — 让用户在 commit 现场就能补 |
+| 不自动写 memory | LLM 不可信, 必须 human 写; 提醒到位即可 |
+
+### 5. 测试矩阵 (4×2 全过)
+
+测试仓库 `/Users/hgxszhj/.claude/jobs/f4e8694b/tmp/tmem-hook-test` (后已清理):
+
+| 场景 | commit msg | 改动文件数 | 期望 | 实际 |
+|------|------------|-----------|------|------|
+| A ✅ | "fix(gui): 教训 #18 poller 复制漏步骤" | 3 (src+app+handlers) | 触发 + 6 行 | ✅ stderr 6 行 |
+| B ❌ | "fix(gui): 教训 #18 poller 复制漏步骤" | 1 (只 src) | 不触发 | ✅ silent |
+| C ❌ | "docs: 更新 README typo" | 3 | 不触发 | ✅ silent |
+| D ❌ | "docs: 更新 README typo" | 1 | 不触发 | ✅ silent |
+
+**修复的 2 个隐藏 bug**:
+
+1. **git swallow stdout** — 第一版用 `print(...)` stdout, hook 跑通 sentinel 但用户看不到输出。**根因**: git 设计上不显示 hook stdout 给用户, 只显示 stderr (用户调脚本时便于日志捕获)。**修复**: 全部改 `print(..., file=sys.stderr)`
+2. **test repo hooksPath 继承 global** — 测试 repo 用 `git init` 创建后, 触发全局 `core.hooksPath=/Users/hgxszhj/.git-hooks` (`~/.gitconfig` 全局配置), 绕过测试 repo 自己的 `.git/hooks/post-commit`。**根因**: git 优先用 global config, 新 init repo 不主动覆盖。**修复**: `git config core.hooksPath .git/hooks` 强制本地覆盖。本项目 `x_videos-dowloads` 仓库已正确配置 `core.hooksPath=.git/hooks`, 不受影响。
+
+### 6. 记忆膨胀警告
+
+| 文件 | 当前行数 | 阈值 | 状态 |
+|------|---------|------|------|
+| `~/memory/decisions.md` | 346 | 300 | ❌ 超 46 行, 待用户归档整理 |
+| `~/memory/projects/x-videos-dowloads.md` | 807 | 800 | ⚠️ 接近阈值, 下次写入前先 grep 已有 |
+| `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/MEMORY.md` | - | - | OK 索引文件, 已有 27 条 |
+
+**建议**: 下次写项目 memory 前, 优先合并到现有 lessons 而非新建, 用 H2 ## 标题 + 教训号连续编号 (#21, #22 ...)。
+
+### 7. 待办 / 后续
+
+- [ ] 用户下次真实 fix|refactor|perf commit (msg 含关键词 + ≥ 3 文件) 时, hook 应自动 stderr 6 行 SOP 引导 → 用户报告实际打印或未打印 (验证 hook live)
+- [ ] 记忆归档: decisions.md 346 → 300 以下 (拆分 `decisions-archive/2026-09.md`)
+- [ ] 写更多 lessons 时持续加 tmem-triggers (cross-project recall 覆盖率提升)
 
 ---
 
