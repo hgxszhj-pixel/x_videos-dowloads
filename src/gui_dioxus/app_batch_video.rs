@@ -185,6 +185,12 @@ pub(super) fn BatchVideoPanel(
                     });
                     let mut state = state;
                     spawn(async move {
+                        // BUG-D 诊断 (2026-09-14): 3-item batch 卡死 — 加 trace 定位
+                        // 是 outer spawn 没 poll、impl 没进入、还是 inner spawn 没调度。
+                        tracing::info!(
+                            "[batch_video] outer spawn 启动 urls={}",
+                            urls.len()
+                        );
                         // BUG-B 修复 (2026-09-14): 消费 batch_download_impl 返回的
                         // (idx, url, success, status, progress) 结果,写回 store。
                         //

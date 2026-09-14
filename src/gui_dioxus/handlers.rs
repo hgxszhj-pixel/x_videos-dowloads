@@ -130,6 +130,8 @@ pub(super) async fn batch_download_impl(
     speed_arcs: Vec<Option<Arc<AtomicU64>>>,
     cancel_flags: Vec<Option<Arc<AtomicBool>>>,
 ) -> Vec<(usize, String, bool, String, f32)> {
+    // BUG-D 诊断 (2026-09-14): 3-item batch 卡死 — 入口 trace
+    tracing::info!("[batch_impl] enter urls={}", urls.len());
     let concurrency = 3; // 最多同时下载3个
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
 
@@ -143,6 +145,9 @@ pub(super) async fn batch_download_impl(
             let speed_arc = speed_arcs.get(idx).cloned().flatten();
             let cancel_flag = cancel_flags.get(idx).cloned().flatten();
             tokio::spawn(async move {
+                // BUG-D 诊断 (2026-09-14): inner spawn body 第一行 — 区分
+                // "tokio 没调度 inner task" vs "卡在 semaphore.acquire_owned"
+                tracing::info!("[batch_impl] inner spawn body enter idx={}", idx);
                 let _permit = semaphore.acquire_owned().await;
                 tracing::info!(
                     "[batch_download] sub-task 启动 idx={} url={}",
@@ -207,6 +212,9 @@ pub(super) async fn batch_download_impl(
             })
         })
         .collect();
+
+    // BUG-D 诊断 (2026-09-14): 确认 iterator 把 tokio::spawn 都跑完了
+    tracing::info!("[batch_impl] handles 收集完成 n={}", handles.len());
 
     // 等待所有下载完成
     // BUG-B 修复 (2026-09-14): 收集每个 task 的 (idx, url, success, status, progress),
