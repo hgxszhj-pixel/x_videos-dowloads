@@ -1,6 +1,8 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-14 (cont.) SHANHU batch_video_state 失败状态写回 BUG-B + DownloadResult.success 检查 BUG-C 修复 — 2 commits (`b96a104` `app_batch_video.rs:194-205` batch_download_impl 结果消费 + store 写回 + 合并 is_downloading 翻事务避免 poller race / `286accd` `handlers.rs:97-117` start_download_impl 检查 DownloadResult.success + ErrorDisplay 镜像 DownloadError 结构化字段) on `gitbutler/workspace`,head `286accd`;**根因链** — BUG-B: spawn 块不消费 `Vec<(idx, url, success, status, progress)>`,直接关闭 visible → store 永远保留 "pending" → UI 不显示 status;BUG-C: 上层 `VideoDownloader::download()` 在所有 404 时返 `Ok(DownloadResult{success=false})`,旧代码 `let result = ...?; Ok(())` 吞掉 success 标志 → 假成功传到 BUG-B → 假 completed 写到 UI (镜像 `download_one` `handlers.rs:868-876` 正确处理);**教训 #19** — 失败路径可见性: 任何 Result 透传必须双重检查 success 标志 + 调用层必须显式消费返回数组 (`let _ = ...` 是危险信号);**教训 #20** — ultragoal 5 步验证矩阵 (build/test/lint/review/runtime) 待加进 review-checklist.md;三轮 ultragoal 迭代每轮从 cancel 按钮 / 过期 m3u8 复现新 bug;287 tests / clippy clean / code-reviewer 0/0/0/0;GUI 二进制 78.2M 重编完成 (mtime 07:14:23 CST),待用户实测失败路径 (预期 item 显示 "下载失败: HTTP 404") + 成功路径 (预期 completed 不回归)。
+**最新**: 2026-09-14 (cont. 2) SHANHU batch_video_state 3-item batch spawn 卡死 BUG-D 诊断 — 1 commit (`841e56d` `app_batch_video.rs:189` + `handlers.rs:133/148/216` 加 4 处 `tracing::info!` 调用链二分 trace, 不改逻辑) on `gitbutler/workspace`,head `841e56d`;**症状** — 1-item batch ✅ 正常 (Batch 4: BUG-C verified), 3-item batch ❌ 4m27s 无 `[batch_download] sub-task 启动` 日志, GUI 3 items 永远 "pending" (数量相关);**4 个 trace 点** — #1 `[batch_video] outer spawn 启动` (outer closure poll 验证) / #2 `[batch_impl] enter` (impl entry 验证) / #3 `[batch_impl] inner spawn body enter` (tokio inner task 调度验证) / #4 `[batch_impl] handles 收集完成` (iterator/collect 验证) + 现有 `[batch_download] sub-task 启动` (semaphore.acquire 验证);**候选根因** — H1 semaphore 死锁 / H2 dioxus::spawn vs tokio::spawn runtime 不一致 / H3 iterator 卡 / H4 顺序 await 卡死;**判定** — grep log 看哪条缺失 = 卡在上一段;287 tests / clippy clean / code-reviewer APPROVE 0/0/0/0;GUI 已 kill+重启待用户跑测试 → 贴 log → 按 trace 链给 fix。
+
+**次新**: 2026-09-14 (cont.) SHANHU batch_video_state 失败状态写回 BUG-B + DownloadResult.success 检查 BUG-C 修复 — 2 commits (`b96a104` `app_batch_video.rs:194-205` batch_download_impl 结果消费 + store 写回 + 合并 is_downloading 翻事务避免 poller race / `286accd` `handlers.rs:97-117` start_download_impl 检查 DownloadResult.success + ErrorDisplay 镜像 DownloadError 结构化字段) on `gitbutler/workspace`,head `286accd`;**根因链** — BUG-B: spawn 块不消费 `Vec<(idx, url, success, status, progress)>`,直接关闭 visible → store 永远保留 "pending" → UI 不显示 status;BUG-C: 上层 `VideoDownloader::download()` 在所有 404 时返 `Ok(DownloadResult{success=false})`,旧代码 `let result = ...?; Ok(())` 吞掉 success 标志 → 假成功传到 BUG-B → 假 completed 写到 UI (镜像 `download_one` `handlers.rs:868-876` 正确处理);**教训 #19** — 失败路径可见性: 任何 Result 透传必须双重检查 success 标志 + 调用层必须显式消费返回数组 (`let _ = ...` 是危险信号);**教训 #20** — ultragoal 5 步验证矩阵 (build/test/lint/review/runtime) 待加进 review-checklist.md;三轮 ultragoal 迭代每轮从 cancel 按钮 / 过期 m3u8 复现新 bug;287 tests / clippy clean / code-reviewer 0/0/0/0;GUI 二进制 78.2M 重编完成 (mtime 07:14:23 CST),待用户实测失败路径 (预期 item 显示 "下载失败: HTTP 404") + 成功路径 (预期 completed 不回归)。
 
 **次新**: 2026-09-14 SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 — 1 commit (`33f02f6` `BatchVideoPanel` 加 `poller` prop + `app_batch_video.rs:166` 补 `poller.send(PollMsg::Batch)` + `app.rs:399` 透传 + `handlers.rs:127` 加 `[batch_download]` sub-task 4 条 tracing 诊断) on `gitbutler/workspace`,head `33f02f6`;**根因** — 复制旧 Batch Download 入口 (`app.rs:498-540`) 到新 batch_video_state (`app_batch_video.rs:132-171`) 时漏了步骤 4 `poller.send(PollMsg::Batch { progress_arcs, total_count })`,Coroutine 永远 idle,UI 进度原子无人读;**修复**:`BatchVideoPanel` 加 `poller: Coroutine<PollMsg>` prop,`app.rs:399` 调用处透传 poller,新入口补全 5 步;**BUG-B (未触发但识别)**:`fetch_video_info_impl` 失败路径不写回 `batch_state.items[i].status`,本次 3 条全成功未暴露,仅加 log 备下次定位;287 tests pass / clippy clean / 0 回归;**待 GUI 实测** — 用户跑 "▶ 全部下载" 后日志应出现 `[batch_download] sub-task 启动/fetch 成功/下载完成` 三段,确认 BUG-A 关闭。Memory `projects/x-videos-dowloads.md` 已追加教训 #18 "复制异步 UI 状态机入口时,镜像完整 N 步清单" + 5 步 checklist 表 + 诊断日志格式。
 
@@ -111,6 +113,55 @@ if result.success {
 
 ---
 
+## 最新 Session: 2026-09-14 (cont. 2) — SHANHU batch_video_state 3-item batch spawn 卡死 BUG-D 诊断 trace (commit `841e56d`)
+
+### 1. 症状
+BUG-A/B/C 全部 commit + GUI 重编后实测: **1-item batch ✅ 正常** (Batch 4: failed with err msg, BUG-C verified), **3-item batch ❌ 卡死** — 4m27s **完全无** `[batch_download] sub-task 启动` 日志, GUI 3 items 永远 "pending"。
+
+### 2. 根因(待定位, 数量相关)
+1-item 工作, 3-item 卡死。候选假设:
+
+- **H1** `Semaphore::new(3)` + 3 acquire_owned 死锁 (Batch 4 单 acquire 不触发)
+- **H2** dioxus::spawn → Dioxus runtime; inner `tokio::spawn` → global tokio; runtime 不一致 inner 不调度
+- **H3** `urls.into_iter().enumerate().map(...).collect()` eager iterator 卡 (跑 3 次 tokio::spawn)
+- **H4** `for handle in handles { handle.await }` 顺序 await, handle[0] 永不结束 → 后 2 个等不到
+
+### 3. 修复 (`841e56d` — 仅诊断, 不改逻辑)
+4 处 surgical `tracing::info!`, 形成调用链二分:
+
+```
+#1 [batch_video] outer spawn 启动 urls=N       (app_batch_video.rs:189)
+#2 [batch_impl] enter urls=N                   (handlers.rs:133)
+#3 [batch_impl] inner spawn body enter idx=N   (handlers.rs:148)
+#4 [batch_impl] handles 收集完成 n=N           (handlers.rs:216)
++ 现有 [batch_download] sub-task 启动 (semaphore.acquire 之后)
+```
+
+判定矩阵 (grep log 看哪条缺失 → 卡点 = 上一段):
+- 缺 #1 → dioxus spawn 没 poll outer closure
+- 缺 #2 → outer spawn poll 但 impl future 没进度 (impossible)
+- 缺 #3 → **tokio 没调度 inner task** (最可能, H2 命中)
+- 缺 #4 → iterator/.collect() 卡 (H3 命中)
+- 有 #3 无 sub-task 启动 → `semaphore.acquire_owned()` 阻塞 (H1 命中)
+
+### 4. 验证
+cargo build ✅ / 287 tests ✅ / clippy -D warnings ✅ / code-reviewer APPROVE 0/0/0/0, 1 NIT (prefix `[batch_video]` vs `[batch_impl]` 分裂是设计意图 — 区分 outer poll vs impl poll, 不阻塞)。
+
+### 5. 待用户实测 (next)
+1. `pkill -f x-video-downloader` 杀旧 GUI (PID 40175 仍跑旧 binary)
+2. `cargo run --bin x-video-downloader -- --gui` 启新
+3. Analyze Course → 勾 3 items → Batch Download → `tail -f /tmp/x-video-downloader.log | grep batch_`
+4. 判定: 4 条 trace 哪条最后出现 → 卡点 = 上一段
+5. 对照: 同样跑 1-item → 期望 5 条日志齐全
+6. 贴 log → 我按 trace 链给 fix
+
+### 6. 关联
+- BUG-A/B/C (33f02f6/b96a104/286accd) — 上游, BUG-D 是它们的"runtime 副作用"
+- 教训 #20 ultragoal 5 步验证矩阵 → BUG-D step 5 命中, 但 ultragoal 不能定位子 bug, 需 trace 链二分
+- DNA `docs/dna/review-checklist.md` → 待加 "异步 spawn 调试" 专项 checklist
+
+---
+
 ## 最新 Session: 2026-09-14 — SHANHU batch_video_state 批量下载按钮 0% pending 永久卡死 BUG-A 修复 (commit `33f02f6`)
 
 ### 1. 症状
@@ -149,7 +200,7 @@ if result.success {
 - `cargo test --bin` ✅ **287 passed; 0 failed** (无回归)
 - `cargo clippy --bin` ✅ clean
 - `git diff --stat` ✅ 3 文件 +59/-5 (surgical)
-- 用户实测: BUG-A 关闭 (进度条动),但暴露 BUG-B (status 永远 completed) + BUG-C (success 标志丢失),同日修复见新 session
+- 用户实测: BUG-A 关闭 (进度条动),但暴露 BUG-B (status 永远 completed) + BUG-C (success 标志丢失),同日修复见新 session;再跑 3-item 又暴露 BUG-D (4m27s 无 sub-task 启动 日志),诊断 trace 见 cont. 2 session
 
 ### 7. 验证日志格式 (sub-task 4 条,实测 3 条齐全)
 跑 GUI "▶ 全部下载"，日志应出现:
