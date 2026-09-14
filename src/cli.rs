@@ -167,6 +167,21 @@ pub struct Cli {
     #[arg(long = "shanhu-login-token", value_name = "TOKEN")]
     pub shanhu_login_token: Option<String>,
 
+    /// SHANHU/万字 SaaS: 直接从 macOS 本机 ego-lite 浏览器导入登录态 cookies。
+    /// ego-lite 是 macOS 原生 Chromium 内核浏览器, 已登录 SHANHU (rexxi.cn /
+    /// wanzibook.com / tenwiseacademy.cn) 后, 跑这条命令一次性写完 session,
+    /// 跳过 camoufox MCP state.json 流程 (2026-09-14 BUG-D 调查期间切换)。
+    ///
+    /// 注意: 仅导入 cookies, **不导入 localStorage token** (Chrome Cookies SQLite
+    /// 不含 localStorage, 需 LevelDB 解码 — Phase 2 follow-up)。
+    /// videoAuth 用 token 鉴权, 还需要配合 `--shanhu-login-token <TOKEN>` 喂 token。
+    ///
+    /// 首次运行会弹 macOS Keychain 授权窗口 (选"总是允许")。
+    /// 备选 fallback: `--shanhu-login-cookie <COOKIE_STRING>` 手动粘。
+    #[cfg(target_os = "macos")]
+    #[arg(long = "shanhu-login-ego-lite")]
+    pub shanhu_login_ego_lite: bool,
+
     /// SHANHU/万字 SaaS: 租户 ID (org_id)。SHANHU 是白标平台,不同租户需不同 org_id。
     /// token 字段通常包含 org_id(`wx_<hash>_<org_id>_<fans_id>`),也可通过 `--shanhu-login-org-id`
     /// 显式覆盖环境变量 `SHANHU_ORG_ID` 和内置默认值 27632958。

@@ -77,6 +77,7 @@ fn main() {
         || cli.shanhu_login.is_some()
         || cli.shanhu_login_cookie.is_some()
         || cli.shanhu_login_token.is_some()
+        || cli.shanhu_login_ego_lite
     {
         handle_shanhu_cache_commands(&cli);
         return;
@@ -294,6 +295,38 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
     }
     if let Some(ref token) = cli.shanhu_login_token {
         handle_shanhu_login_token(token, cli.shanhu_login_org_id);
+    }
+    #[cfg(target_os = "macos")]
+    if cli.shanhu_login_ego_lite {
+        handle_shanhu_login_ego_lite();
+    }
+}
+
+/// 从 macOS ego-lite 浏览器导入 SHANHU session cookies (2026-09-14 BUG-D 调查)。
+///
+/// 调用栈:`crate::platform::shanhu_session_ego_lite::import_from_ego_lite()`
+/// (该模块 cfg-gated macOS, 在 Linux/Win 编译不存在)。
+///
+/// 失败时给清晰 stderr 排查提示, 不静默 (按 CLAUDE.md Rule 12 失败要响亮)。
+#[cfg(target_os = "macos")]
+fn handle_shanhu_login_ego_lite() {
+    use crate::platform::import_from_ego_lite;
+    match import_from_ego_lite() {
+        Ok(()) => {
+            // import_from_ego_lite 内部已 print 完整摘要 (与 handle_shanhu_login_cookie 风格一致)
+        }
+        Err(e) => {
+            eprintln!("✗ ego-lite 导入失败: {e:#}");
+            eprintln!();
+            eprintln!("  排查:");
+            eprintln!("  1. ego-lite 是否已登录 SHANHU 域?");
+            eprintln!("     浏览器打开 rexxi.cn / wanzibook.com / tenwiseacademy.cn 验证登录态");
+            eprintln!("  2. macOS Keychain 是否允许 Terminal 访问 'ego safe storage'?");
+            eprintln!("     首次运行会弹授权窗口, 选\"总是允许\"");
+            eprintln!("  3. 备选: --shanhu-login-cookie <COOKIE_STRING> 手动粘");
+            eprintln!("     (DevTools → Network → Request Headers → Cookie 行)");
+            std::process::exit(1);
+        }
     }
 }
 

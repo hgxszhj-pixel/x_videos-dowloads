@@ -11,6 +11,8 @@ mod douyin_api;
 mod nnyy;
 mod shanhu;
 mod shanhu_session;
+#[cfg(target_os = "macos")]
+mod shanhu_session_ego_lite;
 mod tiktok;
 mod token_manager;
 mod tulingpython;
@@ -41,6 +43,8 @@ pub use shanhu_session::{
     extract_token_from_state, is_shanhu_cookie_domain, save_session, session_from_export,
     session_summary, Session,
 };
+#[cfg(target_os = "macos")]
+pub use shanhu_session_ego_lite::import_from_ego_lite;
 pub use tiktok::TikTokResolver;
 pub use token_manager::TokenManager;
 pub use tulingpython::TulingPythonResolver;

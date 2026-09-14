@@ -291,8 +291,13 @@ fn decrypt_ego_lite_cookies_raw() -> anyhow::Result<Vec<(String, String, String)
         Connection::open(&cookies_db).map_err(|e| anyhow!("打开 Cookies SQLite 失败: {e}"))?;
     let mut stmt = conn
         .prepare(
+            // 2026-09-14 扩展: SHANHU/万字 SaaS 接入 — 加 rexxi.cn / wanzibook.com /
+            // tenwiseacademy.cn 3 域 (BUG-D 调查中 cookies=0 暴露 camoufox 流程不顺畅,
+            // 用户决定走 ego-lite, 见 MEMORY.md:bug-d-isolation-and-cookies-zero).
+            // 复用现有 LIKE '%xxx%' substring 风格, 不重构 helper 签名.
             "SELECT name, value, encrypted_value, host_key, expires_utc \
-         FROM cookies WHERE host_key LIKE '%tulingpyton%' OR host_key LIKE '%ego-lite%'",
+         FROM cookies WHERE host_key LIKE '%tulingpyton%' OR host_key LIKE '%ego-lite%' \
+           OR host_key LIKE '%rexxi%' OR host_key LIKE '%wanzibook%' OR host_key LIKE '%tenwiseacademy%'",
         )
         .map_err(|e| anyhow!("SQL 准备失败: {e}"))?;
 
