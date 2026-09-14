@@ -432,33 +432,97 @@ impl ResolverRegistry {
     }
 
     /// 尝试所有已注册的解析器，返回第一个成功的结果
+    ///
+    /// 策略 (2026-09-14 cont.5 BUG-D 根本修复):
+    /// 1. 先尝试主解析器 (URL 匹配的), 命中立即返回 (~3s 健康 URL)
+    /// 2. 主失败 → 并发跑剩余 resolver + 默认 YtDlpResolver, 每个配 5s timeout
+    /// 3. 扫结果, 首个 Ok 立即返 (worst case 5s, 等最慢 sibling)
+    /// 4. 全部失败/超时 → 返 ParseFailed
+    ///
+    /// 之前实现是**串行 for-loop await**, 主失败后 7+ resolver × 15s reqwest timeout
+    /// 累计可达 105s+, 单 URL 不可达时整个 batch 卡死 (BUG-D). 并发后不可达 URL
+    /// 上界 = 5s (单 resolver timeout) + yt-dlp fallback ≈ 10s.
+    ///
+    /// **Semantic note**: join_all 等所有 sibling 完成才扫结果, 首个 Ok 不能在
+    /// sibling 完成瞬间立即 return. 健康 URL 命中时最多等 5s, 不可达 URL 反正都
+    /// timeout, 总耗时不变. 真正的 first-Ok-asap 需要 FuturesUnordered + Stream,
+    /// 复杂度更高, 当前 5s 上界可接受.
+    ///
+    /// **Note**: 改前已确认 8 resolver 内部无共享可变状态:
+    /// - GLOBAL_REGISTRY static (resolver_chain.rs:34) `Mutex<Option<Arc<ResolverRegistry>>>`
+    ///   仅缓存 Arc 实例, 不持请求状态 (锁短)
+    /// - 各 resolver.get_video_info 内部创建 reqwest::Client / drission Page per call
+    /// - 唯一共享: tracing subscriber (无状态), anyhow Result (move semantics)
+    /// - 因此 join_all 并发 8 resolver 无 race condition 风险.
     pub async fn try_resolve_all(&self, url: &str) -> Result<VideoInfo, ResolverError> {
-        // 首先尝试 URL 匹配的解析器
+        // 1. 先尝试主解析器 (命中立即返回, 健康 URL ~3s)
         let primary = self.select_resolver(url);
         if let Ok(info) = primary.get_video_info(url).await {
             return Ok(info);
         }
         tracing::warn!("Primary resolver failed, trying all registered resolvers");
 
-        // 尝试所有已注册的解析器
-        for resolver in &self.resolvers {
-            if resolver.platform() == primary.platform() {
-                continue; // 跳过已尝试的主解析器
+        // 2. 并发跑剩余 resolver + 默认 YtDlpResolver, 每个 5s timeout
+        const PER_RESOLVER_TIMEOUT_SECS: u64 = 5;
+
+        let other_futures: Vec<_> = self
+            .resolvers
+            .iter()
+            .filter(|r| r.platform() != primary.platform())
+            .map(|r| async move {
+                let res = tokio::time::timeout(
+                    std::time::Duration::from_secs(PER_RESOLVER_TIMEOUT_SECS),
+                    r.get_video_info(url),
+                )
+                .await;
+                (r.platform(), res)
+            })
+            .collect();
+
+        // yt-dlp fallback 与其他 resolver 并发跑 (同一 join!)
+        let skip_yt_dlp = primary.platform() == Platform::Other;
+        let yt_dlp_future = async move {
+            if skip_yt_dlp {
+                return None;
             }
-            match resolver.get_video_info(url).await {
-                Ok(info) => return Ok(info),
-                Err(_) => continue,
+            let res = tokio::time::timeout(
+                std::time::Duration::from_secs(PER_RESOLVER_TIMEOUT_SECS),
+                self.default_resolver.get_video_info(url),
+            )
+            .await;
+            Some(res)
+        };
+
+        let (other_results, yt_dlp_result) =
+            futures::join!(futures::future::join_all(other_futures), yt_dlp_future);
+
+        // 3. 扫所有结果, 首个 Ok 立即返
+        for (platform, res) in other_results {
+            match res {
+                Ok(Ok(info)) => {
+                    tracing::info!("Resolver {:?} 命中 (并发 fallback)", platform);
+                    return Ok(info);
+                }
+                Ok(Err(e)) => tracing::debug!("Resolver {:?} 失败: {}", platform, e),
+                Err(_elapsed) => tracing::debug!(
+                    "Resolver {:?} 超时 ({}s)",
+                    platform,
+                    PER_RESOLVER_TIMEOUT_SECS
+                ),
+            }
+        }
+        if let Some(res) = yt_dlp_result {
+            match res {
+                Ok(Ok(info)) => {
+                    tracing::info!("YtDlp fallback 命中");
+                    return Ok(info);
+                }
+                Ok(Err(e)) => tracing::warn!("YtDlp fallback 失败: {}", e),
+                Err(_elapsed) => tracing::warn!("YtDlp fallback 超时 ({}s)", PER_RESOLVER_TIMEOUT_SECS),
             }
         }
 
-        // 最后尝试默认的 YtDlpResolver
-        if primary.platform() != Platform::Other {
-            match self.default_resolver.get_video_info(url).await {
-                Ok(info) => return Ok(info),
-                Err(e) => tracing::warn!("Default resolver also failed: {}", e),
-            }
-        }
-
+        // 4. 全失败
         Err(ResolverError::ParseFailed(format!(
             "所有解析器均失败 for URL: {}",
             url
