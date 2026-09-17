@@ -1,0 +1,57 @@
+{
+  "_comment_top": "本文件是 local_skill_sync 的配置模板。复制为 local_skill_sync.config.json 后按需修改。首次跑 doctor / list 会自动生成默认配置。",
+  "repos": [
+    {
+      "name": "web-reverse-engineering-skills",
+      "url": "https://gitee.com/tuling-python/web-reverse-engineering-skills.git",
+      "kind": "skill",
+      "branch": "main",
+      "subdir_layout": "top-level",
+      "_note": "skill 仓库:每个顶层子目录 = 1 个 skill,镜像到 ~/.agents/skills/<name>/"
+    },
+    {
+      "name": "web-reverse-mcps-tool",
+      "url": "https://gitee.com/tuling-python/web-reverse-mcps-tool.git",
+      "kind": "mcp",
+      "branch": "main",
+      "subdir_layout": "top-level",
+      "_note": "MCP 仓库:每个顶层子目录 = 1 个 MCP 工具,镜像到 ~/.local/share/mcp-tools/<name>/"
+    },
+    {
+      "name": "NV8",
+      "url": "https://gitee.com/tuling-python/nv8.git",
+      "kind": "git-repo",
+      "branch": "master",
+      "subdir_layout": "whole-repo",
+      "target": "~/.local/share/nv8",
+      "_note": "整仓镜像:NV8 是 Node.js 浏览器运行时项目,不是 skill 顶层子目录布局"
+    }
+  ],
+  "paths": {
+    "mirror_root": "~/.local/share/skill-mirror",
+    "agents_root": "~/.agents/skills",
+    "claude_root": "~/.claude/skills",
+    "backup_root": "~/.local/share/skill-mirror.bak",
+    "mcp_root": "~/.local/share/mcp-tools",
+    "_note": "所有路径支持 ~ 和 ${home} 展开。首次 apply 会创建缺失目录"
+  },
+  "exclude": ["__pycache__", "*.egg-info", ".DS_Store", ".git"],
+  "verify": {
+    "check_crlf": true,
+    "check_skill_md": true,
+    "check_frontmatter": ["name", "description"],
+    "file_extensions_lf": [".md", ".py", ".sh", ".json", ".yaml", ".toml"],
+    "_note": "CRLF→LF 仅对 file_extensions_lf 列表里的扩展生效。macOS 装 Windows-origin skill 的血泪防护"
+  },
+  "preserve_symlinks": [
+    "agent-memory-mcp", "agent-memory-systems", "better-icons", "brainstorming",
+    "conventional-commit", "cua-driver", "diagnose", "ego-browser", "eli5",
+    "find-skills", "git-hooks-automation", "grill-me", "grill-with-docs",
+    "improve-codebase-architecture", "memory-retrieval-learning",
+    "openclaw-self-healing", "pua", "remember", "rexxi-course-m3u8",
+    "setup-matt-pocock-skills", "skill-creator", "systematic-debugging",
+    "task-observer", "tdd", "to-issues", "to-prd", "triage", "understand",
+    "understand-chat", "vercel-react-best-practices"
+  ],
+  "_preserve_note": "33 个 ~/.claude/skills symlink 进硬名单(身份保留,绝不覆写)。首次跑 list 自动生成。建议每 3 个月对账一次 ls -l 真实目标"
+}

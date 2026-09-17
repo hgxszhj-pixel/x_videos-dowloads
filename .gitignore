@@ -18,6 +18,9 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
+# local_skill_sync 本机配置(自动生成,不入 git)
+scripts/local_skill_sync.config.json
+
 # Claude
 .claude/*
 !.claude/skills/
