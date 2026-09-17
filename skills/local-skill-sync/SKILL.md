@@ -106,7 +106,7 @@ python3 scripts/local_skill_sync.sh sweep
 
 ### 回滚策略
 
-每次 `apply --force` 改前自动备份:
+每次 `apply --force` **覆盖现有资产前**自动 tar.gz 备份(NEW 全新资产无备份,因为没有旧内容可打包):
 ```
 ~/.local/share/skill-mirror.bak/<skill_name>_<UTC-ts>.tar.gz
 ```
