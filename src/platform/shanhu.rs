@@ -63,6 +63,14 @@ pub const SECTION_PAGE_SIZE: u32 = 200;
 /// 网络请求超时。
 const HTTP_TIMEOUT_SECS: u64 = 15;
 
+/// SHANHU tenant base URL (派生基址, 修改此处即可同步 Referer/Origin)
+/// 默认 `wx-bgfcbieh.rexxi.cn` (京峰教育). 新租户如 `wx-xxxxxx.rexxi.cn` 改一处,
+/// Referer / Origin 自动跟随 (4 处使用全部同步).
+/// 注: Referer 尾随 `/` (HTTP convention for navigation requests),
+///     Origin 不带 (HTTP Origin spec, 服务器端严格校验).
+const SHANHU_REFERER: &str = "https://wx-bgfcbieh.rexxi.cn/";
+const SHANHU_ORIGIN: &str = "https://wx-bgfcbieh.rexxi.cn";
+
 /// Hash 缓存文件名（位于 XDG config dir 下，跨课程共享）。
 pub const HASH_CACHE_FILENAME: &str = "shanhu-hash-cache.json";
 
@@ -352,8 +360,8 @@ impl ShanhuResolver {
         let resp = self
             .client
             .post(&url)
-            .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
-            .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .header("Referer", SHANHU_REFERER)
+            .header("Origin", SHANHU_ORIGIN)
             .header("Cookie", cookie_header)
             .form(&[
                 ("token", token),
@@ -455,8 +463,8 @@ impl ShanhuResolver {
         let resp = self
             .client
             .post(&url)
-            .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
-            .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .header("Referer", SHANHU_REFERER)
+            .header("Origin", SHANHU_ORIGIN)
             .header("Cookie", cookie_header)
             .form(&[
                 ("token", token),
@@ -603,8 +611,8 @@ impl ShanhuResolver {
         let resp = self
             .client
             .get(&url)
-            .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
-            .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .header("Referer", SHANHU_REFERER)
+            .header("Origin", SHANHU_ORIGIN)
             .send()
             .await
             .map_err(|e| ResolverError::Network(format!("play_url HTTP 失败: {e}")))?;
@@ -702,8 +710,8 @@ impl ShanhuResolver {
         let resp = self
             .client
             .post(&url)
-            .header("Referer", "https://wx-bgfcbieh.rexxi.cn/")
-            .header("Origin", "https://wx-bgfcbieh.rexxi.cn")
+            .header("Referer", SHANHU_REFERER)
+            .header("Origin", SHANHU_ORIGIN)
             .header("Cookie", cookie_header)
             .form(&[
                 ("token", token),
