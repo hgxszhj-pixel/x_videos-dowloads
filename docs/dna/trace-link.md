@@ -142,6 +142,32 @@ mkdir -p /tmp/no-trace-test && cd /tmp/no-trace-test && git init -q
 
 ---
 
+## Mutation testing 验证(2026-09-17)
+
+按 dna review-checklist P3 跑过 1 个 Python mutation,确认幂等 skip 是"真契约":
+
+| 变异 | 位置 | 捕获测试 |
+|------|------|---------|
+| `REF_TRACE_RE = re.compile(r"^Ref-trace-NOPE:\\s*.+$", re.MULTILINE)`(永远不匹配) | `scripts/trace_link.py:26` | `test_skips_when_ref_trace_present` 断言 `injected=False` + `count("Ref-trace:") == 1` |
+
+复跑命令(同 eval_trace.py 手测路径,**先清 `__pycache__`**):
+
+```bash
+find . -name "*.pyc" -delete
+find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+
+cp scripts/trace_link.py scripts/trace_link.py.bak-mutation
+sed -i.bak 's|REF_TRACE_RE = re.compile(r"\^Ref-trace:\\s\*.+\$", re.MULTILINE)|REF_TRACE_RE = re.compile(r"^Ref-trace-NOPE:\\s*.+$", re.MULTILINE)|' scripts/trace_link.py
+rm -f scripts/trace_link.py.bak
+python3 -m pytest tests/test_trace_link.py -v
+mv scripts/trace_link.py.bak-mutation scripts/trace_link.py
+# 期望: Pytest: 3 passed, 1 failed (TestAlreadyHasRefTrace)
+```
+
+变更前 checklist: 改 `scripts/trace_link.py` → 重跑 mutation #3。
+
+---
+
 ## 相关 memory / dna
 
 - `docs/dna/trace-schema.md` — 5 元组 schema(NDJSON 怎么写)

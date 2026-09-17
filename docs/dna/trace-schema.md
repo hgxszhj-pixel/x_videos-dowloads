@@ -108,6 +108,28 @@ grep -c '"session_id":"01JB5K8Z9R3X7V4Y"' trace.ndjson
 
 ---
 
+## Mutation testing 验证(2026-09-17)
+
+按 dna review-checklist P3 跑过 2 个 Rust mutation,确认测试是"真测试":
+
+| 变异 | 位置 | 捕获测试 |
+|------|------|---------|
+| `let duration_ms = 0u64`(RAII duration 废) | `src/core/trace.rs:202` | `test_trace_step_raii` 断言 `≥ 50ms` + `test_integration_4_fault_points` 断言 `≥ 20/30ms` |
+| `output_mutator.take()` 不触发 on_exit 闭包 | `src/core/trace.rs:204` | `test_trace_step_raii` 断言 `output["status"] == "done"` |
+
+复跑命令(Rust 端用 `mutation_smoke.sh manual` 自动 revert):
+
+```bash
+bash scripts/mutation_smoke.sh manual src/core/trace.rs 202 \
+  'let duration_ms = self.started_at.elapsed().as_millis() as u64' \
+  'let duration_ms = 0u64'
+# 期望: ✅ MUTATION KILLED + 自动 revert
+```
+
+变更前 checklist: 改 `src/core/trace.rs` → 重跑 mutation #1 + #2。
+
+---
+
 ## 相关 memory
 
 - `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/async-spawn-trace-bisect.md` — 同款思路,4 trace 点二分(事前手动 → 事前自动)

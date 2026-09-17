@@ -94,6 +94,33 @@ python3 scripts/eval_trace.py --baseline traces/2026-09-14/ --current traces/202
 
 ---
 
+## Mutation testing 验证(2026-09-17)
+
+按 dna review-checklist P3 跑过 2 个 Python mutation,确认测试是"真测试":
+
+| 变异 | 位置 | 捕获测试 |
+|------|------|---------|
+| `success_rate = (total - ok) / total`(倒置) | `scripts/eval_trace.py:120` | `test_single_session_ok_metrics` 断言 `== 1.0` + `test_improvement_all_metrics` / `test_regression_success_rate_drops` 判定方向 |
+| `verdict = "✅" if delta > 0 else "❌"`(lower_is_better 方向反) | `scripts/eval_trace.py:144` | `test_improvement_all_metrics` 断言 `resolver_chain_length` ✅ |
+
+复跑命令(Python 端 `mutation_smoke.sh` 不覆盖,手测;**必须先清 `__pycache__`** 否则 revert 后 pytest 跑旧字节码):
+
+```bash
+find . -name "*.pyc" -delete
+find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+
+cp scripts/eval_trace.py scripts/eval_trace.py.bak-mutation
+sed -i.bak 's|m.success_rate = m.ok_sessions / m.total_sessions|m.success_rate = (m.total_sessions - m.ok_sessions) / max(m.total_sessions, 1)|' scripts/eval_trace.py
+rm -f scripts/eval_trace.py.bak
+python3 -m pytest tests/test_eval_trace.py -v
+mv scripts/eval_trace.py.bak-mutation scripts/eval_trace.py
+# 期望: Pytest: 5 passed, 3 failed
+```
+
+变更前 checklist: 改 `scripts/eval_trace.py` → 重跑 mutation #4 + #5。
+
+---
+
 ## 相关 memory / dna
 
 - `docs/dna/trace-schema.md` — 5 元组 schema 来源
