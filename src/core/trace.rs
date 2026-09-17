@@ -141,12 +141,31 @@ fn write_event(event: &Value) -> std::io::Result<()> {
         f.write_all(line.as_bytes())?;
         f.flush()?;
     } else {
-        // 无活动 session:仅 stderr,不阻塞主流程
-        eprintln!(
-            "[trace] 跳过事件(无活动 session): step={}",
-            event.get("step").and_then(|v| v.as_str()).unwrap_or("?")
-        );
+        // 无活动 session:fallback best-effort append 到 no-session/<date>.ndjson
+        // 失败静默,不阻塞主流程,避免 stderr 刷屏
+        let _ = append_no_session_event(event);
     }
+    Ok(())
+}
+
+/// Fallback:无活动 session 时把事件写到 `<trace_root>/no-session/YYYY-MM-DD.ndjson`
+/// 与正常 session NDJSON 隔离,session_id 为空(便于 grep / 过滤)。
+/// 任何 IO 错误均返回 Err,调用方静默丢弃。
+fn append_no_session_event(event: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+    let path = trace_root().join("no-session").join(format!("{date}.ndjson"));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    let mut line = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
+    line.push('\n');
+    f.write_all(line.as_bytes())?;
+    f.flush()?;
     Ok(())
 }
 
