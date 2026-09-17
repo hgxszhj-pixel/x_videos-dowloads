@@ -185,12 +185,14 @@ impl TraceStep {
         self
     }
 
+    #[allow(dead_code)] // 仅 #[cfg(test)] 使用:bin 构建里这是 dead;test profile 里 test_trace_step_raii 实际调用它
     pub fn extra(mut self, v: Value) -> Self {
         self.extra = v;
         self
     }
 
     /// 闭包在 drop 时调用,可修改 output(如设置 status / err / bytes_done)
+    #[allow(dead_code)] // 同 extra:test profile 活引用,bin profile 死代码,按 memory/expect-vs-allow-dead-code.md 选 allow 而非 expect
     pub fn on_exit(mut self, f: impl FnOnce(&mut Value) + Send + 'static) -> Self {
         self.output_mutator = Some(Box::new(f));
         self
