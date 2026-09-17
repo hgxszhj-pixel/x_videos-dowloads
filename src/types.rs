@@ -211,15 +211,19 @@ impl std::fmt::Display for DownloadError {
     }
 }
 
+impl std::error::Error for DownloadError {
+    // Display 已实现,source() 默认返回 None — 错误无嵌套来源
+}
+// 字段全是 String,自动 Send + Sync,无需额外 impl
+// ⚠️ 旧版本显式 From<DownloadError> for anyhow::Error 用 anyhow::anyhow!("{}", e)
+// 会 strip 类型,导致 anyhow::Error::downcast_ref::<DownloadError>() 永远失败,
+// 所有 calculate_backoff / 类似 downcast 路径都退化为字符串匹配。
+// 现已删除显式 From,改用 anyhow 的 blanket impl (基于 std::error::Error),
+// 自动保留 typed error 供 downcast_ref 使用。
+
 impl From<DownloadError> for String {
     fn from(e: DownloadError) -> String {
         e.to_string()
-    }
-}
-
-impl From<DownloadError> for anyhow::Error {
-    fn from(e: DownloadError) -> Self {
-        anyhow::anyhow!("{}", e)
     }
 }
 

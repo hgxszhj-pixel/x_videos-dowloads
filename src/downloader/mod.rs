@@ -20,8 +20,8 @@ use crate::core::constants::*;
 use crate::core::segment::parse_ytdlp_progress;
 use crate::hls::HlsDownloader;
 use crate::types::{
-    DownloadError, DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus,
-    DownloadStrategy,
+    DownloadError, DownloadErrorType, DownloadProgress, DownloadRequest, DownloadResult,
+    DownloadStatus, DownloadStrategy,
 };
 use crate::website_profile::{self, WebsiteProfile};
 use anyhow::{anyhow, Context, Result};
@@ -219,30 +219,29 @@ impl VideoDownloader {
         max_delay: u64,
     ) -> Duration {
         if let Some(err) = last_error {
-            let msg = err.to_string();
-
-            // 429 限流错误 - 等待更长时间 (60-120s)
-            if msg.contains("429") || msg.contains("rate limit") || msg.contains("限速") {
-                // 对于限流错误，使用固定长等待，不指数退避
-                return Duration::from_secs(60);
+            // 优先 downcast 到 DownloadError,用 error_type 分类,避免字符串匹配
+            // (字符串依赖 Display impl,易因文案微调误判)
+            if let Some(de) = err.downcast_ref::<DownloadError>() {
+                match &de.error_type {
+                    // 429 限流错误 - 固定长等待 60s
+                    DownloadErrorType::RateLimited | DownloadErrorType::Http(429) => {
+                        return Duration::from_secs(60);
+                    }
+                    // 5xx 服务器错误 - 短等待 (2-8s 指数退避)
+                    DownloadErrorType::Http(s) if (500..=599).contains(s) => {
+                        let backoff = 2u64.pow(attempt.min(3)).min(8);
+                        return Duration::from_secs(backoff);
+                    }
+                    // 4xx 客户端错误 (非限流) - 快速失败
+                    DownloadErrorType::Http(404 | 403) | DownloadErrorType::ContentUnavailable => {
+                        // 这些错误重试无意义,但为了保持一致,仍然等待
+                        let backoff = 2u64.pow(attempt).min(max_delay);
+                        return Duration::from_secs(backoff);
+                    }
+                    _ => {}
+                }
             }
-
-            // 5xx 服务器错误 - 短等待 (2-8s)
-            if msg.contains("500")
-                || msg.contains("502")
-                || msg.contains("503")
-                || msg.contains("服务器异常")
-            {
-                let backoff = 2u64.pow(attempt.min(3)).min(8);
-                return Duration::from_secs(backoff);
-            }
-
-            // 4xx 客户端错误 (非限流) - 快速失败，不重试
-            if msg.contains("404") || msg.contains("403") || msg.contains("内容不可用") {
-                // 这些错误重试无意义，但为了保持一致，仍然等待
-                let backoff = 2u64.pow(attempt).min(max_delay);
-                return Duration::from_secs(backoff);
-            }
+            // 非 DownloadError (例如 anyhow!("下载失败...") 兜底) → 走默认
         }
 
         // 默认: 标准指数退避
@@ -752,23 +751,68 @@ mod tests {
 
     #[test]
     fn test_calculate_backoff_rate_limit() {
-        let err = anyhow::anyhow!("429 Too Many Requests");
+        // DownloadErrorType::Http(429) → 固定 60s
+        let err: anyhow::Error = DownloadError::http(429).into();
         let delay = VideoDownloader::calculate_backoff(&Some(err), 1, 30);
-        assert_eq!(delay, Duration::from_secs(60)); // Rate limit uses fixed 60s
+        assert_eq!(delay, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_calculate_backoff_rate_limited_enum() {
+        // DownloadErrorType::RateLimited(独立于 Http(429)) → 同样 60s
+        let err: anyhow::Error = DownloadError::rate_limited().into();
+        let delay = VideoDownloader::calculate_backoff(&Some(err), 1, 30);
+        assert_eq!(delay, Duration::from_secs(60));
     }
 
     #[test]
     fn test_calculate_backoff_server_error() {
-        let err = anyhow::anyhow!("500 Internal Server Error");
+        // DownloadErrorType::Http(500) → 2^min(attempt,3) capped at 8
+        let err: anyhow::Error = DownloadError::http(500).into();
         let delay = VideoDownloader::calculate_backoff(&Some(err), 1, 30);
         assert_eq!(delay, Duration::from_secs(2)); // 2^1 = 2s
     }
 
     #[test]
+    fn test_calculate_backoff_server_error_502_503() {
+        // 502/503 同样命中 5xx 分支
+        for status in [502u16, 503, 504, 599] {
+            let err: anyhow::Error = DownloadError::http(status).into();
+            let delay = VideoDownloader::calculate_backoff(&Some(err), 1, 30);
+            assert_eq!(delay, Duration::from_secs(2), "status={} 应命中 5xx 分支", status);
+        }
+    }
+
+    #[test]
     fn test_calculate_backoff_not_found() {
-        let err = anyhow::anyhow!("404 Not Found");
+        // DownloadErrorType::Http(404) → 2^attempt capped at max_delay
+        let err: anyhow::Error = DownloadError::http(404).into();
         let delay = VideoDownloader::calculate_backoff(&Some(err), 2, 30);
         assert_eq!(delay, Duration::from_secs(4)); // 2^2 = 4s
+    }
+
+    #[test]
+    fn test_calculate_backoff_content_unavailable() {
+        // ContentUnavailable(非 HTTP 错误但语义同 4xx 客户端错误)
+        let err: anyhow::Error = DownloadError::content_unavailable("视频已下架").into();
+        let delay = VideoDownloader::calculate_backoff(&Some(err), 2, 30);
+        assert_eq!(delay, Duration::from_secs(4));
+    }
+
+    #[test]
+    fn test_calculate_backoff_unknown_http_status() {
+        // 200/418/... 不在已知分支 → 默认指数退避
+        let err: anyhow::Error = DownloadError::http(418).into();
+        let delay = VideoDownloader::calculate_backoff(&Some(err), 3, 30);
+        assert_eq!(delay, Duration::from_secs(4)); // 2^(3-1) = 4s
+    }
+
+    #[test]
+    fn test_calculate_backoff_non_download_error() {
+        // 非 DownloadError(裸 anyhow!) → downcast 失败 → 默认退避
+        let err = anyhow::anyhow!("some other error");
+        let delay = VideoDownloader::calculate_backoff(&Some(err), 3, 30);
+        assert_eq!(delay, Duration::from_secs(4)); // 2^(3-1) = 4s
     }
 
     #[test]
