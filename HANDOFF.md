@@ -876,7 +876,7 @@ PHPSESSID + 微信扫码态在 SHANHU/万字平台**实测稳定期约 1-2 周**
 | 发现 | 证据 | 否决什么 |
 |------|------|---------|
 | **`cfileid` 是 VOD 服务端分配** | MD5/SHA1/SHA256 of `(file_id / hex(file_id) / file_id+appid / appid+file_id / chapter_id / video_id / course_id)` 全不匹配 `2586671d83683fda9fba38f4ab74225e` | 算法反推(JS bundle 的 hash 计算器是 VOD SDK 黑盒) |
-| **JS bundle 硬编码 COS creds** | `***REDACTED_TENCENT_SECRET_ID***` + `Rt9KNFvbM7nPvIVdArU6jDdv43sVv9Xs` 在 app.js:4823885(`cos.uploadFile` → `huaxia-1396267596` COS bucket) | 客户端 signing;测 `/verify/sign` → 拒签 `SecretID 不存在或已禁用`(COS ≠ VOD) |
+| **JS bundle 硬编码 COS creds** | `<REDACTED: SecretID + SecretKey>` 在 app.js:4823885(`cos.uploadFile` → `huaxia-1396267596` COS bucket) | 客户端 signing;测 `/verify/sign` → 拒签 `SecretID 不存在或已禁用`(COS ≠ VOD) |
 | **唯一返 `cfileid` 端点 100% 需登录** | `POST /onlineapi/stu/course/videoAuth` 匿名返 `code=100067` 非法请求 | 匿名 videoAuth |
 
 ### 2. 双层 hash 链(被发现不止一层)
@@ -1133,116 +1133,73 @@ pnpx skills update brainstorming systematic-debugging -y -g
 
 ---
 
-## 更新 Session: 2026-09-17 — P1/P2/P3 bug 修复三连
+## 更新 Session: 2026-09-17 — P1-P4 bug 修复 + mutation 验证四连
 
-### 1. P1 单 URL 路径 stall + 硬超时(commit `04b6390`)
+### P1 单 URL stall + 硬超时(commit `04b6390`)
 
-**触发**: bug 扫描 agent 报告 MEDIUM-BUG-E #1 — `start_download_impl` 未 wrap 双层防护,单 URL 用户只能手动 Cancel。
+- bug 扫描 agent 报 MEDIUM-BUG-E #1:`start_download_impl` 未 wrap 双层防护
+- 复用 BUG-E v2 (commit `e428e3a`) stall_detector + 120s 硬超时,`progress_arc` 存 percent (`*10000`) 改名 `last_progress`
+- `src/gui_dioxus/handlers.rs` (+65/-7),Mutation #6 SURVIVED(已知盲区,符合 BUG-D 教训 #21)
 
-**实现**:
-- 复用 BUG-E v2 (commit `e428e3a`) 同款 stall_detector + 120s 硬超时
-- `progress_arc` 存 percent (`*10000`),改名 `last_progress` 避免 "bytes" 误读
-- `tokio::select!` 三路竞争: stall_detector / download_with_timeout / 任一返 Err 终止
-- Mutation #6 SURVIVED 确认 stall 检测无 unit test 覆盖(已知测试盲区,符合 BUG-D 教训 #21)
+### P2 SHANHU Referer/Origin 抽 const(commit `d9cb963`)
 
-**文件**: `src/gui_dioxus/handlers.rs` (+65/-7)
+- SHANHU 模块 4 处硬编码 `wx-bgfcbieh.rexxi.cn` → `SHANHU_REFERER` / `SHANHU_ORIGIN` 常量
+- 新租户改 1 处即可,`src/platform/shanhu.rs` (+16/-8)
 
-### 2. P2 SHANHU Referer/Origin 抽 const 派生(commit `d9cb963`)
+### P3 calculate_backoff 字符串匹配 → typed enum(commit `aab0b2f`)
 
-**触发**: bug 扫描 agent 识别 SHANHU 模块 4 处硬编码 `wx-bgfcbieh.rexxi.cn`,新租户需改 4 处。
+- bug 扫描报告 "4 处字符串错误匹配" → **实际只有 1 处真问题**(`calculate_backoff`),其他 3 处是误报:
+  - `platform/mod.rs:159-167` 是 `ResolverError::Network(msg)` 字段用法(合法)
+  - `platform/mod.rs:520-521` 是 timeout log(不是匹配)
+  - `yt_dlp.rs` / `drission_client.rs` / `gui_dioxus/actions.rs` 匹配的是外部数据(合法)
+- **核心根因**: 显式 `impl From<DownloadError> for anyhow::Error { anyhow::anyhow!("{}", e) }` 会 strip 类型,`downcast_ref::<DownloadError>()` 永远返 None
+- 修复: 加 `impl std::error::Error for DownloadError {}`,**移除 strip 类型的 From**(让 anyhow blanket impl 自动保留 typed error)
+- `calculate_backoff` 改用 `err.downcast_ref::<DownloadError>()` + `match &de.error_type` 分支
+- 新增 5 单测(rate_limited_enum / server_error_502_503 / content_unavailable / unknown_http_status / non_download_error)
 
-**实现**:
-- 新增 `SHANHU_REFERER` / `SHANHU_ORIGIN` 常量,docstring 注明 `/` (Referer) vs 无 (Origin) 差异
-- 4 处 `.header()` 全部引用常量
-- 290 passed / 12 ignored 无回归,clippy 无新 warning
+### P4 stall_check_loop 抽 pure 函数(commit `4b9c702`)
 
-**文件**: `src/platform/shanhu.rs` (+16/-8)
+- 动机: 闭合 MEDIUM-BUG-E #2(Mutation #6 暴露的 stall 测试盲区)
+- 抽 `stall_check_loop(progress_arc, grace, interval, url) -> Result<(), ErrorDisplay>` 生产 30s/15s,测试 50ms/100ms
+- `ErrorDisplay` 加 `Debug` derive(测试 assert_eq! 需要)
+- 新增 3 单测(triggers_after_two_rounds / progress_change_resets / none_arc_stalls),3x 验证稳定
 
-### 3. P3 calculate_backoff 字符串匹配 → typed enum(commit `aab0b2f`)
+### Mutation 验证汇总(2026-09-17)
 
-**触发**: bug 扫描报告 "4 处字符串错误匹配"。实际深入分析发现: **只有 1 处真问题**(downloader/mod.rs:225-243),其他 3 处是误报:
-- platform/mod.rs:159-167 `ResolverError::Network(msg)` 内 `msg.contains()` 是字段用法,正确
-- platform/mod.rs:520-521 是 timeout log,不是匹配
-- yt_dlp.rs / drission_client.rs / gui_dioxus/actions.rs 匹配的是**外部数据**(yt-dlp stderr / drission HTML 响应),合法
-
-**核心 bug 发现**:
-- `calculate_backoff` 用 `err.to_string().contains("429")` 等字符串匹配 → 依赖 Display 文案,易误判
-- 深层根因: 显式 `impl From<DownloadError> for anyhow::Error` 用 `anyhow::anyhow!("{}", e)` **strip 类型**,`downcast_ref::<DownloadError>()` 永远返 None,所有 downcast 路径失效(不只 calculate_backoff)
-
-**实现**:
-- `src/types.rs`: 加 `impl std::error::Error for DownloadError {}`,**移除 strip 类型的 From**(改用 anyhow blanket impl,基于 std::error::Error 自动保留 typed error)
-- `src/downloader/mod.rs`: `calculate_backoff` 用 `err.downcast_ref::<DownloadError>()` + `match &de.error_type` 分支
-- 测试: 4 个原有 calculate_backoff 测试改用 typed `DownloadError`,新增 5 个 (rate_limited_enum / server_error_502_503 / content_unavailable / unknown_http_status / non_download_error)
-- 290 → 295 passed (+5),无回归
-
-### 4. 工程纪律价值
-
-- **抗 AI 假 bug 报告**: bug 扫描 agent 报 "4 处字符串匹配" → 实际只有 1 处。验证后再动手省了 3 个误改。
-- **字符串匹配边界**: 只在**外部数据**(yt-dlp stderr / HTML 响应)用 contains,内部 typed error 必用 downcast。
-- **From<E> for anyhow::Error 陷阱**: 必须用 `anyhow::Error::new(e)` 或 std blanket impl,千万别 `anyhow::anyhow!("{}", e)`(strip 类型)。
-
-### 5. 相关 memory / dna
-
-- `MEMORY.md:single-url-bug-e-v3.md` — P1 双层防护细节
-- `MEMORY.md:downloadresult-success-check.md` — BUG-B/C 教训
-- `MEMORY.md:bug-d-isolation-and-cookies-zero.md` — 网络 IO 函数隔离测试不可用(教训 #21)
-- `MEMORY.md:mutation-smoke-trace-three-piece.md` — Mutation testing 血泪
-- `docs/dna/trace-schema.md` / `trace-eval-metrics.md` / `trace-link.md` — 5 mutations 全 KILLED
-
-## 更新 Session: 2026-09-17 — P3 验证 + P4 stall_check_loop 抽函数(commit `4b9c702`)
-
-### 1. P3 mutation testing(commit `aab0b2f` 后接续)
-
-对 `calculate_backoff` 新 typed-error 路径跑 3 mutation,确认测试是真测试:
-
-| # | 变异 | 位置 | 捕获测试 | 结果 |
-|---|------|------|----------|------|
-| 7 | `Http(429)` → `Http(999)` | `src/downloader/mod.rs:227` | `test_calculate_backoff_rate_limit` 断言 `== 60s` | **KILLED** (1 fail) |
-| 8 | `(500..=599).contains(s)` → `(600..=699).contains(s)` | `src/downloader/mod.rs:231` | `test_calculate_backoff_server_error` + `..._502_503` | **KILLED** (2 fail) |
-| 9 | `DownloadErrorType::ContentUnavailable` → `DownloadErrorType::Authentication` | `src/downloader/mod.rs:236` | `test_calculate_backoff_content_unavailable` | **KILLED** (1 fail) |
-
-**新踩坑**: **cargo 增量缓存污染**(类比 Python `__pycache__`)。revert mutation 后直接 `cargo test` 仍报 fail,根因是 cargo 增量编译缓存了 mutation 期间中间产物。**修复**: `cargo clean -p <package>` 前置 + 后置。
-
-### 2. P4 stall_check_loop 抽函数 + 单测(commit `4b9c702`)
-
-**动机**: Mutation #6 SURVIVED 暴露 stall 检测无 unit test 覆盖(MEDIUM-BUG-E #2 follow-up)。
-
-**实现**:
-- 抽 `stall_check_loop(progress_arc, grace, interval, url) -> Result<(), ErrorDisplay>`
-  - `start_download_impl` 调用 30s/15s(生产)
-  - 测试用 50ms/100ms(毫秒级)
-- `ErrorDisplay` 加 `Debug` derive(测试 `assert_eq!` 需要)
-- 新增 `stall_check_loop_tests` 模块,3 测试:
-  - `triggers_after_two_rounds` — sentinel `u64::MAX` + 2 轮 0 = stall
-  - `progress_change_resets` — 后台 30ms 更新,stall_check_loop 100ms 轮询,跑 500ms 不 stall(tokio::time::timeout 返 Elapsed)
-  - `none_arc_stalls` — None arc 视作 0 → stall
-
-**Mutation 验证**:
 | # | 变异 | 捕获测试 | 结果 |
 |---|------|----------|------|
-| 10 | `let mut last_progress: u64 = u64::MAX;` → `let mut last_progress: u64 = 0;` | `triggers_after_two_rounds` | **KILLED** |
-| 11 | `if progress == last_progress` → `if progress != last_progress` (原 Mutation #6) | `triggers_after_two_rounds` + `none_arc_stalls` | **KILLED** (2 fail) |
+| 7 | `Http(429)` → `Http(999)` | `test_calculate_backoff_rate_limit` | **KILLED** |
+| 8 | 5xx range 改 6xx | `test_calculate_backoff_server_error` + `_502_503` | **KILLED** |
+| 9 | `ContentUnavailable` → `Authentication` | `test_calculate_backoff_content_unavailable` | **KILLED** |
+| 10 | sentinel `u64::MAX` → `0` | `triggers_after_two_rounds` | **KILLED** |
+| 11 | `progress ==` → `!=`(原 Mutation #6) | `triggers_after_two_rounds` + `none_arc_stalls` | **KILLED** |
 
-**测试稳定性**: 进度更新测试存在时序竞争,初版 60ms spawn + 50ms interval 不稳定;改用 30ms spawn + 100ms interval + 500ms timeout,3x 验证 3/3 全过。
+**新踩坑**: **cargo 增量缓存污染**(类比 Python `__pycache__`),mutation revert 后必须 `cargo clean -p <package>`。
 
-### 3. bug 扫描 agent 误报教训
+### 工程纪律要点
 
-P3 报告 "4 处字符串错误匹配" → 实际只有 1 处真问题(`calculate_backoff`),其他 3 处是误报(字段用法 / timeout log)。
-P4 报告 "drission_client.rs:1594,1607 panic! → Err 返" → 实际是 `#[cfg(test)] #[ignore]` e2e 函数,panic 是 fail-fast 模式(测试前提缺失时终止),不是 bug。
+- **bug 扫描 agent 报告 = 起跑线,不是终点**,必须人工读上下文判断每条(P3/P4 都有误报)
+- **From<E> for anyhow::Error 陷阱**: 用 `anyhow::Error::new(e)` 或 std blanket impl,千万别 `anyhow::anyhow!("{}", e)`(strip 类型)
+- **字符串匹配边界**: 只在外部数据(yt-dlp stderr / HTML 响应)用 contains,内部 typed error 必用 downcast
+- **网络 IO 隔离测试不可用**(教训 #21)→ 抽 pure 函数 + 短时长(50ms) 是 workaround
 
-**结论**: bug 扫描 agent 报告 = 起跑线,不是终点;**必须人工读上下文判断每条**。
+### 统计
 
-### 4. 统计
-
-| 类型 | 累计 |
-|------|------|
-| Mutation KILLED | 11 (5 trace 三件套 + 3 calculate_backoff + 2 stall_check_loop + 1 prior) |
-| 新单测 | 5 calculate_backoff + 3 stall_check_loop = **8 测试** |
+| 项 | 数 |
+|----|----|
+| 新 commit | 5 (P1/P2/P3/P4 + doc) |
+| 新单测 | 8 (5 calculate_backoff + 3 stall_check_loop) |
+| Mutation KILLED | 11 累计 (5 trace + 3 calc + 2 stall + 1 prior) |
 | Test 总数 | 290 → **298** (+8) |
 
-### 5. 相关 memory / dna
+### 相关 memory / dna
 
+- `MEMORY.md:single-url-bug-e-v3.md` — P1 双层防护细节 + MEDIUM-BUG-E #2 闭合
 - `MEMORY.md:anyhow-from-e-strips-types.md` — From<E> strip 类型陷阱(P3 根因)
+- `MEMORY.md:mutation-smoke-trace-three-piece.md` — Rust mutation #7-9 + cargo clean 教训
+- `MEMORY.md:downloadresult-success-check.md` — BUG-B/C 教训
+- `MEMORY.md:bug-d-isolation-and-cookies-zero.md` — 网络 IO 隔离测试不可用(教训 #21)
+- `docs/dna/trace-schema.md` / `trace-eval-metrics.md` / `trace-link.md` — trace 5 mutations 全 KILLED
 - `MEMORY.md:mutation-smoke-trace-three-piece.md` — 已追加 cargo clean 教训(P3 mutation #7-9 + cargo 缓存污染)
 - `MEMORY.md:single-url-bug-e-v3.md` — Mutation #6 SURVIVED 已文档化,P4 闭合
 
