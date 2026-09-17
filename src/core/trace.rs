@@ -242,6 +242,7 @@ impl Drop for TraceStep {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     /// 测试 helper: 重置全局 session/file 状态(因为 LazyLock 在测试间共享)
     async fn reset_globals() {
@@ -253,6 +254,7 @@ mod tests {
     }
 
     /// 测试用:写一条事件后能读回合法 JSON
+    #[serial]
     #[tokio::test]
     async fn test_trace_event_roundtrip() {
         reset_globals().await;
@@ -298,6 +300,7 @@ mod tests {
     }
 
     /// 测试用:TraceStep drop 时自动算 duration_ms
+    #[serial]
     #[tokio::test]
     async fn test_trace_step_raii() {
         reset_globals().await;
@@ -339,6 +342,7 @@ mod tests {
     ///   - 5 元组字段齐全
     ///   - 顺序:session_open → fetch_video_info → resolver_try×N → download_one → session_close
     ///   - 总事件数 == open + 1 + N + 1 + close = 模拟真实 BUG 复发时 grep 体验
+    #[serial]
     #[tokio::test]
     async fn test_integration_4_fault_points() {
         reset_globals().await;
