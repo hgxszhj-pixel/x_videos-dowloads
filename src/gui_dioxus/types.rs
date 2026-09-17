@@ -147,7 +147,7 @@ impl Default for AppState {
 }
 
 /// 错误信息结构
-#[derive(Default, Clone, Store)]
+#[derive(Default, Debug, Clone, Store)]
 pub(super) struct ErrorDisplay {
     pub(super) error_type: String, // "network" | "auth" | "login" | "course" | "parse" | "download" | "unknown"
     pub(super) message: String,    // 具体错误信息

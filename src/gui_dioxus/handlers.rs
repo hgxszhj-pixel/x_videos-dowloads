@@ -26,6 +26,54 @@ use super::types::{
     VideoInfoDisplay,
 };
 
+/// 纯 stall 检测循环(从 `start_download_impl` 抽出,可单测).
+///
+/// - `grace` — 初始宽限期(让 connect / TLS 握手 / yt-dlp 子进程启动跑完)
+/// - `interval` — 每次进度轮询间隔
+/// - 跨 2 轮 (sentinel `u64::MAX` + 1 轮实进度) progress 不变 → 返 `Err("stall")`
+///
+/// 设计动机: 抽出来是为了补 Mutation #6 的测试盲区. 以前 stall 检测是闭包 + 30s/15s
+/// 真实时间,没法单测;现在用 50ms/50ms 测试毫秒级 stall 检测.
+///
+/// 对应 issue: MEDIUM-BUG-E #2 follow-up (单 URL bug-e-v3 后续).
+/// 调用方: `start_download_impl` 和 `batch_download_impl` inner spawn (L218-280).
+async fn stall_check_loop(
+    progress_arc: Option<Arc<AtomicU32>>,
+    grace: Duration,
+    interval: Duration,
+    url_for_error: &str,
+) -> Result<(), ErrorDisplay> {
+    tokio::time::sleep(grace).await;
+    let mut last_progress: u64 = u64::MAX; // sentinel: 首次比较必更新
+    loop {
+        tokio::time::sleep(interval).await;
+        let progress = progress_arc
+            .as_ref()
+            .map(|a| a.load(Ordering::Relaxed) as u64)
+            .unwrap_or(0);
+        if progress == last_progress {
+            tracing::warn!(
+                "[stall_check_loop] url={} progress={} (grace {}s + 2 轮 {}s 无变化) → 触发终止",
+                url_for_error,
+                progress,
+                grace.as_secs(),
+                interval.as_secs(),
+            );
+            return Err(ErrorDisplay::new(
+                "stall",
+                format!(
+                    "下载停滞 (grace {}s + 2 轮 {}s 轮询无变化, url={})",
+                    grace.as_secs(),
+                    interval.as_secs(),
+                    url_for_error
+                ),
+                "检查网络 / 视频源是否可达 / 取消后重试",
+            ));
+        }
+        last_progress = progress;
+    }
+}
+
 /// 同步下载 - 使用 VideoDownloader
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn start_download_impl(
@@ -114,28 +162,17 @@ pub(super) async fn start_download_impl(
     //     timeout 真 drop future.
     let progress_arc_wd = progress_arc.clone();
     let stall_detector = async {
-        // grace period: 让初始 connect / TLS 握手 / yt-dlp 子进程启动跑完
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        let mut last_progress: u64 = u64::MAX; // sentinel: 首次比较必更新
-        loop {
-            tokio::time::sleep(Duration::from_secs(15)).await;
-            let progress = progress_arc_wd
-                .as_ref()
-                .map(|a| a.load(Ordering::Relaxed) as u64)
-                .unwrap_or(0);
-            if progress == last_progress {
-                tracing::warn!(
-                    "[start_download] stall 检测 url={} progress={} (30s 无进度) → 触发终止",
-                    url,
-                    progress
-                );
-                return Err::<crate::types::DownloadResult, ErrorDisplay>(ErrorDisplay::new(
-                    "stall",
-                    format!("下载停滞 ~60s 无进度 (grace 30s + 2 轮 15s 轮询, url={})", url),
-                    "检查网络 / 视频源是否可达 / 取消后重试",
-                ));
-            }
-            last_progress = progress;
+        match stall_check_loop(
+            progress_arc_wd,
+            Duration::from_secs(30),
+            Duration::from_secs(15),
+            url,
+        )
+        .await
+        {
+            // stall_check_loop 只在 stall 时返 Err,Ok 表示无穷循环 (tokio::select! 不应让 Ok 路径赢)
+            Ok(()) => unreachable!("stall_check_loop 只返 Err,Ok 表示无穷循环,select 不应让此路径胜出"),
+            Err(e) => Err::<crate::types::DownloadResult, ErrorDisplay>(e),
         }
     };
     let download_fut = async move {
@@ -1441,5 +1478,95 @@ mod bug_d_isolation_tests {
                  BUG-D 与 items.len() 无关, 根因更深 (可能 network / 解析器全局状态)."
             ),
         }
+    }
+}
+
+/// stall_check_loop 单测 — 补 Mutation #6 的测试盲区
+/// (2026-09-17, MEDIUM-BUG-E #2 follow-up, commit aab0b2f 之后接续)
+/// 之前 stall 检测是闭包 + 30s/15s 真实时间,没法单测;
+/// 抽成 pure async fn 后,用 50ms/50ms 测试毫秒级 stall 检测逻辑.
+#[cfg(test)]
+mod stall_check_loop_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// stall 触发 — progress 不变 2 轮 → Err("stall")
+    #[tokio::test]
+    async fn test_stall_check_loop_triggers_after_two_rounds() {
+        let progress = Arc::new(AtomicU32::new(0)); // 始终 0
+        let url = "https://test.example.com/never-progress";
+
+        let start = std::time::Instant::now();
+        let res = stall_check_loop(
+            Some(progress),
+            Duration::from_millis(50), // grace
+            Duration::from_millis(50), // interval
+            url,
+        )
+        .await;
+
+        let elapsed = start.elapsed();
+        assert!(res.is_err(), "stall 应返 Err,实际 {:?}", res);
+        let err = res.unwrap_err();
+        assert_eq!(err.error_type, "stall");
+        // 期望耗时 ≈ grace(50ms) + 2 * interval(50ms) = 150ms
+        // 允许 ±200ms 余量(tokio::time::sleep 不保证精确)
+        assert!(
+            elapsed >= Duration::from_millis(140) && elapsed < Duration::from_millis(400),
+            "耗时应在 ~150ms 区间,实际 {:?}",
+            elapsed
+        );
+    }
+
+    /// 进度变化 → 永不触发 stall(超时由 tokio::time::timeout 兜底,不在本函数范围)
+    /// 测试方式: 后台任务每 30ms 更新一次 progress,stall_check_loop 每 100ms 轮询一次,
+    /// 跑 500ms — stall_check_loop 应一直在循环(超时返回 Elapsed),不返 Err("stall")
+    #[tokio::test]
+    async fn test_stall_check_loop_progress_change_resets() {
+        let progress = Arc::new(AtomicU32::new(0));
+        let progress_clone = progress.clone();
+
+        // 后台任务: 每 30ms 增加 progress (快于 stall_check_loop 的 100ms 轮询,
+        // 保证每次轮询都看到不同 progress → 永不触发 stall)
+        tokio::spawn(async move {
+            for i in 1..=20 {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                progress_clone.store(i * 10000, Ordering::Relaxed);
+            }
+        });
+
+        // grace 100ms + interval 100ms,跑 500ms 覆盖 4 次轮询
+        let res = tokio::time::timeout(
+            Duration::from_millis(500),
+            stall_check_loop(
+                Some(progress),
+                Duration::from_millis(100), // grace
+                Duration::from_millis(100), // interval
+                "https://test.example.com/progressing",
+            ),
+        )
+        .await;
+
+        assert!(
+            res.is_err(),
+            "tokio::time::timeout 应超时,实际 {:?}",
+            res
+        );
+        // res.err() 是 Elapsed — 说明 stall_check_loop 未自行返 Err("stall")
+    }
+
+    /// None arc → 视作 0,行为等同固定 0 progress → stall
+    #[tokio::test]
+    async fn test_stall_check_loop_none_arc_stalls() {
+        let res = stall_check_loop(
+            None,
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+            "https://test.example.com/no-arc",
+        )
+        .await;
+
+        assert!(res.is_err(), "None arc 应触发 stall,实际 {:?}", res);
+        assert_eq!(res.unwrap_err().error_type, "stall");
     }
 }
