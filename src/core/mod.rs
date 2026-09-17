@@ -13,3 +13,4 @@ pub mod cache;
 pub mod constants;
 pub mod progress;
 pub mod segment;
+pub mod trace;

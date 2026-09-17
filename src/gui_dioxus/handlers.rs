@@ -17,6 +17,8 @@ use crate::platform::{
 use crate::types::sanitize_filename;
 use crate::types::{DownloadProgress, DownloadRequest};
 
+use crate::core::trace::{trace_event, trace_session_close, trace_session_open, TraceStep};
+
 use super::store::add_completed_download;
 
 use super::types::{
@@ -37,6 +39,10 @@ pub(super) async fn start_download_impl(
     format_id: Option<String>,
     strategy: crate::types::DownloadStrategy,
 ) -> Result<(), ErrorDisplay> {
+    // 故障点 4: GUI 单 URL 下载入口 — 开 trace session,内含 fetch_video_info / download_one 事件
+    // (BUG-D / BUG-E 复发时按 session_id grep 一键定位)
+    let _session_id = trace_session_open("gui-single").await;
+
     let config = AppConfig::load()
         .map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查配置文件权限"))?;
     let output_dir = if config.output_dir.to_string_lossy().is_empty() {
@@ -108,15 +114,18 @@ pub(super) async fn start_download_impl(
     // BUG-B 把 success=true 写回 store → UI 显示 completed 而文件实际未下载。
     // 镜像 src/gui_dioxus/handlers.rs:868-876 (download_one) 的处理。
     if result.success {
+        trace_session_close(serde_json::json!({"status": "ok"})).await;
         Ok(())
     } else {
-        Err(ErrorDisplay::new(
+        let err = ErrorDisplay::new(
             "download",
             result
                 .error_message
                 .unwrap_or_else(|| "下载失败 (未知错误)".to_string()),
             "检查视频 URL 是否过期,或重新 Analyze Course 刷新 m3u8 后再下载",
-        ))
+        );
+        trace_session_close(serde_json::json!({"status": "err", "msg": err.message})).await;
+        Err(err)
     }
 }
 
@@ -347,6 +356,10 @@ pub(super) async fn batch_download_impl(
 }
 
 pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay, String> {
+    // Trace BUG-D 现场: 串行 resolver 链跑完之前不知道会卡哪个
+    let _trace = TraceStep::new("fetch_video_info")
+        .input(serde_json::json!({"url": url}));
+
     let mut registry = ResolverRegistry::new();
 
     // 为 TikTok 和 DouYin 配置 msToken
@@ -380,6 +393,16 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
     // 使用 try_resolve_all 尝试所有解析器
     match registry.try_resolve_all(url).await {
         Ok(info) => {
+            // Trace BUG-D: 解析成功 — 记 video_count 供后续 chain_length 分析
+            trace_event(
+                "fetch_video_info_ok",
+                serde_json::json!({"url": url}),
+                serde_json::json!({"status": "ok", "video_count": info.formats.len()}),
+                0,
+                serde_json::json!({"title_len": info.title.len()}),
+            )
+            .await;
+
             let duration = info
                 .duration
                 .map(|d| format!("{}:{:02}", d / 60, d % 60))
@@ -410,7 +433,18 @@ pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay,
                 selected: true, // 批量解析得到的视频默认勾选（与 CourseItemDisplay.selected 对齐）
             })
         }
-        Err(e) => Err(format!("Failed to fetch video info: {}", e)),
+        Err(e) => {
+            // Trace BUG-D: 解析失败 — 记错误信息
+            trace_event(
+                "fetch_video_info_err",
+                serde_json::json!({"url": url}),
+                serde_json::json!({"status": "err", "err": e.to_string()}),
+                0,
+                serde_json::json!({}),
+            )
+            .await;
+            Err(format!("Failed to fetch video info: {}", e))
+        }
     }
 }
 
@@ -796,6 +830,15 @@ async fn resolve_items_serially(
 
     for (i, item) in state.items.iter().enumerate() {
         let slot = slots.get(i).cloned();
+        // Trace BUG-D: 串行 resolver try — 记 idx + title + 状态,复发时 grep idx 直接定位卡死位置
+        trace_event(
+            "resolver_try",
+            serde_json::json!({"idx": i, "title": item.title, "item_id": item.id}),
+            serde_json::json!({"selected": item.selected}),
+            0,
+            serde_json::json!({"resolver_chain_length": total}),
+        )
+        .await;
         if !item.selected {
             results.push((item.id.clone(), "skipped".into()));
             if let Some(s) = slot {
@@ -973,6 +1016,10 @@ async fn download_one(
     m3u8: &str,
     progress_cb: Arc<dyn Fn(crate::types::DownloadProgress) + Send + Sync>,
 ) -> Result<(), String> {
+    // Trace BUG-E: batch 下载 stall 60s+ — 记 title 帮 grep 定位哪一条卡
+    let _trace = TraceStep::new("download_one")
+        .input(serde_json::json!({"title": title, "m3u8_len": m3u8.len()}));
+
     let output_dir = AppConfig::load()
         .map(|c| c.output_dir)
         .unwrap_or_else(|_| PathBuf::from("./Downloads"));
