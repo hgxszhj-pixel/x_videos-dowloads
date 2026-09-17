@@ -101,14 +101,72 @@ pub(super) async fn start_download_impl(
 
     let mut downloader = VideoDownloader::new()
         .map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查下载器初始化"))?;
-    let result = downloader.download(&request, callback).await.map_err(|e| {
-        // 尝试 downcast 到结构化 DownloadError，否则 fallback
-        if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
-            ErrorDisplay::from(de.clone())
-        } else {
-            ErrorDisplay::new("download", e.to_string(), "")
+    // BUG-E fix v3 (2026-09-17): 单 URL 入口复用双层防护 (stall_detector + 硬超时).
+    // batch_download_impl inner spawn (L218-280) 同款 (v2 设计). batch 路径的 wrap 保留作
+    // defense-in-depth — 单 URL 用户此前唯一保护是手动 Cancel 按钮.
+    //   Layer 1 — `tokio::time::timeout(120s)`: 硬超时, drop future 自动 abort spawned subtasks
+    //     (yt-dlp subprocess / HLS segment tasks), BUG-D 模式已验证 (commit 04c3200).
+    //   Layer 2 — progress-unchanged 检测 (sentinel pattern, 30s grace + 15s interval):
+    //     progress_arc 实际存 percent (`*10000`), 跨 2 轮 15s 不变 = stall. 在 timeout 之前
+    //     提前 ~60s 返 Err.
+    // 注: 不读 cancel_flag — YtDlp child.wait / HLS hls::downloader / parallel_download
+    //     都零 cancel check, cancel_flag 只对 direct HTTP (mod.rs:307) 生效. 兜底必须靠
+    //     timeout 真 drop future.
+    let progress_arc_wd = progress_arc.clone();
+    let stall_detector = async {
+        // grace period: 让初始 connect / TLS 握手 / yt-dlp 子进程启动跑完
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        let mut last_progress: u64 = u64::MAX; // sentinel: 首次比较必更新
+        loop {
+            tokio::time::sleep(Duration::from_secs(15)).await;
+            let progress = progress_arc_wd
+                .as_ref()
+                .map(|a| a.load(Ordering::Relaxed) as u64)
+                .unwrap_or(0);
+            if progress == last_progress {
+                tracing::warn!(
+                    "[start_download] stall 检测 url={} progress={} (30s 无进度) → 触发终止",
+                    url,
+                    progress
+                );
+                return Err::<crate::types::DownloadResult, ErrorDisplay>(ErrorDisplay::new(
+                    "stall",
+                    format!("下载停滞 ~60s 无进度 (grace 30s + 2 轮 15s 轮询, url={})", url),
+                    "检查网络 / 视频源是否可达 / 取消后重试",
+                ));
+            }
+            last_progress = progress;
         }
-    })?;
+    };
+    let download_fut = async move {
+        downloader
+            .download(&request, callback)
+            .await
+            .map_err(|e| {
+                // 尝试 downcast 到结构化 DownloadError，否则 fallback
+                if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
+                    ErrorDisplay::from(de.clone())
+                } else {
+                    ErrorDisplay::new("download", e.to_string(), "")
+                }
+            })
+    };
+    let download_with_timeout = async {
+        tokio::time::timeout(Duration::from_secs(120), download_fut)
+            .await
+            .unwrap_or_else(|_| {
+                Err(ErrorDisplay::new(
+                    "timeout",
+                    format!("下载超时 120s (硬上限, url={})", url),
+                    "网络极慢 / 视频源不可达 / 考虑取消重试",
+                ))
+            })
+    };
+    let download_res = tokio::select! {
+        stall_res = stall_detector => stall_res,
+        timeout_res = download_with_timeout => timeout_res,
+    };
+    let result = download_res?;
     // BUG-C 修复 (2026-09-14): 检查 DownloadResult.success — 上层 download() 在所有
     // 分段 404 时仍返回 Ok(result{success=false}),旧代码直接 ? 后 Ok(()),
     // BUG-B 把 success=true 写回 store → UI 显示 completed 而文件实际未下载。
