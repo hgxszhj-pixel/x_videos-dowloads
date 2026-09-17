@@ -18,6 +18,37 @@
 
 ---
 
+## 最新 Session: 2026-09-18 — trace.rs 三连小外科 (dead_code + fallback log + serial_test, 3 commits)
+
+### 1. 触发
+- `cargo build` 报 `methods extra and on_exit are never used` → 触发 dead_code 修复
+- 用户 runtime 反馈 trace 日志在 production 跑 GUI 时 22+ 行/URL 刷 stderr → 触发 fallback 改写
+- 验证过程中发现 3 个 `core::trace` 测试在默认并行下 panic(`unwrap() on NotFound`) → 触发 test 串行化
+
+### 2. 3 commits
+
+| commit | 改动 | 根因 / 价值 |
+|--------|------|------------|
+| `e2387f8` chore(trace) | `extra` / `on_exit` 加 `#[allow(dead_code)]` | 仅 `#[cfg(test)] test_trace_step_raii` 用;按 `memory/expect-vs-allow-dead-code.md` 选 `allow` 而非 `expect`(后者在 test profile 永久 unfulfilled) |
+| `f39c184` refactor(trace) | `write_event` fallback `eprintln` → best-effort append 到 `<trace_root>/no-session/YYYY-MM-DD.ndjson` | production 跑 GUI 触发 22+ 行/URL trace_event 无 session,旧实现刷屏;新实现静默落日志文件,session_id 留空便于 grep 过滤 |
+| `c9a2114` test(trace) | 加 `serial_test = "3"` dev-dep + 3 测试 `#[serial]` | 3 个 `LazyLock<Mutex<Option<...>>>`(TRACE_FILE / SESSION_ID)在默认并行下互相抢导致 `read_dir(&date_dir).unwrap()` 报 NotFound;`--test-threads=1` 时全过 |
+
+### 3. 验证
+- `cargo build`: 0 警告(剩 1 个不相关 `block v0.1.6` future-incompat)
+- `cargo test --bin x-video-downloader`: **298 passed / 0 failed / 12 ignored** (was 295 / 3 / 12)
+- `cargo clippy --no-deps`: 9 个 `lock().unwrap()` 警告(全在 `src/core/trace.rs` LazyLock 处,`Mutex` poison panic 传播语义正确,不动)
+
+### 4. 决策
+- 🟢 `allow` 而非 `expect`:`expect-vs-allow-dead-code.md` 规则命中(`#[cfg(test)]` only)
+- 🟢 fallback 用 best-effort 静默文件 append 而非新依赖(`log` crate 不必要)
+- 🟢 选 `serial_test` 而非重构 LazyLock:Surgical 优先,避免 scope 蔓延到所有 call site
+
+### 5. 已知 follow-up
+- `cargo clippy --no-deps` 9 个 `lock().unwrap()` 警告未消(语义正确,标记忽略)
+- trace "no active session" 现象的**根因**仍是 `trace_session_open` 调用点设计/缺失 — 当前 fallback 已掩盖症状,根因待排专门 session 调查
+
+---
+
 ## 最新 Session: 2026-09-17 — commit-msg hook 自动注入 Ref-trace (session_id 跳转 + 4 tests)
 
 ### 1. 工具交付
