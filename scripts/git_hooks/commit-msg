@@ -3,6 +3,10 @@
 
 效果: 每次 git commit 时,自动在 commit message 末尾追加:
     [DID: did:local:xxx] [VC: <hash>] rep=<score>
+
+中间还会自动注入:
+- Intent Lock 校验(commit msg 必须含 "Intent: <一句话>" 行,否则拒绝)
+- Ref-trace 关联(若今天有 NDJSON trace,追加 Ref-trace: <绝对路径>)
 """
 
 import os
@@ -34,6 +38,42 @@ original = msg_path.read_text()
 # 已签发过 VC 的 commit 跳过
 if "[DID:" in original or "[VC:" in original:
     sys.exit(0)
+
+# === Intent Lock 校验 (在 DID/VC trailer 注入之前) ===
+# 要求 commit message 含一行 "Intent: <一句话>"，否则拒绝。
+# 详见 scripts/intent_lock.py
+_intent_script = (
+    Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+    / "scripts"
+    / "intent_lock.py"
+)
+if _intent_script.exists():
+    sys.path.insert(0, str(_intent_script.parent))
+    from intent_lock import validate_intent  # noqa: E402
+
+    ok, _intent_msg = validate_intent(original)
+    if not ok:
+        print(_intent_msg, file=sys.stderr)
+        sys.exit(1)
+    print(_intent_msg, file=sys.stderr)
+
+# === Ref-trace 自动注入 (Intent Lock 之后 / DID/VC 之前) ===
+# 若今天 ~/.local/share/x_videos-dowloads-trace/YYYY-MM-DD/ 下有 NDJSON,
+# 自动追加 "Ref-trace: <绝对路径>" 到 commit message。
+# 详见 scripts/trace_link.py
+_trace_link_path = (
+    Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+    / "scripts"
+    / "trace_link.py"
+)
+if _trace_link_path.exists():
+    sys.path.insert(0, str(_trace_link_path.parent))
+    from trace_link import inject_ref_trace  # noqa: E402
+
+    original, _trace_injected = inject_ref_trace(original)
+    if _trace_injected:
+        msg_path.write_text(original)  # 先写回,后注入 DID/VC trailer 会再读一次
+        print(f"[commit-msg] Ref-trace 已注入", file=sys.stderr)
 
 agent_did_path = _find_agent_did()
 if not agent_did_path:
