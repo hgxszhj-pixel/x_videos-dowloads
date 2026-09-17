@@ -113,3 +113,8 @@ grep -c '"session_id":"01JB5K8Z9R3X7V4Y"' trace.ndjson
 - `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/async-spawn-trace-bisect.md` — 同款思路,4 trace 点二分(事前手动 → 事前自动)
 - `~/.claude/projects/-Users-hgxszhj-x-videos-dowloads/memory/bug-d-isolation-and-cookies-zero.md` — 故障点 1+2 来源
 - `~/memory/decisions.md:2026-09-17 — TokenPilot **不安装**` — 决策主线
+
+## 相关 dna
+
+- `docs/dna/trace-eval-metrics.md` — 4 指标 baseline vs current(下游消费者)
+- `docs/dna/trace-link.md` — commit ↔ NDJSON 关联(下游消费者,Ref-trace 注入)

@@ -97,6 +97,7 @@ python3 scripts/eval_trace.py --baseline traces/2026-09-14/ --current traces/202
 ## 相关 memory / dna
 
 - `docs/dna/trace-schema.md` — 5 元组 schema 来源
+- `docs/dna/trace-link.md` — 闭环关联 commit ↔ NDJSON(本指标体系的下游,Ref-trace 注入)
 - `MEMORY.md:local-ndjson-trace-instrumentation.md` — NDJSON 怎么写
 - `MEMORY.md:async-spawn-trace-bisect.md` — 4 trace 点二分(事前手动 → 事前自动)
 - `~/memory/decisions.md:2026-09-17 — TokenPilot 不安装` — 决策主线
