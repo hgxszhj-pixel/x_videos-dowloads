@@ -1,6 +1,31 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-18 trace.rs 三连小外科 — `extra`/`on_exit` 加 `#[allow(dead_code)]` (e2387f8,test-only 用法按 `expect-vs-allow-dead-code` 规则不选 `expect`) + `write_event` fallback eprintln → best-effort append 到 `<trace_root>/no-session/YYYY-MM-DD.ndjson` (f39c184,production stderr 刷屏根除) + `serial_test` dev-dep + `#[serial]` 串行化 3 个 `LazyLock` 全局态 `core::trace` 测试 (c9a2114,默认并行下 `read_dir` 互相抢);**298 passed / 0 failed / 12 ignored** (was 295 / 3 / 12);`cargo build` 0 warnings(除不相关 `block v0.1.6` future-incompat),`cargo clippy --no-deps` 9 个 `lock().unwrap()` 警告全在 `src/core/trace.rs` LazyLock 处(`Mutex` poison panic 传播语义正确,不动)。
+**最新**: 2026-09-21 exam-lookup 本地备考台（网页查题 + 刷题 + 官方原文依据库 + 通信安全 50 题入库）— 用户「用命令行的方式查询题目答案有点不优雅」+「页面里做个刷题接口，方便我学专业题库」→ 交付 `exam-lookup/webui.py` + `ask.html` + `查题.command`（Finder 双击即开，端口 8765→8769 自动顺延）：**查题**（粘题干 → 上块题库答案（题型·题号·命中率·来源·选项·解析）、下块官方原文依据带 `[高亮]` 摘录 + 出处路径）；**刷题**（选库/题型/题量 → 逐题选答 → 即时判定 ✅/❌ + 正确项 + 解析 + 「看原文依据」直连 kb + 多选标「全对才算对」+ 答错细分「漏选 BC / 错选 D」+ 跳过 + 进度条 + 键盘 1-5/Enter/⌘± + 错题本 localStorage + 「只练错题」+ 结果页导出错题 txt + 浅/深色 ◐）；后端只有 4 个接口（`/`、`/api/ask`、`/api/banks`、`/api/quiz`），查询逻辑全部 `import solve, kb` 不重写，`ask.html` 是页面本体（样式/字号只动它）；**新题库入库 5 步走通**（原稿留档 `通信安全生产考试试卷50题.txt` → `parse_comm_safety.py` 断言式解析 → `banks/comm-safety-50.json`（50 题 = 单选 20 + 判断 30，题号 1-50 连续、每题有答案、单选 3 选项）→ `python3 solve.py build`（索引 316→366 题）→ `python3 sync_banks.py`（shiroha 刷题端 7 库/758 题）→ `python3 webui.py selftest`）；**依据库** `kb.py`/`kb.sqlite3` = 880 块/540,635 字（官方原件 200 块 / 教材 395 / 教材章节 199 / 视频课件 58 / 教材汇编 28，块级 sha1 去重跳过 119，零依赖 + 系统 `pdftotext`，子命令 build/search/stats/selftest）；**三个真坑（均有实证）**：(1) Python 里 `"单选" in "单项选择题"` 是 **False**（该串是 单+项+选+择，中间隔着「项」）→ 整个单选段被**静默跳过**，第一版只解析出 30 道判断题；(2) CSS `font: 600 1rem inherit` 简写**非法**（`font` 简写不允许带 `inherit`）→ 整条声明被浏览器丢弃 → 页签/按钮/下拉回落 13.33px 且**完全不吃字号设置**（用户报「字体小、硬伤」的真根因，改成 `font-family/size/weight` 分开写后 17px 基准、A+×4 → 21px 全站同步缩放）；(3) `kb.search` 把查询**整体当短语**（SQL 里用双引号包住）→ 长句/`OR` 查询必然 0 命中，探针必须短；**依据覆盖实证**：新入 50 题对 kb 只有 **14/50** 能命中原文（第 7/8/14/18/22/23/25/27/28/36/38/41/48/50 题），换 4-5 字短探针可抬到 36/50 但立刻出**假依据**（「夜间施工」撞到河底挖沟、「从业人员」撞到课程介绍）→ **退回精确版，宁缺勿假**；**未决** 天翼云考试练习题-1（296 题）原件不在盘上（`~/Downloads` 只有 python-docx 生成的「自检报告」，正文仅 44 条可疑题明细，全盘 mdfind/关键词/废纸篓都找过），原件到手才能入库；服务为会话内进程，长期用双击 `查题.command`。
+
+**次新**: 2026-09-18 微信小程序逆向环境（WMPFDebugger @ Intel macOS）— 用户「配置一下微信逆向的环境」→ 走 web-protocol-recovery skill `wechat-miniapp` route;**核心阻塞** = 上游 macOS 支持**只有 arm64**（issue 明写 Apple Silicon;`frida/config/darwin/` 仅 1 文件）,本机是 **Intel x86_64**（i7-9750H,`hw.optional.arm64` 不存在,非 Rosetta）,arm64 偏移打到 x86_64 slice 同一地址上是**函数中部/`ret`**（`0x4f744c4` arm64=`sub sp,sp,#0x190`+`stp` 序言 vs x86_64=`mov rcx,[rcx];test;jne` 循环体中段;`0x8436b98` x86_64 更是 `...pop;pop;pop;ret` 尾声,字节级已证）→ 必崩;**自研 x86_64 偏移** `LoadStartHookOffset=0x59a2730`（✅ **live 验证正确**:`[inteceptor] AppletIndexContainer::OnLoadStart onEnter` + `[hook] scene: 1101/1256/1000` 解出真实场景号 + **零崩溃**）、`CDPFilterHookOffset=0x9285470`（✅ **live 验证正确**：真实 `devtools://` 前端连上后 `[patch] CDP filter patched` 触发 **7692 次**，`retval+8` 全部 = 6；故 `0x59a2730`/`0x9285470`/`SceneOffsets` **三个偏移全部 live 验证通过**。MCP 仍不可用是 `cdp_use` 自身 session id 处理问题，**与偏移无关**）、`SceneOffsets=[56,1504,8,1440,16,456]`（与架构无关,复用上游 arm64 值）;**换源** = 同步 GitHub `evi0s/WMPFDebugger` 的 `src/platform/{darwin,index,linux,types,win32}.ts` + `frida/config/{darwin,linux,win32}/`;本地原树是 **Gitee `tuling-python/web-reverse-mcps-tool`（顾安）的 WMPFDebugger 副本 —— Windows-only（README 自称「Windows 微信小程序调试工具」、支持版本最高 19921、扁平 config、无 `src/platform/`）,拉它解决不了 macOS/x86_64 问题,别拉**;三方 `frida/hook.js` **逐字节相同**(sha `6deb59713e6ca8e5…`)→ darwin 分支本来就有,缺的是平台化配置加载+平台化进程定位+macOS 偏移;**防护层** `~/.local/share/mcp-tools/wmpf-local/`（overlay 真源 + `apply-local.sh` 幂等回装/漂移检测 + `run.sh` 一键 + `update-upstream.sh` **白名单同步/绝不用 `--delete`/不碰 `miniapp-reverse-mcp/`**,因工具树**非 git 仓库**覆盖是无声的;实测模拟覆盖→`[FIX]` 自愈→sha 复原→二次幂等 `[ok]`）;**备份** `~/backups/wechat-miniapp-reverse-20260918-150425/`（9.4M/182 文件 + 7.8M tar.gz + memory 副本,三方 sha 一致）;**文档** 工具树 `README.debug-zh.md`（348 行配置实录:§3 改了哪些文件/参数 + §4 踩坑 P1~P10 + §5 验证套路 + §9 上游来源对比）;**记忆** `~/memory/projects/wechat-miniapp-reverse.md`（含回滚/备份段）;**副作用披露** = 同步 GitHub `package.json` 时覆盖掉作者版 `"update:addresses"` yarn 脚本（`tools/update_addresses.py` 文件仍在,可直跑;不建议补回,会与上游更新冲突）;**未解决** CDPFilterHookOffset —— 下一步:签名探针（挂候选 `onLeave`,判据 `retval!=null && retval.add(8).readU32()===6`,需真实 Chrome DevTools 流量触发;已排除 30 个静态候选）+ 注意 **frida CLI 的 `setTimeout` 回调在本环境不执行**（探针汇报不能用 timer,须在 `onEnter` 直接 `send`）;或装 Ghidra 静态定位。
+
+  **同场追加（NV8 安装 + trace.rs 失败路径审计）**：
+  **(a) NV8 已装** `~/.local/share/mcp-tools/nv8`（Gitee `tuling-python/nv8`，commit `1ea2ea4`，30M/4409 文件）—— 作者同日另一个仓库，**零依赖纯 JS**（`package.json` 无 `dependencies`/`devDependencies`、无原生绑定）→ **不存在 WMPFDebugger 那种跨架构陷阱**；它是「在 Node 里把 Edge 的 JS 环境补到检测不出来」的**协议逆向运行时**（**不是真 Edge 二进制**）；冒烟通过 + 宿主自检全绿（Node v22.20.0，含关键项 `vm.global-property-order available` → **不必升 Node 24**）；**边界**：解决「Web 协议逆向/环境模拟」（对应 skill 的 `env-patch`/`iv8` 路线），**不解决通用代码排错**；用法 `import { EdgeSandbox } from 'nv8'` + 跑时带 `--experimental-vm-modules`；另有子路径导出 `./fingerprint/edge-150|151|152`、`./protocol`、`./collector`。
+  **(b) `src/core/trace.rs` 失败路径审计**（回应 LangSmith Trace 文章）—— 结论：**RAII `TraceStep` 设计正确**（Drop 写盘，`?`/`return Err`/panic 展开全触发；release profile 无 `panic="abort"` 故 panic 也保得住），**但 `trace_session_open` 没有对称的 RAII**，留 4 个真缺口：
+  - **G1（最严重）** `handlers.rs:92` 开 session 后到 close（212 ok / 222 err）之间有 **5 个早退点**（+4 `AppConfig::load()?` / +60 下载器初始化 `?` / +84 `select!` 的 `Err(e)=>` / +104 `Err(ErrorDisplay::new(...))` / +115 `let result = download_res?`）→ **全部不写 `session_close`，错误内容一个字不进 trace**，事后分不清「还在跑」vs「早挂了」。
+  - **G2** `batch_download_impl` 内 `trace_session_open` **0 次** → batch 事件全落 `no-session/` 兜底（**已实测**：`~/.local/share/x_videos-dowloads-trace/no-session/2026-09-17.ndjson` 真实存在）→ `session_id` 为空、无法关联一次 batch 运行 —— 正是 BUG-E 事后难查的根源。
+  - **G3** 两处 `TraceStep`（`handlers.rs:455 fetch_video_info` / `1115 download_one`）**都没 `.on_exit()`** → `output` 恒为 `{}`，只记 input+duration，**无成败/无错误/无选中 resolver**。
+  - **G4** 诊断件自身可能搞挂主程序：`TRACE_FILE`/`SESSION_ID` 全 `lock().unwrap()` → **poison 会 panic**（本文件早前记的「语义正确不动」**不同意**：排错模块最不该因自身 panic 带走主程序，应 `unwrap_or_else(|e| e.into_inner())` 或静默降级）；且 `let _ = write_event(...)` **静默吞 IO 错误**（磁盘满/权限 → trace 静默丢失）。
+  - **修法（✅ 已执行并验证 2026-09-18）**：加法式引入 RAII guard `TraceSession` + `trace_session_open_guarded()`（与 `TraceStep` 对称；**不改** `trace_session_open` 旧签名 → 既有测试不破）+ `download_impl` 切到 guard（handlers.rs:92/212/222）+ batch 入口开 `session("batch")` 尾部 close（handlers.rs:232 区/450 区）+ 两处 `TraceStep` 补 `.on_exit`（455/1115）；顺带删掉因本次改动而失真的 `on_exit` 上 `#[allow(dead_code)]`。**验证**：`cargo test --bin` **299 passed / 0 failed / 12 ignored**（基线 298 + 新增 1）+ `cargo clippy --no-deps` `generated 9 warnings`（= 基线）+ 0 个新增 unused/dead_code 警告；新增回归测试 `test_session_auto_close_on_early_return` 锁定「未显式 close 必写 `session_close{dropped}`」。改动范围 `src/core/trace.rs` +82/−1、`src/gui_dioxus/handlers.rs` +22/−6。**回滚**：`git checkout -- src/core/trace.rs src/gui_dioxus/handlers.rs`。**过程副产**：用 A/B（原始版 vs 修改版各跑全量）证伪了「`test_integration_4_fault_points` 失败是我引入的」—— 它是既有**时序 flaky**（RAII 实测 20ms 与硬编码 `duration_ms:20` 打平，取决于 `sort_by_key` 稳定性），两版都能通过、也都可能失败。**仍未做**：G4 全文件 `lock().unwrap()`（仅新 guard 内已用 `into_inner()`）、`write_event` 静默吞 IO 错误、并发 session 互相覆盖（`trace_session_open` 用 truncate 替换全局句柄）。
+  - **LangSmith 不建议引入**（绑 LangChain 生态，与 Rust 栈无关）；真要可看 Langfuse（自托管）/ OpenTelemetry GenAI 语义约定。文章存档 `~/Downloads/智境新观台：AI Agent开发离不开langsmith-trace.md`。
+  **(c) `cdp_use` 双 bug 修复（MCP 挂死的真根因）**：
+  - **Bug A（session id 匹配）**：代理 WMPFDebugger 对 session 级命令**回包用自身 id**（`381,382`）而非我们的（`3,4,5`）→ `pending_requests` 匹配不上 → future 永不解 → 5s 挂死。修法：**旁挂** `pending_sessions: {msg_id→session_id}`（**不动** `{id: future}` 结构，避免波及 3 处 `.values()` 循环），id 匹配失败时**按 sessionId 兜底匹配最老的 in-flight 请求**。
+  - **Bug B（`websockets` 17.x 不兼容，写单测时顺带暴露）**：`except websockets.exceptions.ConnectionClosed` 在 websockets **17.1** 上抛 `AttributeError`（顶层属性访问失效；须 `from websockets.exceptions import ConnectionClosed`）→ **只要 WS 出错/断开，`_handle_messages` 自己就死**，之后所有 future 永不解析 → 这是**更致命**的根因（不只是单条命令失败）。修法：改直接 import + `except ConnectionClosed`。
+  - **验证（合成单测，无需微信）**：case1「id 改写 + sessionId」→ ✅ 解析 `{'patched': True}`，两表残留为空；case2「正常 id 匹配」→ ✅ `{'ok': 1}` 无回归；异常路径 AttributeError 已消除；4 处变更清单全 ✔。
+  - **补丁留档**（venv 重装/`uv sync` 会覆盖 site-packages）：`~/.local/share/mcp-tools/wmpf-local/patches/cdp-use/client.py.patched`，SHA-256 `bbe554f47dc09e5174dbd4955935d3cdfd56e46185a2f65f934f44b512ae2d8e`；恢复：`cp` 回 `.venv/lib/python3.11/site-packages/cdp_use/client.py`。
+  - **Bug B 是 upstream `cdp-use` 的通用缺陷**（不只影响本套），值得提 issue。
+  - **⚠️ 端到端未验**：需「启动微信 → `~/.local/share/mcp-tools/wmpf-local/run.sh` → 开一个小程序」后调 MCP `list_targets` 才算闭环（当前微信未运行，注入器为孤儿）。
+
+**次新**: 2026-09-18 opencode 逆向 MCP 三件套接线 + develop_software 盘点 — 分析 `~/develop_software`(`web-reverse-mcps-tool` 工作副本,含 skills/scripts/tests,非独立 git);`~/.config/opencode/opencode.json` mcp 块补齐/修正 3 项 — `camoufox-reverse`(`uv run --directory develop_software/Camoufox/camoufox-reverse-mcp` + env `CAMOUFOX_EXECUTABLE_PATH=~/camoufox-reverse/Camoufox.app/Contents/MacOS/camoufox`)/ `js-reverse-mcp`(指向 develop_software 本地 build)/ `miniapp-reverse-mcp`(原指向已失效的 `~/web-reverse-mcps-tool/.../.venv/bin/python` → 改 `uv run` 镜像路径);`develop_software/CloakBrowser/js-reverse-mcp-local-cloak` `npm install`(461 包)+ `npm run build`(nvm node v22)**真实 MCP initialize 握手返回 v3.0.9**;camoufox/miniapp import OK;`WMPFDebugger.old-polluted`(175M)移入 `~/.Trash`;`~/web-reverse-mcps-tool` **保留**(唯一带 gitee origin 的克隆);备份 `opencode.json.bak-2026-09-18-131913-reverse-wire`;`web-protocol-recovery` skill 已生效无需改动;**需重启 opencode 生效**。
+
+**次新**: 2026-09-18 OpenCode 净室重装 — 用户主动重置,删 `~/bin/opencode-failover.sh` wuzuapi 包装 + `~/.local/share/opencode` 全配置 (含 210MB db + 11 份 .bak) + `~/.cache/opencode` (4.5MB models.json) + `./.opencode` 项目级 + `~/.zshrc` 中 `alias opencode='~/bin/opencode-failover.sh opencode'` + `export WUZUAPI_BASE_URL=...`;`npm uninstall -g opencode-ai` (3 pkgs) → `npm i -g opencode-ai` (13 pkgs) 装回 1.18.31,`opencode --version` 验通;**无任何 provider/auth** — 用户后续按需重接,旧 failover/wuzuapi/智谱三块记忆保留为参考档案(MEMORY.md 头部新增 `opencode-clean-reinstall-2026-09-18.md`);**注意** — 当前 shell 进程仍缓存旧 alias,新 terminal 自动清,或 `unalias opencode` 即时清。
+
+**次新**: 2026-09-18 trace.rs 三连小外科 — `extra`/`on_exit` 加 `#[allow(dead_code)]` (e2387f8,test-only 用法按 `expect-vs-allow-dead-code` 规则不选 `expect`) + `write_event` fallback eprintln → best-effort append 到 `<trace_root>/no-session/YYYY-MM-DD.ndjson` (f39c184,production stderr 刷屏根除) + `serial_test` dev-dep + `#[serial]` 串行化 3 个 `LazyLock` 全局态 `core::trace` 测试 (c9a2114,默认并行下 `read_dir` 互相抢);**298 passed / 0 failed / 12 ignored** (was 295 / 3 / 12);`cargo build` 0 warnings(除不相关 `block v0.1.6` future-incompat),`cargo clippy --no-deps` 9 个 `lock().unwrap()` 警告全在 `src/core/trace.rs` LazyLock 处(`Mutex` poison panic 传播语义正确,不动)。
 
 **次新**: 2026-09-14 T-Mem 轻接方法论落地 + L1 commit hook 实装 — `~/memory/projects/x-videos-dowloads.md` 顶部 frontmatter 加 `tmem_schema_version: 1` + `tmem_search_command` + 引用 SOP;5 条教训 (#14/15/16/17/18) 加 `<!-- tmem-triggers -->` 块 (descriptive + associative + related 3 字段);`.git/hooks/post-commit` 末尾追加 `_maybe_tmem_reminder()` (commit msg 关键词 + 改动 ≥ 3 文件双 gate → stderr 6 行 SOP 引导, 保留 agent_did.py 信誉逻辑);**完整测试矩阵 4×2 全过** (A 教训+3 文件 ✅ / B 教训+1 文件 ❌ / C 普通+3 文件 ❌ / D 普通+1 文件 ❌);**修复 2 隐藏 bug** — git swallow stdout → stderr (git 设计: hook stderr 用户可见 / stdout 仅脚本捕获) + test repo hooksPath 继承全局 → `git config core.hooksPath .git/hooks` 强制本地覆盖 (本仓库已正确不受影响);on `gitbutler/workspace`, 无新代码 commit (memory + hook 不入 git), 待下次真实 fix|refactor commit 验证 stderr;**记忆膨胀警告** — `decisions.md` 346 行 (超 300 阈值 46 行) + `projects/x-videos-dowloads.md` 807 行 (接近 800 阈值), 下次写 memory 优先合并到已有 lessons 而非新建。
 
@@ -15,6 +40,186 @@
 **再新(09-02)**: WikiSkill 三层架构全局落地(`~/.claude/WIKI_INDEX.md` 5.1KB + 3 skill-impact 账本 + SessionStart 双模式拆分)+ Resolver Skeleton 共享基类 SDD 8 commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50`/`4f59255`),4 个 yt-dlp resolver 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` + `src/http_client.rs` `RESOLVER_UA` 等;242 tests / clippy clean。
 
 **更早**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021) + 京峰教育/SHANHU 珊瑚 v1 报告"已推翻"。2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e + 同日 5 commit (`0011caa` 小鹅通 HLS 403 / `86e497e` 覆盖开关 / `9ab3813` 解析盲区 / `c7b0fe4` 暂存落库 / `deb54c3` bench 修复) + `63c9f53` home-v + `6cd927e` ego-lite SQLite 兜底。2026-08-28 全局 Claude Code 配置改造(5 hooks + 15 deny) · 08-25 tulingvip-m3u8-download skill v3.2 + douyin-mp4-download v1 · 08-22 darwin 优化 web-protocol-recovery · 08-21 opencode failover wrapper · 08-17 OpenCode 多 provider · 08-16 P1 重构 · 08-13 GUI 性能 · 08-09 小鹅通端到端 6 节 8.5GB。
+
+---
+
+## 最新 Session: 2026-09-21 — exam-lookup 本地备考台（网页查题 + 刷题 + 官方原文依据库 + 通信安全 50 题入库）
+
+### 1. 触发
+用户备考中国电信综维装维 / 通信安全生产类认证考试，先要「长期可复用的方案（本地题库沉淀、错题复习）」，
+再明确否决命令行：「用命令行的方式查询题目答案有点不优雅吧？」→ 转网页端；随后追加「页面中做一个刷题的接口，
+方便我学习专业题库的内容，提高我的专业能力」。中途报「字体大小不能改变，这是一个硬伤」「查询和刷题的图标字体有点小」。
+
+### 2. 交付物（都在 `exam-lookup/`，未提交 git）
+
+| 交付物 | 路径 | 说明 |
+|---|---|---|
+| 查题页后端 | `webui.py` | 4 个接口：`/`（页面）、`/api/ask`（题库答案 + 原文依据）、`/api/banks`（库清单）、`/api/quiz`（取题）；逻辑全部 `import solve, kb` |
+| 页面本体 | `ask.html` | 查题 + 刷题两个 tab；字号靠 `html{font-size:var(--fs)}` + 全站 rem，一个变量控整页 |
+| 双击启动 | `查题.command` | Finder 双击即开，端口被占自动顺延 8765→8769 |
+| 依据库 | `kb.py` / `kb.sqlite3` | 880 块 / 540,635 字（官方原件 200 / 教材 395 / 教材章节 199 / 视频课件 58 / 教材汇编 28；sha1 去重跳过 119）；零依赖 + 系统 `pdftotext` |
+| 新题库 | `banks/comm-safety-50.json` | 通信安全生产考试试卷 50 题（单选 20×2 分 + 判断 30×2 分） |
+| 解析器 | `parse_comm_safety.py` | 原稿 → banks JSON，末尾断言把底线（题数/题型/题号连续/每题有答案/单选 3 选项） |
+| 原稿留档 | `通信安全生产考试试卷50题.txt` | 逐字留档，便于日后按原文复算每个数字 |
+| 文档 | `solve-使用说明.txt` | 新增「新增一套题库怎么入库」「查题页 webui.py」「依据库 kb.py」三节 |
+
+### 3. 验证（真跑的）
+- `python3 webui.py selftest` → 通过（查题命中第 35 题 = C + 依据 6 条 + 题库 6 套 + 题型过滤/答案完整性/路径穿越）
+- `python3 kb.py selftest` → 四条断言全过；`build` 连跑两次结果一致（幂等）
+- `python3 solve.py stats` → 索引 **366 题**（新库 50 题在内，之前 316）
+- `python3 sync_banks.py` → shiroha 刷题端 **7 库 / 758 题**
+- 浏览器实测：刷题端选中「通信安全生产考试试卷（50题）」→ 分布 `单选 20 · 多选 0 · 判断 30`，题量「全部」= 50 题；
+  做第 35 题（地下室、机房内存放汽油酒精）答 A「正确」→ ❌ 答错，正确答案 B，并标出「漏选 B　错选 A」
+- 字号实测：17px 基准 → A+×4 = 21px，页签/按钮/下拉/正文**同步缩放**（修复前控件恒为 13.33px）
+- 导出错题 txt 实测：文件名 `错题本-docs-bigdata-ai.txt`，内容含库名 + 题号题型 + 全部选项 + 答案 + 解析
+- 新库与原库重复比对：与 `dtzx-safety.json`(62) + `dtzx-yungai.json`(60) 题干相似度 ≥0.75 的重题 **0 道**、答案冲突 **0 道**
+
+### 4. 三个真坑（都有实证，已写进 `solve-使用说明.txt`）
+1. **Python 子串陷阱**：`"单选" in "单项选择题"` == **False**（该串是 单+项+选+择，中间隔着「项」）→ 用 `"单选"` 判题型会让**整个单选段被静默跳过**，第一版只解析出 30 道判断题。判「选择」/「判断」这种整体词。
+2. **CSS `font` 简写带 `inherit` 非法**：`font: 600 1rem inherit` 整条声明被浏览器丢弃 → 页签/按钮/下拉回落浏览器默认 **13.33px** 且**完全不跟字号设置缩放**。这正是用户报的「字体小、硬伤」的根因；改成 `font-family/font-size/font-weight` 分开写。
+3. **`kb.search` 把查询整体当短语**（SQL 里双引号包住）→ 长句查询、`OR` 查询必然 0 命中；探针必须短，长句要逐级截短再试。
+
+### 5. 决策
+- **依据宁可缺、不可假**：新入 50 题对 kb 只 **14/50** 能命中原文；把探针降到 4-5 字能把覆盖率抬到 36/50，但立刻出假依据（「夜间施工」撞到河底挖沟、「从业人员」撞到课程介绍）→ 退回 ≥6 字长探针的精确版。
+- **题库单一真源 = `banks/*.json`**：入库走「原稿 → `parse_*.py`（断言式）→ banks → `solve.py build` → `sync_banks.py`」，不手改 sqlite，索引可随时删掉重建。
+- **字号/主题用 `localStorage` 记忆**，无障碍与手机端一并照顾（焦点轮廓、窄屏 A± 加大）。
+
+### 6. 已知 follow-up
+- **天翼云考试练习题-1（296 题）原件不在盘上**：`~/Downloads/天翼云考试练习题-1_自检报告.docx` 是 python-docx 生成的体检报告，正文只有 44 条可疑题明细（OCR 串行/题干粘连），不能当题库灌入；全盘 mdfind + 关键词 + 废纸篓都找过 → 等用户给原件/导出再入库。
+- **依据覆盖率 14/50** → 补 kb 语料（《安全生产法》、通信建设工程安全生产操作规范等）可提升，属语料问题不是探针问题。
+- 用户尚未选的三项：用 `~/Downloads/云改数转智慧战策略宣传测试题.md`（61/61 全对答卷）核对 `dtzx-yungai.json` 的 60 题；逐题审计新入的 50 题答案；清 `banks/dtzx-safety.json.bak` 并把 Downloads 几份同源文件归档进 `exam-lookup/`。
+- 服务目前是会话内进程（会话结束即停）；长期用双击 `查题.command`，或装 launchd 登录自启（未做）。
+
+---
+
+## 最新 Session: 2026-09-18 — 微信小程序逆向环境（WMPFDebugger @ Intel macOS）
+
+### 1. 触发
+用户「配置一下微信逆向的环境」→ 走 web-protocol-recovery skill `wechat-miniapp` route。
+`miniapp-reverse-mcp` 早已注册在 `~/.config/opencode/opencode.json`，但工具链跑不起来。
+
+### 2. 核心问题（一句话）
+**上游 WMPFDebugger 的 macOS 支持只有 arm64；本机是真 Intel x86_64。** 偏移是架构相关的，
+把上游 arm64 偏移打到 x86_64 slice 上会命中**函数中部/`ret`**（字节级已验证）→ 必崩。
+上游 `frida/config/darwin/` 只有 1 个文件，没有 x86_64 可用偏移。
+
+### 3. 产出
+| 偏移 | 值 | 状态 |
+|---|---|---|
+| `LoadStartHookOffset` | `0x59a2730` | ✅ **live 验证正确**（hook 命中 + scene 解出 1101/1256/1000 + 零崩溃） |
+| `CDPFilterHookOffset` | `0x9285470` | ✅ **live 验证正确**（真实 DevTools 连上后 patch 触发 7692 次）；MCP 不可用是 cdp_use 问题，与偏移无关 |
+| `SceneOffsets` | `[56,1504,8,1440,16,456]` | ✅ 架构无关，复用上游 |
+
+### 4. 做了什么
+1. **同步真上游**：GitHub `evi0s/WMPFDebugger` 的 `src/platform/` + `frida/config/{darwin,linux,win32}/`
+   （本地原树是 Gitee `tuling-python/web-reverse-mcps-tool` 的副本，**Windows-only，无 macOS 支持，别从它拉更新**）
+2. **推导 x86_64 偏移并写入** `frida/config/darwin/addresses.269136.json`（arm64 原件另存 `.arm64.json`）
+3. **`yarn install`** 重建 node_modules（此前从未跑过）
+4. **注入并 live 验证**：tmux 常驻 `node_modules/.bin/ts-node src/index.ts --debug-frida`
+5. **加防护层** `~/.local/share/mcp-tools/wmpf-local/`：overlay 真源 + `apply-local.sh`（幂等回装 + 漂移检测）
+   + `run.sh` + `update-upstream.sh`（白名单同步，绝不用 `--delete`，不碰 `miniapp-reverse-mcp/`）
+
+### 5. 交付物
+- 备份：`~/backups/wechat-miniapp-reverse-20260918-150425/`（9.4M/182 文件 + 7.8M tar.gz，三方 sha 一致）
+- 配置实录：工具树 `README.debug-zh.md`（348 行，§3 改动清单 / §4 踩坑 P1~P10 / §5 验证套路 / §9 来源对比）
+- 记忆：`~/memory/projects/wechat-miniapp-reverse.md`
+- 用法：`~/.local/share/mcp-tools/wmpf-local/run.sh`；DevTools 入口
+  `devtools://devtools/bundled/inspector.html?ws=127.0.0.1:62000`
+
+### 6. 更正（2026-09-18 晚）：`CDPFilterHookOffset` 是【正确】的
+早前「已证伪」是**误判** —— 我用 `node ws` 合成 CDP 流量做探针，而 **send-to-client 过滤路径只有真实 `devtools://` 前端才会走**。
+真实 DevTools 连上后日志立刻出现 `[cdp] CDP client connected` → `[patch] CDP filter on leave, retval+8 = 6` → `[patch] CDP filter patched`，
+统计 **7692 次**（`retval+8` 7692 次全部 = 6；同期 `OnLoadStart onEnter` 48 次、CDP 客户端连接 19 次）。
+→ **三个偏移全部 live 验证通过。** 教训：**负结果不能只凭「我的流量没触发」下结论**，要先问「我造的流量是否走那条路径」。
+MCP 不可用是 `cdp_use` 把 future 注册在本地 id(3,4,5)、代理对 session 级命令回包用自身 id(381,382) 所致，**与偏移无关**。
+→ `cdp_use` future 永不解 → `miniapp-reverse-mcp` 不可用。**DevTools 手动调试不受影响。**
+下一步：签名探针（挂候选 `onLeave`，判据 `retval!=null && retval.add(8).readU32()===6`，
+需真实 DevTools 流量；已排除 30 个静态候选）或装 Ghidra。
+**坑**：frida CLI 的 `setTimeout` 回调在本环境不执行 → 探针汇报必须写在 `onEnter`/`onLeave` 里直接 `send`。
+
+---
+
+## Session: 2026-09-18 — opencode 逆向 MCP 三件套接线 + develop_software 目录盘点
+
+### 1. 触发
+用户要求「分析 `/Users/hgxszhj/develop_software` 目录的文件夹,配置逆向的 skill、mcp」,随后批准按建议执行(本地构建 js-reverse + 清理重复副本)。
+
+### 2. 目录盘点 — 3 份副本
+| 路径 | 角色 | 处置 |
+|---|---|---|
+| `~/develop_software` | `web-reverse-mcps-tool` 工作副本(skills/scripts/tests + Camoufox/CloakBrowser/WMPFDebugger),**非独立 git**(`rev-parse` 顶层=`~`;仅 `WMPFDebugger/.git` 嵌套) | MCP 源码主路径 |
+| `~/web-reverse-mcps-tool` | **唯一带 gitee origin 的正规克隆**(`origin=gitee.com/tuling-python/web-reverse-mcps-tool.git`,含完整提交史) | **保留**(删则丢版本控制) |
+| `~/develop_software/WMPFDebugger.old-polluted` | 175M 旧/污染副本(含独立 `miniapp-reverse-mcp`+.venv) | 移入 `~/.Trash/WMPFDebugger.old-polluted-20260918-133632` |
+| `~/.local/share/mcp-tools/` | `local_skill_sync.py` 同步镜像(MCP 稳定路径) | 复用 |
+
+### 3. 操作清单
+1. 备份 `~/.config/opencode/opencode.json` → `opencode.json.bak-2026-09-18-131913-reverse-wire`
+2. mcp 块由「只有 miniapp 且指向失效 venv 路径」改为 3 项:
+   | server | command |
+   |---|---|
+   | `camoufox-reverse` | `uv run --directory ~/develop_software/Camoufox/camoufox-reverse-mcp camoufox-reverse-mcp` + env `CAMOUFOX_BROWSER_ROOT=~/camoufox-reverse`、`CAMOUFOX_EXECUTABLE_PATH=~/camoufox-reverse/Camoufox.app/Contents/MacOS/camoufox` |
+   | `js-reverse-mcp` | `node ~/develop_software/CloakBrowser/js-reverse-mcp-local-cloak/build/src/index.js` |
+   | `miniapp-reverse-mcp` | `uv run --directory ~/.local/share/mcp-tools/WMPFDebugger/miniapp-reverse-mcp miniapp-reverse-mcp` |
+3. `develop_software/CloakBrowser/js-reverse-mcp-local-cloak`:`npm install`(461 包)+ `npm run build`(PATH 用 nvm node v22.20.0)
+4. `WMPFDebugger.old-polluted` → Trash
+
+### 4. 验证
+- opencode.json `json.load` OK;4 个目标路径均存在
+- `js-reverse`:`node --check` 通过 + **真实 MCP initialize 握手**回 `serverInfo.name=js-reverse` v3.0.9
+- `camoufox_reverse_mcp` import OK(uv run)
+- `miniapp` import OK(uv run)
+- `web-protocol-recovery` skill 本会话可见(`~/.agents/skills/skills/`),无需改动
+
+### 5. 决策
+- 🟢 服务名沿用 `camoufox-reverse`/`js-reverse-mcp`/`miniapp-reverse-mcp`(与 `~/.claude.json` 及本会话工具名一致),避免重复注册
+- 🟢 js-reverse 配置指向 develop_software 本地 build;镜像 `~/.local/share/mcp-tools` 仍由 local_skill_sync 维护
+- 🟢 不删 `~/web-reverse-mcps-tool` — 唯一有 `origin` 的克隆;develop_software 无自身 repo
+- 🟢 `.old-polluted` 走 Trash(可恢复)非 `rm -rf`(符合安全规则)
+
+### 6. 已知 follow-up
+- **需重启 opencode** 新 MCP 才生效
+- `miniapp` 使用前须 `npx ts-node src/index.ts` 起 WMPFDebugger + 打开微信小程序(`ws://127.0.0.1:62000`)
+- `develop_software` 不自包含 `miniapp-reverse-mcp`(仅镜像有);如需自包含,从镜像复制过去并改配置
+- 改 js-reverse 源码后须在 develop_software 重跑 `npm run build`(配置已指向其 build)
+
+---
+
+## 最新 Session: 2026-09-18 — OpenCode 净室重装 (no provider/auth clean state)
+
+### 1. 触发
+用户要求"清除 opencode 的目录和相关的配置文件,重新安装一遍,保持干净的无配置的 opencode 环境" — 选择最激进选项(连 wrapper 也删) + `npm i -g opencode-ai` 同版本重装。
+
+### 2. 操作清单(8 步)
+
+| 步骤 | 命令 / 路径 | 说明 |
+|------|------------|------|
+| 1 | `kill 28683 45984` | 杀掉 2 个运行中的 opencode 主进程(避免 rm 时还占用 `~/.cache/opencode/packages`) |
+| 2 | `rm -rf ~/.local/share/opencode` | 清 `auth.json` + `opencode.json` + `opencode.db` (210MB) + 11 份 `.bak*` |
+| 3 | `rm -rf ~/.cache/opencode` | 清 `models.json` (4.5MB) + `bin/` + `packages/` + `skills/` |
+| 4 | `rm -rf ./.opencode` | 项目级 `node_modules` + `package.json` |
+| 5 | `rm ~/bin/opencode-failover.sh` | wuzuapi 主备包装脚本(对应旧 memory `opencode-wuzuapi-baseurl-failover.md`) |
+| 6 | `~/.zshrc` 删 3 行 | `alias opencode='~/bin/opencode-failover.sh opencode'` + `export WUZUAPI_BASE_URL=...` + 注释 |
+| 7 | `npm uninstall -g opencode-ai` | removed 3 packages in 323ms |
+| 8 | `npm install -g opencode-ai` | added 13 packages in 15s,版本回 1.18.31 |
+
+### 3. 验证
+- `which opencode` → `/Users/hgxszhj/.nvm/versions/node/v22.20.0/bin/opencode` (npm 链接,不是 wrapper)
+- `/Users/hgxszhj/.nvm/versions/node/v22.20.0/bin/opencode --version` → `1.18.31`
+- `ls ~/.local/share/opencode` → 仅首次运行自动重建的空 `bin/log/repos` 三个运行时目录,无 `auth.json`/`opencode.json`/`opencode.db`
+- `ls ~/.cache/opencode` → 首次运行重建 `bin/packages/skills`,4.5MB models.json 待首次 `opencode` TUI 启动时按需下载
+- `ls ~/bin/opencode-failover.sh` → `No such file or directory`
+- `grep opencode ~/.zshrc` → 无结果
+
+### 4. 决策
+- 🟢 用户选"最激进" — wrapper + alias + env var 一并删,避免半干净状态留下混淆
+- 🟢 保持 npm 同版本 (1.18.31),不引入 breaking change 风险;若日后需新功能再 `npm i -g opencode-ai@latest`
+- 🟢 旧三块 opencode memory (failover/wuzuapi/智谱) 保留为**参考档案**而非删除 — 双域名探测思路 / wuzuapi 不接 Anthropic 上游结论 / GLM baseURL 必须带 `/v1` 三条经验仍可复用
+
+### 5. 已知 follow-up
+- 当前 shell 进程仍缓存旧 alias — `unalias opencode` 即清,新开 terminal 自动失效
+- provider/auth 全部为空,用户下次按需重接(wuzuapi / 智谱 GLM / 其他),配置写到 `~/.local/share/opencode/opencode.json`(首次运行后目录存在)
+- failover 包装脚本已删 — 若日后想恢复 wuzuapi 主备双域名探测,需重写 `~/bin/opencode-failover.sh` 并在 `.zshrc` 加回 alias + `WUZUAPI_BASE_URL` env
+- 新增 memory `memory/opencode-clean-reinstall-2026-09-18.md` 记录本次操作 + 标记旧 memory 状态
 
 ---
 
@@ -46,6 +251,53 @@
 ### 5. 已知 follow-up
 - `cargo clippy --no-deps` 9 个 `lock().unwrap()` 警告未消(语义正确,标记忽略)
 - trace "no active session" 现象的**根因**仍是 `trace_session_open` 调用点设计/缺失 — 当前 fallback 已掩盖症状,根因待排专门 session 调查
+
+---
+
+## 最新 Session: 2026-09-18 — heuristic_judge_trace.py (拒绝 LLM-as-a-Judge,纯启发式 4 维 1-5 分质性打分)
+
+### 1. 触发
+- 用户读 Toutiao《AI Agent开发离不开langsmith-trace》,问对找 bug 有啥帮助
+- 文章第 3 论点提"用 LLM-as-a-Judge 对历史 Trace 批量打分";评估对 x_videos-dowloads 价值后**拒绝**接入,改为纯启发式可选工具
+
+### 2. 1 file (148 行,纯 stdlib)
+
+| 文件 | 类型 | 职责 |
+|------|------|------|
+| `scripts/heuristic_judge_trace.py` | 新增 | 4 维度 1-5 分质性打分(可选,**不**接入主 pipeline) |
+
+注:中途改过一次名(`llm_judge_trace.py` → `heuristic_judge_trace.py`),因最终不调 LLM,文件名误导读者。
+
+### 3. 4 维度启发式打分(与 LLM rubric 1-5 标度对齐,便于将来切回 LLM 时直接映射)
+
+| 维度 | 规则 | 阈值 |
+|------|------|------|
+| **efficiency** | resolver 链越短越好 | 0→5, >6→1 |
+| **robust** | stall 次数越少越好 | 0→5, ≥4→1 |
+| **readable** | 结构完整(open + close + 核心事件) | 0/1/2+ 缺 → 5/3/1 |
+| **suspicious** | 异常信号累加(基线 1,可疑到 5) | resolver>6 +2;stall>4 +2;missing +1/件 |
+
+与 `eval_trace.py` 共享 `STALL_THRESHOLD_MS=30_000` + `CORE_STEPS = {resolver_try, fetch_video_info, download_one}`(对齐 `src/core/trace.rs` 实际 step 名)
+
+### 4. 验证(已做)
+
+| fixture | resolvers | stalls | 结构 | eff | rob | rd | sus |
+|---------|-----------|--------|------|-----|-----|----|----|
+| `happy` | 1 | 0 | 完整 | 4 | 5 | 5 | 1 |
+| `mid` | 5 | 3 | 完整 | 2 | 2 | 5 | 3 |
+| `bad` | 8 | 8 | 缺 close | 1 | 1 | 3 | 5 |
+
+3 fixture 行为单调合理。
+
+### 5. 决策
+- 🟢 **拒绝 LLM-as-a-Judge**(13 条规则第 5 条 + 确定性 IO 领域质性评分无价值);落 `~/memory/decisions.md` 2026-09-18 entry
+- 🟢 **不接入主 pipeline**:`scripts/heuristic_judge_trace.py` docstring 明写不写 `docs/dna/`、不入 CI 门禁
+- 🟢 **1-5 标度对齐 LLM rubric**:将来真需升级,改 `heuristic_judge()` 内部分支即可,接口不变(可逆性)
+- 🟢 **纯 stdlib**:`urllib`/`requests`/sdk 一概不引(无 key 无网络依赖 = 零成本 / 100% 复现)
+
+### 6. 已知 follow-up
+- 零(脚本一次性交付,如有演化参考 `~/memory/decisions.md` 2026-09-18 entry)
+- 重评触发:项目从"下载器"演化为"多步推理 + 工具调用编排 Agent"时重启 LLM judge 评估
 
 ---
 
@@ -1476,6 +1728,10 @@ cargo test --bin x-video-downloader -- --ignored \
 | D-021 | 2026-09-01 | skill 盘点 | obra/superpowers v6.3.0 已含本地(2026-08-24 batch),无动作 | accepted | 上游 2026-08-12 release v6.3.0,本地 updatedAt 在其后;`update -y` 确认无新 commit | 上游 release 新版本时 |
 | D-022 | 2026-09-02 | 全局配置 | SessionStart 双模式拆分:默认 ≤1KB 指针 (295B), `WIKI_FULL=1` 输出完整 11.5KB | accepted | 见 WikiSkill 消融: Inference Agent 看累积 wiki 反而有害 (48.7%→45.3%);Skill Proposer 才是 wiki 受益方 (+15pt) | 切换到非 WikiSkill 架构时 (如 Claude 原生管理 context) 或 wiki 注入重新被设为默认 |
 | D-023 | 2026-09-02 | 知识管理 | 每个 skill 维护 `~/.claude/skill-impact/<slug>.md` 账本 (改动提案 + 验证 + 接受/拒绝) | accepted | 遵循 WikiSkill 论文 `skill-impact.md` 模式;当前 3 个 skill 已建账 (CLAUDE.md / claude-code-best-practice / settings-hooks) | 维护成本 > 收益时回退到自由文本,或账本数 > 20 时考虑自动生成器 |
+| D-025 | 2026-09-21 | 依据可信度 | 官方原文依据探针**只用 ≥6 字长探针**；4-5 字短探针虽把覆盖率 14/50 抬到 36/50，但产出假依据，**否决** | accepted | 见 2026-09-21 session §5；假依据实例：「夜间施工」撞河底挖沟、「从业人员」撞课程介绍 | kb 语料扩充（安全生产法/行业标准）后重估覆盖率与精度 |
+| D-026 | 2026-09-21 | 题库入库 | 题库**单一真源 = `banks/*.json`**；入库一律 原稿 → `parse_*.py`(断言) → banks → `solve.py build` → `sync_banks.py`，不手改 sqlite | accepted | 索引可随时删掉重建；断言把住题数/题型/题号连续/答案完整性 | 出现必须人工改 sqlite 才能表达的字段时 |
+| D-027 | 2026-09-21 | 前端样式 | 全站字号用 `html{font-size:var(--fs)}` + rem 单一变量驱动；**禁止**在 `font:` 简写里带 `inherit` | accepted | 简写非法 → 整条声明失效 → 控件恒 13.33px 且不随字号缩放（用户报「字体小、硬伤」的根因） | 换自带字号体系的 UI 框架时 |
+| D-028 | 2026-09-21 | 语料 | 天翼云考试练习题-1（296 题）**原件缺失 → 不入库**，等用户提供原件/导出 | **pending** | `~/Downloads` 只有 python-docx 生成的「自检报告」，正文仅 44 条可疑题明细；灌入只会污染题库 | 用户给出原件路径或平台导出 |
 
 ### pending 项汇总(供新会话快速扫描)
 
@@ -1483,6 +1739,8 @@ cargo test --bin x-video-downloader -- --ignored \
 - D-014 平台报告 zhixueyun-platform-report-2026-08-29.md 是否落 git
 - D-015 zhixueyun-analyzer skill 是否同步到镜像/装机版
 - D-016 preview-new 端点是否真实存在(需 Camoufox 实测)
+- D-028 天翼云考试练习题-1(296 题)原件缺失 —— 用户给原件/导出后入库
+- D-025 待审触发: kb 语料扩充后重估「依据覆盖率 vs 假依据」的平衡(当前 14/50 精确版)
 ```
 
 ---

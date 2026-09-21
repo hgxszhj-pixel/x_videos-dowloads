@@ -17,6 +17,10 @@
     python3 scripts/agent_did.py vc --commit 6433dad --reviewers 'a:approve,b:reject'
 """
 
+# 被 git hook 以 /usr/bin/env python3 加载；交互 shell 里可能是 3.9，
+# `dict | None` 这类注解在 3.9 上于 def 时即 TypeError → 必须冻结注解求值
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json

@@ -9,6 +9,10 @@
 - Ref-trace 关联(若今天有 NDJSON trace,追加 Ref-trace: <绝对路径>)
 """
 
+# hook 由 git 用 /usr/bin/env python3 启动 —— 交互 shell 里可能是 3.9（ServBay 别名），
+# `Path | None` 这种注解在 3.9 上会在 def 时直接 TypeError，整个 hook 崩、commit 被拒。
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
