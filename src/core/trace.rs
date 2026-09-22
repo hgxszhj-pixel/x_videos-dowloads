@@ -57,17 +57,28 @@ fn generate_session_id(prefix: &str) -> String {
 /// 打开一个 trace session,产 session_id 并打开 NDJSON 文件
 ///
 /// `prefix` 建议:`batch` / `single` / `cli-{command}` / `gui-{action}`
+///
+/// OCR P1 #7 修复:旧实现无条件加 `YYYY-MM-DD/` 子目录,导致同日多测试共享同一
+/// date_dir(都是 `2026-09-22/`),用 `read_dir().next()` 取文件不确定拿谁的。
+/// 改:当 `X_VIDEOS_TRACE_DIR` env 显式设置时(测试场景),直接用该目录作 file_path
+/// 父目录 — 测试自己保证目录唯一(已经 `timestamp_nanos_opt` 做后缀),不再二次
+/// 折叠到日期子目录。线上场景(无 env)行为不变。
 pub async fn trace_session_open(prefix: &str) -> String {
     let session_id = generate_session_id(prefix);
 
-    // 按日期分目录: ~/.local/share/x_videos-dowloads-trace/YYYY-MM-DD/
-    let date_dir = trace_root().join(Utc::now().format("%Y-%m-%d").to_string());
-    if let Err(e) = std::fs::create_dir_all(&date_dir) {
-        eprintln!("[trace] 创建目录失败 {date_dir:?}: {e}");
+    let file_dir = if std::env::var("X_VIDEOS_TRACE_DIR").is_ok() {
+        // 测试路径:env 已指向唯一 tmpdir,直接用,不再加日期子目录
+        trace_root()
+    } else {
+        // 线上路径:按日期分目录,便于人肉浏览
+        trace_root().join(Utc::now().format("%Y-%m-%d").to_string())
+    };
+    if let Err(e) = std::fs::create_dir_all(&file_dir) {
+        eprintln!("[trace] 创建目录失败 {file_dir:?}: {e}");
         return session_id;
     }
 
-    let file_path = date_dir.join(format!("{session_id}.ndjson"));
+    let file_path = file_dir.join(format!("{session_id}.ndjson"));
     // 每次 open 时 truncate(测试场景必全新;线上场景 session_id 是 ULID 永不重复)
     match std::fs::OpenOptions::new()
         .create(true)
@@ -339,10 +350,44 @@ impl Drop for TraceStep {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// 测试 helper:在唯一 tmpdir 下找 session 文件 (OCR P1 #7 修复)
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod test_helpers {
+    use std::path::{Path, PathBuf};
+
+    /// 按 session_id 前缀(generate_session_id 输出形如 `bug2ABCDEFG...`)定位 NDJSON。
+    /// 不依赖 read_dir().next()(那在多测试同 tmpdir 时返回不确定文件)。
+    pub(super) fn find_session_file(tmp: &Path, session_id_prefix: &str) -> PathBuf {
+        // trace_session_open 在测试场景(env 已设)直接用 trace_root() 作 file_dir,
+        // 不再二次折叠到 YYYY-MM-DD 子目录。线上场景不在测试 helper 用。
+        let entries: Vec<_> = std::fs::read_dir(tmp)
+            .expect("tmpdir 可读")
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.starts_with(session_id_prefix) && name.ends_with(".ndjson")
+            })
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "{tmp:?} 下 {session_id_prefix}*.ndjson 应恰好 1 个,实际 {} (文件列表: {:?})",
+            entries.len(),
+            std::fs::read_dir(tmp)
+                .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+        entries.into_iter().next().unwrap().path()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
+    use test_helpers::find_session_file;
 
     /// 测试 helper: 重置全局 session/file 状态(因为 LazyLock 在测试间共享)
     async fn reset_globals() {
@@ -375,11 +420,8 @@ mod tests {
         // 等 flush 完成
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        // 读回
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-        assert!(!entries.is_empty(), "trace 文件应存在");
-        let path = entries.pop().unwrap().path();
+        // 读回(OCR P1 #7 修复:按 session_id 前缀精确定位,不再 read_dir().next())
+        let path = find_session_file(&tmp, "test");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
         assert_eq!(lines.len(), 3, "应 3 行: open / event / close, 实得 {lines:?}");
@@ -422,9 +464,7 @@ mod tests {
         trace_session_close(json!({})).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-        let path = entries.pop().unwrap().path();
+        let path = find_session_file(&tmp, "raii");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
         let mid: Value = serde_json::from_str(lines[1]).expect("中间行合法");
@@ -498,10 +538,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // === 读回 NDJSON 验证 ===
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-        assert!(!entries.is_empty(), "trace 文件应存在");
-        let path = entries.pop().unwrap().path();
+        let path = find_session_file(&tmp, "gui-single");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
 
@@ -566,9 +603,7 @@ mod tests {
             trace_session_close(json!({})).await;
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-            let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-            let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-            let path = entries.pop().unwrap().path();
+            let path = find_session_file(&tmp, "on_exit");
             let content = std::fs::read_to_string(&path).unwrap();
             let lines: Vec<&str> = content.trim().split('\n').collect();
             let fetch_line = lines
@@ -612,9 +647,7 @@ mod tests {
             trace_session_close(json!({})).await;
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-            let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-            let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-            let path = entries.pop().unwrap().path();
+            let path = find_session_file(&tmp, "bug");
             let content = std::fs::read_to_string(&path).unwrap();
             let lines: Vec<&str> = content.trim().split('\n').collect();
             let fetch_line = lines
@@ -742,9 +775,7 @@ mod tests {
         trace_session_close(json!({})).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-        let path = entries.pop().unwrap().path();
+        let path = find_session_file(&tmp, "on_exit");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
         let fetch_line = lines
@@ -788,9 +819,7 @@ mod tests {
         trace_session_close(json!({})).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-        let path = entries.pop().unwrap().path();
+        let path = find_session_file(&tmp, "bug");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
         let fetch_line = lines
@@ -832,9 +861,7 @@ mod tests {
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
-        let path = entries.pop().unwrap().path();
+        let path = find_session_file(&tmp, "early-return");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
         assert_eq!(lines.len(), 2, "应 open + 兜底 close 共 2 行,实得 {lines:?}");
@@ -899,13 +926,7 @@ mod tests {
         trace_session_close(json!({})).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let path = std::fs::read_dir(&date_dir)
-            .unwrap()
-            .flatten()
-            .next()
-            .unwrap()
-            .path();
+        let path = find_session_file(&tmp, "ok_fix");
         let content = std::fs::read_to_string(&path).unwrap();
         let line = content
             .lines()
@@ -964,13 +985,7 @@ mod tests {
         trace_session_close(json!({})).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let path = std::fs::read_dir(&date_dir)
-            .unwrap()
-            .flatten()
-            .next()
-            .unwrap()
-            .path();
+        let path = find_session_file(&tmp, "err_fix");
         let content = std::fs::read_to_string(&path).unwrap();
         let line = content
             .lines()
@@ -1032,13 +1047,7 @@ mod tests {
         trace_session_close(json!({})).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
-        let path = std::fs::read_dir(&date_dir)
-            .unwrap()
-            .flatten()
-            .next()
-            .unwrap()
-            .path();
+        let path = find_session_file(&tmp, "none_fix");
         let content = std::fs::read_to_string(&path).unwrap();
         let line = content
             .lines()
