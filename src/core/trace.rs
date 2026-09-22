@@ -87,8 +87,12 @@ pub async fn trace_session_open(prefix: &str) -> String {
         .open(&file_path)
     {
         Ok(f) => {
-            *TRACE_FILE.lock().unwrap() = Some(f);
-            *SESSION_ID.lock().unwrap() = Some(session_id.clone());
+            *TRACE_FILE
+                .lock()
+                .expect("TRACE_FILE mutex poisoned") = Some(f);
+            *SESSION_ID
+                .lock()
+                .expect("SESSION_ID mutex poisoned") = Some(session_id.clone());
 
             // 写入 session meta 作为 NDJSON 第一行(special step="session_open")
             let meta = json!({
@@ -233,7 +237,11 @@ pub async fn trace_session_open_guarded(prefix: &str) -> TraceSession {
 pub async fn trace_event(step: &str, input: Value, output: Value, duration_ms: u64, extra: Value) {
     let event = json!({
         "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-        "session_id": SESSION_ID.lock().unwrap().clone().unwrap_or_default(),
+        "session_id": SESSION_ID
+            .lock()
+            .expect("SESSION_ID mutex poisoned")
+            .clone()
+            .unwrap_or_default(),
         "step": step,
         "input": input,
         "output": output,
@@ -245,7 +253,7 @@ pub async fn trace_event(step: &str, input: Value, output: Value, duration_ms: u
 
 /// 内部:同步写 NDJSON 一行(append + flush)
 fn write_event(event: &Value) -> std::io::Result<()> {
-    let mut guard = TRACE_FILE.lock().unwrap();
+    let mut guard = TRACE_FILE.lock().expect("TRACE_FILE mutex poisoned");
     if let Some(f) = guard.as_mut() {
         use std::io::Write;
         let mut line = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
@@ -287,16 +295,16 @@ fn append_no_session_event(event: &Value) -> std::io::Result<()> {
 /// ```ignore
 /// let _trace = TraceStep::new("resolver_try")
 ///     .input(json!({"url": url}))
-///     .extra(json!({"idx": idx}))
-///     .on_exit(|out| out["status"] = json!("ok"));
-/// // ... 业务逻辑 ...
+///     .on_exit(|out| { out["status"] = json!("ok"); });
 /// // drop 时自动写 trace_event
 /// ```
+type OutputMutatorFn = Box<dyn FnOnce(&mut Value) + Send>;
+
 pub struct TraceStep {
     step: String,
     input: Value,
     extra: Value,
-    output_mutator: Option<Box<dyn FnOnce(&mut Value) + Send>>,
+    output_mutator: Option<OutputMutatorFn>,
     started_at: Instant,
 }
 
@@ -339,7 +347,11 @@ impl Drop for TraceStep {
         // 同步写 NDJSON — 确保事件顺序严格匹配代码顺序,RAII drop 紧跟业务逻辑
         let event = json!({
             "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-            "session_id": SESSION_ID.lock().unwrap().clone().unwrap_or_default(),
+            "session_id": SESSION_ID
+            .lock()
+            .expect("SESSION_ID mutex poisoned")
+            .clone()
+            .unwrap_or_default(),
             "step": self.step,
             "input": self.input,
             "output": output,
