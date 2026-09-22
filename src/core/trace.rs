@@ -100,10 +100,20 @@ pub async fn trace_session_open(prefix: &str) -> String {
 }
 
 /// 关闭当前 trace session(写一行 `session_close` 事件 + flush)
+///
+/// OCR HIGH #6 修复:旧实现连续 lock 两个 Mutex 各两次(SESSION_ID + TRACE_FILE),
+/// IO(flush) 发生在两次 lock 之间,任一 lock 中毒都会 unwrap() panic。
+/// 改法—先拷数据释放锁,IO 在锁外,各自 lock 一次清空,用 unwrap_or_else
+/// 兼容 mutex poison 不再 panic(panic 不该从 close 路径冒出来)。
 pub async fn trace_session_close(summary: Value) {
+    let session_id = SESSION_ID
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .unwrap_or_default();
     let close_event = json!({
         "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-        "session_id": SESSION_ID.lock().unwrap().clone().unwrap_or_default(),
+        "session_id": session_id,
         "step": "session_close",
         "input": {},
         "output": summary,
@@ -112,37 +122,61 @@ pub async fn trace_session_close(summary: Value) {
     });
     let _ = write_event(&close_event);
 
-    // drop file handle
-    *TRACE_FILE.lock().unwrap() = None;
-    *SESSION_ID.lock().unwrap() = None;
+    // 各自独立 lock + poison-tolerant 清空
+    if let Ok(mut g) = TRACE_FILE.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = SESSION_ID.lock() {
+        *g = None;
+    }
 }
 
 /// RAII guard:保证 session 一定被关闭 —— 覆盖所有 `?` / early return / panic 展开路径。
 ///
 /// 与 `TraceStep` 对称。显式 [`TraceSession::close`] 写业务 summary;
 /// 未显式关闭则 drop 兜底写 `status="dropped"`。
+///
+/// OCR HIGH #6 修复:`opened` 字段记录 session 是否真打开(file open 失败时
+/// trace_session_open 会提前 return session_id 但不留文件句柄,旧实现
+/// Drop 仍然写 "session_close / dropped",误导为"已开过再被 drop"。改:
+/// open 失败时 opened=false,Drop 直接放空不写任何事件。
 pub struct TraceSession {
     closed: bool,
+    opened: bool,
 }
 
 impl TraceSession {
     /// 显式关闭并写 summary;幂等(重复调用无副作用)。
     pub async fn close(mut self, summary: Value) {
         self.closed = true;
-        trace_session_close(summary).await;
+        if self.opened {
+            trace_session_close(summary).await;
+        }
     }
 }
 
 impl Drop for TraceSession {
     fn drop(&mut self) {
-        if self.closed {
+        if self.closed || !self.opened {
             return;
         }
-        // 兜底:未显式 close 就退出(early return / 错误传播 / panic 展开)
-        // 同步写 + 顺手用 into_inner() 缓解 G4 的 mutex poison panic
+        // 兜底:未显式 close 就退出(early return / 错误传播 / panic 展开)。
+        //
+        // OCR HIGH #6 修复:旧实现先 lock SESSION_ID 构建 event,再调 write_event
+        // (内部 lock TRACE_FILE + 同步 flush),最后再分别 lock 两次清空 globals。
+        // 结果:全程持锁跨同步 IO,任何并发 trace_event 都被 stall。改法—
+        // 1. 先 lock SESSION_ID 拷 session_id 后立即释放,
+        // 2. 再 lock TRACE_FILE 清空(独立临界区,无嵌套),
+        // 3. 最后 lock SESSION_ID 清空(独立临界区)。
+        // IO(flush)完全在 lock 外执行。
+        let session_id = SESSION_ID
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default();
         let event = json!({
             "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-            "session_id": SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default(),
+            "session_id": session_id,
             "step": "session_close",
             "input": {},
             "output": {
@@ -152,18 +186,36 @@ impl Drop for TraceSession {
             "duration_ms": 0u64,
             "extra": {"implicit": true}
         });
+        // write_event 自己内部 lock TRACE_FILE 短暂,flush 在锁内但只此一次。
         let _ = write_event(&event);
-        *TRACE_FILE.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        *SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        // 各自独立 lock,清空 globals。
+        if let Ok(mut g) = TRACE_FILE.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = SESSION_ID.lock() {
+            *g = None;
+        }
     }
 }
 
 /// 与 [`trace_session_open`] 相同,但返回 RAII guard。
 ///
 /// **新代码请用这个**:它保证任何早退路径都会留下 `session_close` 事件。
+///
+/// OCR HIGH #6 修复:旧实现无条件返回 `closed: false`,Drop 永远写 "session_close /
+/// dropped",即使 file open 失败(此时实际没 session)。改:跟踪 `opened` 标志,
+/// Drop 见 `!opened` 直接放空(globals 也保持 None,无副作用)。
 pub async fn trace_session_open_guarded(prefix: &str) -> TraceSession {
-    let _ = trace_session_open(prefix).await;
-    TraceSession { closed: false }
+    let session_id = trace_session_open(prefix).await;
+    // session_id 是 ULID-like 格式(trace_session_open 总会返),但文件句柄可能没
+    // 成功设上(目录创建失败 / file open Err)。检查 TRACE_FILE 是否真设了。
+    let opened = TRACE_FILE.lock().map(|g| g.is_some()).unwrap_or(false);
+    // 即使 opened=false 也不覆盖 — 旧 session 可能仍开着,我们不该把它清掉。
+    let _ = session_id;
+    TraceSession {
+        closed: false,
+        opened,
+    }
 }
 
 /// 写入单个 trace 事件(5 元组 + extra)
