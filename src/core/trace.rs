@@ -117,6 +117,55 @@ pub async fn trace_session_close(summary: Value) {
     *SESSION_ID.lock().unwrap() = None;
 }
 
+/// RAII guard:保证 session 一定被关闭 —— 覆盖所有 `?` / early return / panic 展开路径。
+///
+/// 与 `TraceStep` 对称。显式 [`TraceSession::close`] 写业务 summary;
+/// 未显式关闭则 drop 兜底写 `status="dropped"`。
+pub struct TraceSession {
+    closed: bool,
+}
+
+impl TraceSession {
+    /// 显式关闭并写 summary;幂等(重复调用无副作用)。
+    pub async fn close(mut self, summary: Value) {
+        self.closed = true;
+        trace_session_close(summary).await;
+    }
+}
+
+impl Drop for TraceSession {
+    fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
+        // 兜底:未显式 close 就退出(early return / 错误传播 / panic 展开)
+        // 同步写 + 顺手用 into_inner() 缓解 G4 的 mutex poison panic
+        let event = json!({
+            "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+            "session_id": SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default(),
+            "step": "session_close",
+            "input": {},
+            "output": {
+                "status": "dropped",
+                "reason": "session guard dropped without explicit close (early return / error / panic)"
+            },
+            "duration_ms": 0u64,
+            "extra": {"implicit": true}
+        });
+        let _ = write_event(&event);
+        *TRACE_FILE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+/// 与 [`trace_session_open`] 相同,但返回 RAII guard。
+///
+/// **新代码请用这个**:它保证任何早退路径都会留下 `session_close` 事件。
+pub async fn trace_session_open_guarded(prefix: &str) -> TraceSession {
+    let _ = trace_session_open(prefix).await;
+    TraceSession { closed: false }
+}
+
 /// 写入单个 trace 事件(5 元组 + extra)
 pub async fn trace_event(step: &str, input: Value, output: Value, duration_ms: u64, extra: Value) {
     let event = json!({
@@ -211,7 +260,6 @@ impl TraceStep {
     }
 
     /// 闭包在 drop 时调用,可修改 output(如设置 status / err / bytes_done)
-    #[allow(dead_code)] // 同 extra:test profile 活引用,bin profile 死代码,按 memory/expect-vs-allow-dead-code.md 选 allow 而非 expect
     pub fn on_exit(mut self, f: impl FnOnce(&mut Value) + Send + 'static) -> Self {
         self.output_mutator = Some(Box::new(f));
         self
@@ -426,6 +474,118 @@ mod tests {
             "所有事件应共享同一个 session_id,实得 {session_ids:?}"
         );
 
+        // OCR finding #1+#2+#6+#8 regression test 之一:handlers.rs 的 on_exit 模式
+        // 写死 "status": "entered",实际结果未知时应写 "entered" 作为初始 placeholder,
+        // 但 caller 拿到 Result 后必须改写 status 反映真实 outcome。
+        // 这个测试断言:正确捕获 outcome 的模式能写出真实 status。
+        #[serial]
+        #[tokio::test]
+        async fn test_on_exit_records_actual_outcome() {
+            reset_globals().await;
+            let tmp = std::env::temp_dir().join(format!(
+                "trace-on-exit-{}",
+                Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            ));
+            std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+            let _session = trace_session_open("on_exit").await;
+
+            // 正确模式:用 Arc<AtomicBool> 在 on_exit 里读取 scope 内最终设置的 outcome。
+            // on_exit 在 scope drop 时调用,此时 succeeded 已是最新值。
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Arc;
+            let succeeded = Arc::new(AtomicBool::new(false));
+            let s_clone = succeeded.clone();
+            {
+                let _t = TraceStep::new("fetch_video_info")
+                    .input(json!({"url": "https://x.com/test"}))
+                    .on_exit(move |out| {
+                        if s_clone.load(Ordering::SeqCst) {
+                            out["status"] = json!("ok");
+                        } else {
+                            out["status"] = json!("err");
+                            out["err"] = json!("业务失败");
+                        }
+                    });
+                // 模拟业务执行但不设 succeeded → 走 err 分支
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            trace_session_close(json!({})).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+            let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
+            let path = entries.pop().unwrap().path();
+            let content = std::fs::read_to_string(&path).unwrap();
+            let lines: Vec<&str> = content.trim().split('\n').collect();
+            let fetch_line = lines
+                .iter()
+                .find(|l| l.contains("\"step\":\"fetch_video_info\""))
+                .expect("应存在 fetch_video_info 行");
+            let ev: Value = serde_json::from_str(fetch_line).expect("JSON 应合法");
+            assert_eq!(ev["output"]["status"], "err", "正确模式应捕获 err 路径");
+            assert_eq!(ev["output"]["err"], "业务失败");
+
+            let _ = std::fs::remove_dir_all(&tmp);
+            reset_globals().await;
+        }
+
+        // OCR finding #1+#2+#6+#8 regression test 之二:复现 handlers.rs L461-463/L1122-1126
+        // 的反模式 — on_exit 闭包硬编码 status="entered",不论函数实际成功还是失败
+        // 都记录 "entered",掩盖真实 outcome。
+        #[serial]
+        #[tokio::test]
+        async fn test_on_exit_wrong_pattern_loses_outcome() {
+            reset_globals().await;
+            let tmp = std::env::temp_dir().join(format!(
+                "trace-on-exit-bug-{}",
+                Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            ));
+            std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+            let _session = trace_session_open("bug").await;
+
+            // 完全复刻 handlers.rs L459-463 的写法
+            {
+                let _ = TraceStep::new("fetch_video_info")
+                        .input(json!({"url": "https://x.com/test"}))
+                        .on_exit(|out| {
+                            out["status"] = json!("entered");
+                        });
+                    // 模拟业务执行得 50ms 后 drop(scope 结束)
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            trace_session_close(json!({})).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+            let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
+            let path = entries.pop().unwrap().path();
+            let content = std::fs::read_to_string(&path).unwrap();
+            let lines: Vec<&str> = content.trim().split('\n').collect();
+            let fetch_line = lines
+                .iter()
+                .find(|l| l.contains("\"step\":\"fetch_video_info\""))
+                .expect("应存在 fetch_video_info 行");
+            let ev: Value = serde_json::from_str(fetch_line).expect("JSON 应合法");
+
+            // 这就是 OCR finding 的核心证据:不管业务成功还是失败,trace 永远记录 "entered"
+            assert_eq!(
+                ev["output"]["status"], "entered",
+                "OCR finding #1+#2+#6+#8: on_exit 闭包写死 'entered' 覆盖真实 outcome"
+            );
+            // 反向断言 — 真实 status 不应该被记录
+            assert!(
+                ev["output"].get("err").is_none() || ev["output"]["err"].is_null(),
+                "Bug 模式下不应有 err 字段(被 'entered' 覆盖)"
+            );
+
+            let _ = std::fs::remove_dir_all(&tmp);
+            reset_globals().await;
+        }
+
         // 验证事件顺序:fetch_video_info RAII drop 在 _t 块结束时 → 在 fetch_video_info_ok 之后
         let steps: Vec<&str> = events.iter().filter_map(|e| e["step"].as_str()).collect();
         assert_eq!(
@@ -486,6 +646,151 @@ mod tests {
         );
 
         // 清理
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
+
+    // OCR finding #1+#2+#6+#8 regression test 之一:handlers.rs 的 on_exit 模式
+    // 写死 "status": "entered",实际结果未知时应写 "entered" 作为初始 placeholder,
+    // 但 caller 拿到 Result 后必须改写 status 反映真实 outcome。
+    // 这个测试断言:正确捕获 outcome 的模式能写出真实 status。
+    #[serial]
+    #[tokio::test]
+    async fn test_on_exit_records_actual_outcome() {
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-on-exit-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        let _session = trace_session_open("on_exit").await;
+
+        // 正确模式:用 Arc<AtomicBool> 在 on_exit 里读取 scope 内最终设置的 outcome。
+        // on_exit 在 scope drop 时调用,此时 succeeded 已是最新值。
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let succeeded = Arc::new(AtomicBool::new(false));
+        let s_clone = succeeded.clone();
+        {
+            let _t = TraceStep::new("fetch_video_info")
+                .input(json!({"url": "https://x.com/test"}))
+                .on_exit(move |out| {
+                    if s_clone.load(Ordering::SeqCst) {
+                        out["status"] = json!("ok");
+                    } else {
+                        out["status"] = json!("err");
+                        out["err"] = json!("业务失败");
+                    }
+                });
+            // 模拟业务执行但不设 succeeded → 走 err 分支
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        trace_session_close(json!({})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
+        let path = entries.pop().unwrap().path();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.trim().split('\n').collect();
+        let fetch_line = lines
+            .iter()
+            .find(|l| l.contains("\"step\":\"fetch_video_info\""))
+            .expect("应存在 fetch_video_info 行");
+        let ev: Value = serde_json::from_str(fetch_line).expect("JSON 应合法");
+        assert_eq!(ev["output"]["status"], "err", "正确模式应捕获 err 路径");
+        assert_eq!(ev["output"]["err"], "业务失败");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
+
+    // OCR finding #1+#2+#6+#8 regression test 之二:复现 handlers.rs L461-463/L1122-1126
+    // 的反模式 — on_exit 闭包硬编码 status="entered",不论函数实际成功还是失败
+    // 都记录 "entered",掩盖真实 outcome。
+    #[serial]
+    #[tokio::test]
+    async fn test_on_exit_wrong_pattern_loses_outcome() {
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-on-exit-bug-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        let _session = trace_session_open("bug").await;
+
+        // 完全复刻 handlers.rs L459-463 的写法
+        {
+            let _ = TraceStep::new("fetch_video_info")
+                    .input(json!({"url": "https://x.com/test"}))
+                    .on_exit(|out| {
+                        out["status"] = json!("entered");
+                    });
+                // 模拟业务执行得 50ms 后 drop(scope 结束)
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        trace_session_close(json!({})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
+        let path = entries.pop().unwrap().path();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.trim().split('\n').collect();
+        let fetch_line = lines
+            .iter()
+            .find(|l| l.contains("\"step\":\"fetch_video_info\""))
+            .expect("应存在 fetch_video_info 行");
+        let ev: Value = serde_json::from_str(fetch_line).expect("JSON 应合法");
+
+        // 这就是 OCR finding 的核心证据:不管业务成功还是失败,trace 永远记录 "entered"
+        assert_eq!(
+            ev["output"]["status"], "entered",
+            "OCR finding #1+#2+#6+#8: on_exit 闭包写死 'entered' 覆盖真实 outcome"
+        );
+        // 反向断言 — 真实 status 不应该被记录
+        assert!(
+            ev["output"].get("err").is_none() || ev["output"]["err"].is_null(),
+            "Bug 模式下不应有 err 字段(被 'entered' 覆盖)"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
+
+
+    /// 覆盖 handlers.rs 里 `?` 早退导致「半截 trace」的场景。
+    #[serial]
+    #[tokio::test]
+    async fn test_session_auto_close_on_early_return() {
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-guard-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        {
+            let _session = trace_session_open_guarded("early-return").await;
+            // 这里故意不调用 close(),模拟 early return / 错误传播
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+        let mut entries: Vec<_> = std::fs::read_dir(&date_dir).unwrap().flatten().collect();
+        let path = entries.pop().unwrap().path();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.trim().split('\n').collect();
+        assert_eq!(lines.len(), 2, "应 open + 兜底 close 共 2 行,实得 {lines:?}");
+
+        let last: Value = serde_json::from_str(lines[1]).expect("末行合法 JSON");
+        assert_eq!(last["step"], "session_close");
+        assert_eq!(last["output"]["status"], "dropped");
+
         let _ = std::fs::remove_dir_all(&tmp);
         reset_globals().await;
     }
