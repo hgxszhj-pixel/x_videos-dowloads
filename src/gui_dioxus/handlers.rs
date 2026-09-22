@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use tracing::info;
@@ -17,7 +18,7 @@ use crate::platform::{
 use crate::types::sanitize_filename;
 use crate::types::{DownloadProgress, DownloadRequest};
 
-use crate::core::trace::{trace_event, trace_session_close, trace_session_open, TraceStep};
+use crate::core::trace::{trace_event, trace_session_open_guarded, TraceStep};
 
 use super::store::add_completed_download;
 
@@ -89,7 +90,7 @@ pub(super) async fn start_download_impl(
 ) -> Result<(), ErrorDisplay> {
     // 故障点 4: GUI 单 URL 下载入口 — 开 trace session,内含 fetch_video_info / download_one 事件
     // (BUG-D / BUG-E 复发时按 session_id grep 一键定位)
-    let _session_id = trace_session_open("gui-single").await;
+    let session = trace_session_open_guarded("gui-single").await;
 
     let config = AppConfig::load()
         .map_err(|e| ErrorDisplay::new("download", e.to_string(), "检查配置文件权限"))?;
@@ -209,7 +210,7 @@ pub(super) async fn start_download_impl(
     // BUG-B 把 success=true 写回 store → UI 显示 completed 而文件实际未下载。
     // 镜像 src/gui_dioxus/handlers.rs:868-876 (download_one) 的处理。
     if result.success {
-        trace_session_close(serde_json::json!({"status": "ok"})).await;
+        session.close(serde_json::json!({"status": "ok"})).await;
         Ok(())
     } else {
         let err = ErrorDisplay::new(
@@ -219,7 +220,7 @@ pub(super) async fn start_download_impl(
                 .unwrap_or_else(|| "下载失败 (未知错误)".to_string()),
             "检查视频 URL 是否过期,或重新 Analyze Course 刷新 m3u8 后再下载",
         );
-        trace_session_close(serde_json::json!({"status": "err", "msg": err.message})).await;
+        session.close(serde_json::json!({"status": "err", "msg": err.message})).await;
         Err(err)
     }
 }
@@ -235,6 +236,7 @@ pub(super) async fn batch_download_impl(
     speed_arcs: Vec<Option<Arc<AtomicU64>>>,
     cancel_flags: Vec<Option<Arc<AtomicBool>>>,
 ) -> Vec<(usize, String, bool, String, f32)> {
+    let session = trace_session_open_guarded("batch").await;
     // BUG-D 诊断 (2026-09-14): 3-item batch 卡死 — 入口 trace
     tracing::info!("[batch_impl] enter urls={}", urls.len());
     let concurrency = 3; // 最多同时下载3个
@@ -447,100 +449,137 @@ pub(super) async fn batch_download_impl(
 
     let success_count = results.iter().filter(|r| r.2).count();
     info!("批量下载完成: {}/{} 成功", success_count, total);
+    session
+        .close(serde_json::json!({"status": "done", "total": total, "success": success_count}))
+        .await;
     results
 }
 
 pub(super) async fn fetch_video_info_impl(url: &str) -> Result<VideoInfoDisplay, String> {
-    // Trace BUG-D 现场: 串行 resolver 链跑完之前不知道会卡哪个
+    // Trace BUG-D 现场: 串行 resolver 链跑完之前不知道会卡哪个.
+    //
+    // on_exit 在 Drop 时跑,body 已结束 → `StdMutex<Option<Result>>` 已释放,
+    // on_exit `lock()` 不会阻塞。真实 outcome 取代写死的 "entered"(OCR HIGH #6)。
+    let outcome: Arc<StdMutex<Option<Result<VideoInfoDisplay, String>>>> =
+        Arc::new(StdMutex::new(None));
+    let outcome_for_exit = outcome.clone();
     let _trace = TraceStep::new("fetch_video_info")
-        .input(serde_json::json!({"url": url}));
-
-    let mut registry = ResolverRegistry::new();
-
-    // 为 TikTok 和 DouYin 配置 msToken
-    let mut douyin_resolver = DouYinResolver::new();
-    let mut tiktok_resolver = TikTokResolver::new();
-
-    if let Ok(config) = AppConfig::load() {
-        if let Some(ref ms_token) = config.douyin_ms_token {
-            let mut tokens = std::collections::HashMap::new();
-            tokens.insert("msToken".to_string(), ms_token.clone());
-            douyin_resolver = douyin_resolver.with_tokens(tokens.clone());
-            tiktok_resolver = tiktok_resolver.with_tokens(tokens);
-        }
-    }
-
-    // 按优先级注册解析器（第一个匹配的会被选中）
-    registry.register(FxTwitterResolver::new()); // x.com/twitter.com
-    registry.register(tiktok_resolver);
-    registry.register(douyin_resolver);
-    registry.register(BilibiliResolver::new());
-    registry.register(YouTubeResolver::new()); // youtube.com
-    registry.register(NnyyResolver::new()); // nnyy.in
-    if let Ok(tp) = TulingPythonResolver::new() {
-        registry.register(tp); // vip.tulingpyton.cn / tulingpyton.cn（含课程池 list_collection）
-    }
-    if let Ok(sr) = ShanhuResolver::new() {
-        registry.register(sr); // rexxi.cn / wanzibook.com / tenwiseacademy.cn（白标 SHANHU/万字）
-    }
-    // 其他平台使用默认的 YtDlpResolver
-
-    // 使用 try_resolve_all 尝试所有解析器
-    match registry.try_resolve_all(url).await {
-        Ok(info) => {
-            // Trace BUG-D: 解析成功 — 记 video_count 供后续 chain_length 分析
-            trace_event(
-                "fetch_video_info_ok",
-                serde_json::json!({"url": url}),
-                serde_json::json!({"status": "ok", "video_count": info.formats.len()}),
-                0,
-                serde_json::json!({"title_len": info.title.len()}),
-            )
-            .await;
-
-            let duration = info
-                .duration
-                .map(|d| format!("{}:{:02}", d / 60, d % 60))
-                .unwrap_or_default();
-            // 如果 url 和输入 url 不同，说明 url 被修改了，保存原始 url
-            let original_url = if info.url != url {
-                Some(url.to_string())
+        .input(serde_json::json!({"url": url}))
+        .on_exit(move |out| {
+            if let Ok(slot) = outcome_for_exit.lock() {
+                match slot.as_ref() {
+                    Some(Ok(_)) => {
+                        out["status"] = serde_json::json!("ok");
+                    }
+                    Some(Err(e)) => {
+                        out["status"] = serde_json::json!("err");
+                        out["err"] = serde_json::json!(e);
+                    }
+                    None => {
+                        out["status"] = serde_json::json!("unknown");
+                    }
+                }
             } else {
-                None
-            };
-            Ok(VideoInfoDisplay {
-                url: info.url.clone(),
-                original_url,
-                title: info.title,
-                uploader: info.uploader.unwrap_or_default(),
-                duration,
-                formats: info
-                    .formats
-                    .iter()
-                    .map(|f| VideoFormatDisplay {
-                        format_id: f.format_id.clone(),
-                        resolution: f.resolution.clone().unwrap_or_default(),
-                        ext: f.ext.clone(),
-                        filesize: f.filesize.map(format_file_size).unwrap_or_default(),
-                    })
-                    .collect(),
-                download_strategy: info.download_strategy,
-                selected: true, // 批量解析得到的视频默认勾选（与 CourseItemDisplay.selected 对齐）
-            })
+                out["status"] = serde_json::json!("lock_poisoned");
+            }
+        });
+
+    let body_result: Result<VideoInfoDisplay, String> = async {
+        let mut registry = ResolverRegistry::new();
+
+        // 为 TikTok 和 DouYin 配置 msToken
+        let mut douyin_resolver = DouYinResolver::new();
+        let mut tiktok_resolver = TikTokResolver::new();
+
+        if let Ok(config) = AppConfig::load() {
+            if let Some(ref ms_token) = config.douyin_ms_token {
+                let mut tokens = std::collections::HashMap::new();
+                tokens.insert("msToken".to_string(), ms_token.clone());
+                douyin_resolver = douyin_resolver.with_tokens(tokens.clone());
+                tiktok_resolver = tiktok_resolver.with_tokens(tokens);
+            }
         }
-        Err(e) => {
-            // Trace BUG-D: 解析失败 — 记错误信息
-            trace_event(
-                "fetch_video_info_err",
-                serde_json::json!({"url": url}),
-                serde_json::json!({"status": "err", "err": e.to_string()}),
-                0,
-                serde_json::json!({}),
-            )
-            .await;
-            Err(format!("Failed to fetch video info: {}", e))
+
+        // 按优先级注册解析器（第一个匹配的会被选中）
+        registry.register(FxTwitterResolver::new()); // x.com/twitter.com
+        registry.register(tiktok_resolver);
+        registry.register(douyin_resolver);
+        registry.register(BilibiliResolver::new());
+        registry.register(YouTubeResolver::new()); // youtube.com
+        registry.register(NnyyResolver::new()); // nnyy.in
+        if let Ok(tp) = TulingPythonResolver::new() {
+            registry.register(tp); // vip.tulingpyton.cn / tulingpyton.cn（含课程池 list_collection）
+        }
+        if let Ok(sr) = ShanhuResolver::new() {
+            registry.register(sr); // rexxi.cn / wanzibook.com / tenwiseacademy.cn（白标 SHANHU/万字）
+        }
+        // 其他平台使用默认的 YtDlpResolver
+
+        // 使用 try_resolve_all 尝试所有解析器
+        match registry.try_resolve_all(url).await {
+            Ok(info) => {
+                // Trace BUG-D: 解析成功 — 记 video_count 供后续 chain_length 分析
+                trace_event(
+                    "fetch_video_info_ok",
+                    serde_json::json!({"url": url}),
+                    serde_json::json!({"status": "ok", "video_count": info.formats.len()}),
+                    0,
+                    serde_json::json!({"title_len": info.title.len()}),
+                )
+                .await;
+
+                let duration = info
+                    .duration
+                    .map(|d| format!("{}:{:02}", d / 60, d % 60))
+                    .unwrap_or_default();
+                // 如果 url 和输入 url 不同，说明 url 被修改了，保存原始 url
+                let original_url = if info.url != url {
+                    Some(url.to_string())
+                } else {
+                    None
+                };
+                Ok(VideoInfoDisplay {
+                    url: info.url.clone(),
+                    original_url,
+                    title: info.title,
+                    uploader: info.uploader.unwrap_or_default(),
+                    duration,
+                    formats: info
+                        .formats
+                        .iter()
+                        .map(|f| VideoFormatDisplay {
+                            format_id: f.format_id.clone(),
+                            resolution: f.resolution.clone().unwrap_or_default(),
+                            ext: f.ext.clone(),
+                            filesize: f.filesize.map(format_file_size).unwrap_or_default(),
+                        })
+                        .collect(),
+                    download_strategy: info.download_strategy,
+                    selected: true, // 批量解析得到的视频默认勾选（与 CourseItemDisplay.selected 对齐）
+                })
+            }
+            Err(e) => {
+                // Trace BUG-D: 解析失败 — 记错误信息
+                trace_event(
+                    "fetch_video_info_err",
+                    serde_json::json!({"url": url}),
+                    serde_json::json!({"status": "err", "err": e.to_string()}),
+                    0,
+                    serde_json::json!({}),
+                )
+                .await;
+                Err(format!("Failed to fetch video info: {}", e))
+            }
         }
     }
+    .await;
+
+    // 在 _trace drop 前写入 outcome,锁立即释放,on_exit 看到最终值。
+    // VideoInfoDisplay: Default+Clone+Store(类型推导见 types.rs:20)。
+    if let Ok(mut slot) = outcome.lock() {
+        *slot = Some(body_result.clone());
+    }
+    body_result
 }
 
 /// 单 URL 智能派发:SHANHU 课程 URL 自动走批量路径,其它平台保持单视频流程。
@@ -1111,26 +1150,65 @@ async fn download_one(
     m3u8: &str,
     progress_cb: Arc<dyn Fn(crate::types::DownloadProgress) + Send + Sync>,
 ) -> Result<(), String> {
-    // Trace BUG-E: batch 下载 stall 60s+ — 记 title 帮 grep 定位哪一条卡
+    // Trace BUG-E: batch 下载 stall 60s+ — 记 title 帮 grep 定位哪一条卡.
+    //
+    // on_exit 在 Drop 时跑(Scope 退出),此时 body 已结束 → `StdMutex<Option<Result>>`
+    // 已被释放,on_exit `lock()` 不会阻塞。这是 RAII + 真实 outcome 的标准模式,
+    // 取代先前写死 "entered" 的反模式(OCR HIGH #1+#2)。
+    let outcome: Arc<StdMutex<Option<Result<(), String>>>> = Arc::new(StdMutex::new(None));
+    let outcome_for_exit = outcome.clone();
     let _trace = TraceStep::new("download_one")
-        .input(serde_json::json!({"title": title, "m3u8_len": m3u8.len()}));
+        .input(serde_json::json!({"title": title, "m3u8_len": m3u8.len()}))
+        .on_exit(move |out| {
+            // 同步锁 — body 已完成,锁不会被持有,无 deadlock 风险。
+            if let Ok(slot) = outcome_for_exit.lock() {
+                match slot.as_ref() {
+                    Some(Ok(())) => {
+                        out["status"] = serde_json::json!("ok");
+                    }
+                    Some(Err(e)) => {
+                        out["status"] = serde_json::json!("err");
+                        out["err"] = serde_json::json!(e);
+                    }
+                    None => {
+                        out["status"] = serde_json::json!("unknown");
+                    }
+                }
+            } else {
+                // Mutex 中毒(panic in holder) — 退到 unknown 不让 trace panic
+                out["status"] = serde_json::json!("lock_poisoned");
+            }
+        });
 
-    let output_dir = AppConfig::load()
-        .map(|c| c.output_dir)
-        .unwrap_or_else(|_| PathBuf::from("./Downloads"));
-    let output_path = build_output_path(&output_dir, title);
-    let req =
-        DownloadRequest::new(m3u8, output_path).with_strategy(crate::types::DownloadStrategy::Hls);
-    let mut dl = VideoDownloader::new().map_err(|e| format!("VideoDownloader 初始化失败：{e}"))?;
-    let result = dl
-        .download(&req, Some(progress_cb))
-        .await
-        .map_err(|e| e.to_string())?;
-    if result.success {
-        Ok(())
-    } else {
-        Err(result.error_message.unwrap_or_default())
+    let body_result: Result<(), String> = async {
+        let output_dir = AppConfig::load()
+            .map(|c| c.output_dir)
+            .unwrap_or_else(|_| PathBuf::from("./Downloads"));
+        let output_path = build_output_path(&output_dir, title);
+        let req = DownloadRequest::new(m3u8, output_path)
+            .with_strategy(crate::types::DownloadStrategy::Hls);
+        let mut dl =
+            VideoDownloader::new().map_err(|e| format!("VideoDownloader 初始化失败：{e}"))?;
+        let result = dl
+            .download(&req, Some(progress_cb))
+            .await
+            .map_err(|e| e.to_string())?;
+        if result.success {
+            Ok(())
+        } else {
+            Err(result.error_message.unwrap_or_default())
+        }
     }
+    .await;
+
+    // 在 _trace drop 前写入 outcome;锁立即释放,on_exit 看到最终值。
+    if let Ok(mut slot) = outcome.lock() {
+        *slot = Some(match &body_result {
+            Ok(()) => Ok(()),
+            Err(e) => Err(e.clone()),
+        });
+    }
+    body_result
 }
 
 /// 构造安全文件路径：复用 `crate::types::sanitize_filename` 防止路径遍历。

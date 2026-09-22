@@ -794,4 +794,212 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         reset_globals().await;
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OCR HIGH #1+#2+#6+#8 的修复回归:on_exit 通过 Arc<StdMutex<Option<Result>>>
+    // 拿到真实 outcome(handlers.rs::download_one / fetch_video_info_impl 已落地)。
+    //
+    // 这是 "测试验证意图"(rules.md #9):不只测 TraceStep 本身,还测调用者用对模式后
+    // 真实 outcome 能穿透 RAII。
+    // ─────────────────────────────────────────────────────────────────────────
+    #[serial]
+    #[tokio::test]
+    async fn test_on_exit_with_outcome_mutex_records_real_ok() {
+        use std::sync::Arc;
+        use std::sync::Mutex as StdMutex;
+
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-on-exit-ok-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        let _session = trace_session_open("ok_fix").await;
+
+        // ── 复刻 handlers.rs::download_one L1122-1163 修复后的写法 ─────────
+        let outcome: Arc<StdMutex<Option<Result<(), String>>>> = Arc::new(StdMutex::new(None));
+        let outcome_for_exit = outcome.clone();
+        {
+            let _trace = TraceStep::new("download_one_fix")
+                .input(json!({"title": "demo"}))
+                .on_exit(move |out| {
+                    if let Ok(slot) = outcome_for_exit.lock() {
+                        match slot.as_ref() {
+                            Some(Ok(())) => out["status"] = json!("ok"),
+                            Some(Err(e)) => {
+                                out["status"] = json!("err");
+                                out["err"] = json!(e);
+                            }
+                            None => out["status"] = json!("unknown"),
+                        }
+                    } else {
+                        out["status"] = json!("lock_poisoned");
+                    }
+                });
+
+            let body_result: Result<(), String> = Ok(());
+            if let Ok(mut slot) = outcome.lock() {
+                *slot = Some(body_result);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        trace_session_close(json!({})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+        let path = std::fs::read_dir(&date_dir)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let line = content
+            .lines()
+            .find(|l| l.contains("\"step\":\"download_one_fix\""))
+            .expect("应存在 download_one_fix 行");
+        let ev: Value = serde_json::from_str(line).expect("JSON 应合法");
+
+        assert_eq!(ev["output"]["status"], "ok", "Ok 分支必须落 status='ok'");
+        assert!(ev["output"].get("err").is_none(), "Ok 分支不应有 err 字段");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
+
+    #[serial]
+    #[tokio::test]
+    async fn test_on_exit_with_outcome_mutex_records_real_err() {
+        use std::sync::Arc;
+        use std::sync::Mutex as StdMutex;
+
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-on-exit-err-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        let _session = trace_session_open("err_fix").await;
+
+        let outcome: Arc<StdMutex<Option<Result<(), String>>>> = Arc::new(StdMutex::new(None));
+        let outcome_for_exit = outcome.clone();
+        {
+            let _trace = TraceStep::new("download_one_fix_err")
+                .input(json!({"title": "demo_err"}))
+                .on_exit(move |out| {
+                    if let Ok(slot) = outcome_for_exit.lock() {
+                        match slot.as_ref() {
+                            Some(Ok(())) => out["status"] = json!("ok"),
+                            Some(Err(e)) => {
+                                out["status"] = json!("err");
+                                out["err"] = json!(e);
+                            }
+                            None => out["status"] = json!("unknown"),
+                        }
+                    } else {
+                        out["status"] = json!("lock_poisoned");
+                    }
+                });
+
+            let body_result: Result<(), String> = Err("VideoDownloader 初始化失败：missing yt-dlp".into());
+            if let Ok(mut slot) = outcome.lock() {
+                *slot = Some(body_result);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        trace_session_close(json!({})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+        let path = std::fs::read_dir(&date_dir)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let line = content
+            .lines()
+            .find(|l| l.contains("\"step\":\"download_one_fix_err\""))
+            .expect("应存在 download_one_fix_err 行");
+        let ev: Value = serde_json::from_str(line).expect("JSON 应合法");
+
+        assert_eq!(
+            ev["output"]["status"], "err",
+            "Err 分支必须落 status='err'(这是反模式的反面证据)"
+        );
+        assert_eq!(
+            ev["output"]["err"], "VideoDownloader 初始化失败：missing yt-dlp",
+            "真实 err 文案必须穿透(不是写死的 'entered')"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
+
+    // 边界:outcome 仍为 None 时(写之前就 panic/early-return)→ status="unknown"。
+    // 退化保护,而非崩溃。
+    #[serial]
+    #[tokio::test]
+    async fn test_on_exit_with_unset_outcome_falls_back_to_unknown() {
+        use std::sync::Arc;
+        use std::sync::Mutex as StdMutex;
+
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-on-exit-none-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        let _session = trace_session_open("none_fix").await;
+
+        let outcome: Arc<StdMutex<Option<Result<(), String>>>> = Arc::new(StdMutex::new(None));
+        let outcome_for_exit = outcome.clone();
+        {
+            let _trace = TraceStep::new("download_one_unset")
+                .input(json!({}))
+                .on_exit(move |out| {
+                    if let Ok(slot) = outcome_for_exit.lock() {
+                        if let Some(Ok(())) = slot.as_ref() {
+                            out["status"] = json!("ok");
+                        } else if let Some(Err(e)) = slot.as_ref() {
+                            out["status"] = json!("err");
+                            out["err"] = json!(e);
+                        } else {
+                            out["status"] = json!("unknown");
+                        }
+                    }
+                });
+
+            // 故意不写 outcome — 模拟 panic 路径 / 提前 return 边界
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        trace_session_close(json!({})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let date_dir = tmp.join(Utc::now().format("%Y-%m-%d").to_string());
+        let path = std::fs::read_dir(&date_dir)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let line = content
+            .lines()
+            .find(|l| l.contains("\"step\":\"download_one_unset\""))
+            .expect("应存在 download_one_unset 行");
+        let ev: Value = serde_json::from_str(line).expect("JSON 应合法");
+
+        assert_eq!(
+            ev["output"]["status"], "unknown",
+            "outcome 未写入时退到 unknown,而非崩溃或默认 'ok'"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
 }
