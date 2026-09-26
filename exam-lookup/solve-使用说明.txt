@@ -1,0 +1,90 @@
+solve.py —— 会自动长大的题库流水线
+====================================================================
+放在 /Users/hgxszhj/x_videos-dowloads/exam-lookup/solve.py
+零依赖，只要 python3 + curl。
+
+【一句话】
+  做题先查本地库（0.2秒）→ 没有才联网（6秒）→ 查到答案自动回灌 → 下次就是本地秒回。
+  题库自己长大，你只负责"确认"，不负责"录题"。
+
+【日常用法】
+  python3 solve.py ask "题目原文"            # 解一道题（本地优先，自动联网兜底）
+  python3 solve.py review                   # 查看待办队列（含候选排序）
+  python3 solve.py ingest "题目|答案"        # 人工确认后入库
+  python3 solve.py build                    # 重建索引（ingest 后要跑）
+  python3 solve.py stats                    # 题库规模
+  python3 solve.py merge                    # 把自动补录合并成题库文件，导进 shiroha-quiz
+  python3 solve.py ask -f questions.txt     # 批量解一整个文件
+
+【四层结构（为什么要这么设计）】
+  第1层 本地库      SQLite，精确匹配 + 模糊匹配(阈值0.72)。命中即答案，0.2秒。
+  第2层 联网检索    360/搜狗取摘要 + 抓命中页正文，正则抽「答案：X」并投票。
+  第3层 候选排序    抽不到答案时，按「选项用词 vs 检索证据」重合度给选项排序，
+                    供人工从最像的开始看。只排序，不判定。
+  第4层 人工确认    入库的唯一闸门。
+
+【为什么自动入库要 ≥2 票】
+  实测：联网单票经常是错的。例：问"杆上作业随身携带工具总重量"，
+  搜狗摘要给"参考答案: A"，但正确答案是 B（5kg）——那摘要其实是两道题混在一起。
+  所以单票只进待办队列，绝不写进库。宁可慢，不可脏。
+
+【已知边界（实测，不是猜的）】
+  · 考试宝(kaoshibao.com)：整站腾讯云 EdgeOne WAF，一切 curl 请求返回 567。
+    有题库（《中国电信综维装维安全生产考核题库(模板版)1》97题、
+    《…管理办法考试题库-集团题库》50题），但抓不到。api.kaoshibao.com 活着，
+    端点未知。要扒得用真实浏览器（本机浏览器守护进程坏了）。
+  · 题库站普遍把答案藏在「查看完整题目与答案」后面 —— 这是它们的商业模式，
+    不是技术障碍。所以第2层只能吃到"愿意露"的答案（百度文库/规范原文/上学吧等）。
+  · 搜索引擎连续请求会限流（搜狗会开始返广告无关结果）。脚本里已有延时与双引擎轮换。
+  · 中国电信两份内部文件原文未公开，内部数字题（5kg/3年/1cm/50cm/30分钟）只能靠
+    题库站同源题互证，个别题会停在"存疑"。
+
+【数据文件】
+  banks/dtzx-safety.json      手工核对过的题库（62题，含 ★ 更正标注）
+  banks/auto-learned.json     自动补录题库（merge 生成，未复核）
+  learned.jsonl               自动/人工补录的原始记录（只追加）
+  pending.jsonl               待确认队列（候选已排序）
+  qb.sqlite3                  检索索引（build 生成，可随时删掉重建）
+
+【新增一套题库怎么入库（2026-09-21 用「通信安全生产考试试卷50题」走通的流程）】
+  1. 把试卷原文整份存成 exam-lookup/<卷名>.txt（原文留档，便于日后复核每个数字）
+  2. 写/复用一个小 parse_*.py：按「题号 / A、选项 / 答案：」切块 → banks/<库名>.json，
+     末尾用断言把住底线（题数、题型分布、题号连续、每题都有答案、单选选项数），对不上 exit 1
+  3. python3 solve.py build     # 重建 qb.sqlite3，查题端立刻能搜到
+  4. python3 sync_banks.py      # 拷到 shiroha-quiz 网页端 + 重建 banks-index.json
+  5. python3 webui.py selftest  # 刷题端/查题端接口自检
+  已入库：comm-safety-50.json（通信安全生产考试试卷 50 题，单选20+判断30，答案试卷自带）
+  坑：Python 里 "单选" in "单项选择题" 是 False（单+项+选+择，中间隔着「项」）——
+     用它判题型会让整个单选段被静默跳过。判「选择」「判断」这种整体词。
+
+【依据库 kb.py —— 官方原文可检索】
+  题库里只有题目和答案，原文（管理办法/解读/YD5201/教材）原本只是文件躺着搜不到。
+  kb.py 把它们灌成 kb.sqlite3，核题时可以直接按关键词回原文出处：
+    python3 kb.py build                        # 重建索引（幂等，可反复跑）
+    python3 kb.py search 有限空间 -n 8          # 搜原文，返回 出处 + 高亮摘录
+    python3 kb.py search 培训档案 --kind 官方原件  # 只搜某一类来源
+    python3 kb.py stats / selftest             # 规模 / 自检（FAIL 会 exit 1）
+  规模：官方原件 200 块 ｜ 教材(14 份 PDF) 395 块 ｜ 教材章节 199 块 ｜
+        视频课件 58 块 ｜ 教材文字汇编 28 块 = 880 块 / 54 万字（按 sha1 去重）
+  检索：>=3 字走 fts5(trigram)+bm25 排序+[高亮]摘录；2 字退回 LIKE 子串
+  加来源：kb.py 顶部 SOURCES 加一行 glob，再 build（PDF 无同名 txt 会自动 pdftotext）
+
+【查题页 webui.py —— 不想敲命令就用这个】
+  双击 exam-lookup/查题.command（或 python3 webui.py），浏览器自动打开 127.0.0.1:8765：
+   · 查题：粘一道题 → 题库答案（大字号 + 命中率 + 解析）+ 官方原文依据（带高亮摘录）
+   · 刷题：选库/题型/题量 → 逐题作答 → 立刻判对错、给正确项与解析，「看原文依据」直连原文；
+           答错的自动进该库「错题本」（存浏览器 localStorage），下次可「只练错题」，
+           结果页能把错题导成 txt；答错会告诉你「漏选/错选」具体哪几项
+   · 字号 A−/A+（或 ⌘=/⌘-）与浅色/深色 ◐ 都在右上角，选择记在浏览器里，下次打开还是这个字号
+     （字号是全站 rem 驱动的，按钮、下拉、选项会一起缩放；注意 CSS 里别写 font:…inherit 简写，
+      简写不支持 inherit 会让整条声明失效、控件回落到 13px 默认值）
+   · 勾「联网兜底」才会走 solve 的联网检索（慢，且会写 pending.jsonl），默认只查本地
+     python3 webui.py selftest      # 自检：查题命中 + 依据非空 + 题库清单/题型过滤/路径穿越
+  ask.html 是页面本体（字号靠 html{font-size:var(--fs)} + rem，一个变量控整页），
+  webui.py 只管接口（/ 、/api/ask 、/api/banks 、/api/quiz），逻辑全部 import solve / kb。
+
+【接进刷题应用】
+  python3 solve.py merge
+  cp banks/auto-learned.json tools/shiroha-quiz-web-v0.8.7-alpha/data/
+  # 再把 data/banks-index.json 里加一条指向它 —— 或在 app 界面里直接导入
+====================================================================

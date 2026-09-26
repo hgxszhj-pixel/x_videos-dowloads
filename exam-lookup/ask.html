@@ -1,0 +1,1275 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>查题 · 刷题</title>
+<meta name="theme-color" content="#0a0a0a">
+<meta name="description" content="本地题库查题与刷题：答案来自真题/教材原题，依据直连官方原文">
+<style>
+  /* ── 设计令牌：照 shadcn/ui 的中性色阶 + 语义色 ───────────────────────────
+     深色：background 0 0% 3.9% / border 0 0% 14.9% / muted-foreground 240 5% 64.9%
+     浅色：background 0 0% 100% / border 240 5.9% 90% / muted 240 4.8% 95.9%
+     主色走「高对比中性色」（shadcn 的 signature），蓝色只留给语义之外的选中态 */
+  :root{
+    --fs:17px;
+    --r-sm:6px; --r-md:8px; --r-lg:12px; --radius:12px;   /* --radius 兼容老规则 */
+    --bg:#0a0a0a; --card:#0a0a0a; --line:#262626; --fg:#fafafa; --dim:#a1a1aa;
+    --pill:#262626; --hover:#1f1f1f;
+    --accent:#fafafa; --accent-soft:#1f1f1f; --accent-fg:#18181b;
+    --ring:#d4d4d8;
+    --ok:#22c55e; --ok-soft:rgba(34,197,94,.13);
+    --bad:#ef4444; --bad-soft:rgba(239,68,68,.13);
+    --mark:#fbbf24;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.35);
+    --shadow-md:0 8px 24px rgba(0,0,0,.45);
+    --dur:150ms; --ease:cubic-bezier(.2,.8,.2,1);
+    color-scheme:dark;
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --card:#ffffff; --line:#e4e4e7; --fg:#09090b; --dim:#6b6b74;
+    --pill:#f4f4f5; --hover:#f4f4f5;
+    --accent:#18181b; --accent-soft:#f4f4f5; --accent-fg:#fafafa;
+    --ring:#a1a1aa;
+    --ok:#15803d; --ok-soft:rgba(21,128,61,.09);
+    --bad:#b91c1c; --bad-soft:rgba(185,28,28,.08);
+    --mark:#b45309;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.05);
+    --shadow-md:0 8px 24px rgba(0,0,0,.12);
+    color-scheme:light;
+  }
+  html{font-size:var(--fs); scroll-padding-top:5rem}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:1rem/1.7 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+       -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  .wrap{max-width:var(--maxw,840px);margin:0 auto;padding:1.4rem 1.25rem 5rem}
+  .skip{position:absolute;left:-9999px}
+  .skip:focus{left:1rem;top:.6rem;z-index:30;background:var(--bg);color:var(--fg);
+        border:1px solid var(--line);border-radius:var(--r-sm);padding:.4rem .8rem}
+  /* 顶栏：粘住，翻长题时也能调字号 */
+  .top{position:sticky;top:0;z-index:9;background:var(--bg);border-bottom:1px solid var(--line);
+       margin:-1.4rem -1.25rem 1.25rem;padding:.6rem 1.25rem}
+  @supports (background:color-mix(in srgb,red 50%,blue)){
+    .top{background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(10px)}
+  }
+  .topin{max-width:var(--maxw,840px);margin:0 auto;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+  .brand{font-weight:650;font-size:1rem;margin-right:.4rem;letter-spacing:.01em;
+         font-variant-numeric:tabular-nums}
+  /* 分段式 tabs：shadcn TabsList —— 一条 muted 底槽，选中项浮起来 */
+  .tabs{display:inline-flex;align-items:center;gap:.15rem;padding:.2rem;background:var(--pill);
+        border-radius:var(--r-md);margin-right:auto}
+  .tab{padding:.34rem .95rem;border:0;border-radius:var(--r-sm);background:transparent;color:var(--dim);
+       cursor:pointer;font-family:inherit;font-size:1rem;font-weight:600;
+       transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+  .tab:hover{color:var(--fg)}
+  .tab.on{background:var(--card);color:var(--fg);box-shadow:var(--shadow-sm)}
+  .fsbtn{width:2.1rem;height:2.1rem;border-radius:var(--r-sm);border:1px solid var(--line);
+         background:transparent;color:var(--fg);cursor:pointer;font-family:inherit;
+         font-size:1rem;font-weight:600;line-height:1;
+         transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+  .fsbtn:hover{background:var(--hover)}
+  .fsval{font:600 1rem ui-monospace,Menlo,monospace;color:var(--dim);min-width:2.4rem;
+         text-align:center;font-variant-numeric:tabular-nums}
+  h1{font-size:1.35rem;margin:0 0 .35rem;text-wrap:balance;letter-spacing:-.01em}
+  .sub{color:var(--dim);font-size:.92rem;margin-bottom:1.1rem;text-wrap:pretty}
+  textarea{width:100%;min-height:6.4rem;resize:vertical;padding:.7rem .85rem;border-radius:var(--r-md);
+           border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit;
+           transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+  textarea:hover{border-color:var(--ring)}
+  textarea:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in srgb,var(--ring) 28%,transparent)}
+  .bar{display:flex;align-items:center;gap:.6rem;margin:.8rem 0 1.2rem;flex-wrap:wrap}
+  /* 按钮：shadcn 变体 —— default(高对比中性) / outline / ghost；高度一致、圆角 6px */
+  button{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;
+         padding:.5rem 1rem;border:1px solid transparent;border-radius:var(--r-sm);
+         background:var(--accent);color:var(--accent-fg);
+         font-family:inherit;font-size:1rem;font-weight:600;cursor:pointer;
+         touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+         transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease)}
+  button:hover{background:color-mix(in srgb,var(--accent) 90%,var(--dim))}
+  button:active{transform:translateY(.5px)}
+  button.ghost{background:transparent;border-color:var(--line);color:var(--dim)}
+  button.ghost:hover{background:var(--hover);color:var(--fg)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  select{padding:.45rem .6rem;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);
+         color:var(--fg);font-family:inherit;font-size:1rem;max-width:26rem;
+         transition:border-color var(--dur) var(--ease)}
+  select:hover{border-color:var(--ring)}
+  label{color:var(--dim);font-size:.92rem;display:flex;gap:.45rem;align-items:center}
+  .status{color:var(--dim);font-size:.92rem}
+  .hint{color:var(--dim);font-size:.88rem;margin:-.4rem 0 1rem}
+  kbd{font:600 .8rem ui-monospace,Menlo,monospace;background:var(--pill);color:var(--fg);
+      border:1px solid var(--line);border-radius:4px;padding:.05rem .3rem;white-space:nowrap}
+  /* 焦点环：shadcn focus-visible ring —— 只在键盘操作时出现 */
+  button:focus-visible,.tab:focus-visible,select:focus-visible,textarea:focus-visible,
+  .opt:focus-visible,summary:focus-visible,input:focus-visible{
+    outline:2px solid var(--ring);outline-offset:2px}
+  @media (max-width:560px){
+    .wrap{padding:1rem .8rem 4rem}
+    select{max-width:100%}
+    .fsbtn{width:2.4rem;height:2.4rem}      /* 手机上手点得准一点 */
+  }
+  /* 卡片：shadcn Card —— 1px 边 + 8px 圆角，浅色下带一点点影子 */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);
+        padding:1.05rem 1.2rem;margin-bottom:1rem;box-shadow:var(--shadow-sm)}
+  .ansrow{display:flex;align-items:baseline;gap:.9rem;flex-wrap:wrap}
+  .ans{font:800 2rem/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ok);
+       letter-spacing:.06em;font-variant-numeric:tabular-nums}
+  .meta{color:var(--dim);font-size:.88rem}
+  .q{color:var(--dim);font-size:.88rem;margin-top:.7rem;border-top:1px dashed var(--line);padding-top:.7rem}
+  .analysis{font-size:.95rem;margin-top:.55rem;white-space:pre-wrap;text-wrap:pretty}
+  .qstem{font-size:1.08rem;font-weight:600;margin:.35rem 0 .95rem;line-height:1.75;text-wrap:pretty}
+  /* 选项：真按钮（键盘可达），选中/对错用「描边 + 淡底」表达 */
+  /* 选项是 <button>，必须显式左对齐：button 的基础样式是居中，不然题支文字会飘到中间 */
+  .opt{display:flex;justify-content:flex-start;gap:.7rem;align-items:flex-start;width:100%;
+       text-align:left;padding:.65rem .85rem;margin-bottom:.5rem;border:1px solid var(--line);
+       border-radius:var(--r-sm);cursor:pointer;background:var(--bg);color:var(--fg);
+       font-size:1rem;font-weight:400;
+       transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+  .opt:hover{border-color:var(--ring);background:var(--hover)}
+  .opt .k{flex:0 0 1.6rem;height:1.6rem;border-radius:50%;background:var(--pill);color:var(--fg);
+          border:1px solid var(--line);font-family:inherit;font-size:.9rem;font-weight:700;
+          line-height:1.5rem;text-align:center}
+  .opt.sel{border-color:var(--fg);background:var(--hover)}
+  .opt.sel .k{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+  .opt.right{border-color:var(--ok);background:var(--ok-soft)}
+  .opt.wrong{border-color:var(--bad);background:var(--bad-soft)}
+  .opt.right .k{background:var(--ok);color:#fff}
+  .opt.wrong .k{background:var(--bad);color:#fff}
+  .verdict{font-weight:700;font-size:1rem;margin:.4rem 0 .6rem}
+  .verdict.ok{color:var(--ok)} .verdict.no{color:var(--bad)}
+  .prog.bad{color:var(--bad)}
+  .prog{font:600 .82rem ui-monospace,Menlo,monospace;color:var(--dim);font-variant-numeric:tabular-nums}
+  .track{height:4px;background:var(--pill);border-radius:999px;overflow:hidden;margin:.2rem 0 .9rem}
+  .track i{display:block;height:100%;background:var(--fg);width:0;
+           transition:width 200ms var(--ease)}
+  .wrongitem{border-top:1px dashed var(--line);padding:.7rem 0}
+  .wrongitem:first-child{border-top:0}
+  .lbl{color:var(--dim);font-size:.95rem}    /* 行标签不是控件，字号贴着正文 */
+  /* 徽标：统计数字用它，比一整句话好扫 */
+  .badges{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:.1rem 0 1rem}
+  .badge{display:inline-flex;align-items:center;gap:.35rem;background:var(--pill);color:var(--dim);
+         border-radius:var(--r-sm);padding:.14rem .6rem;font-size:.94rem;font-weight:600;
+         font-variant-numeric:tabular-nums}
+  .badge b{color:var(--fg);font-weight:700}
+  /* 下拉菜单：shadcn DropdownMenu —— 浮层 + md 影子 + 逐项 hover */
+  details.more{position:relative}
+  details.more>summary{list-style:none;display:inline-flex;align-items:center;gap:.4rem;
+        padding:.5rem 1rem;border:1px solid var(--line);border-radius:var(--r-sm);
+        color:var(--dim);font-size:1rem;font-weight:600;cursor:pointer;user-select:none;
+        transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
+                   border-color var(--dur) var(--ease)}
+  details.more>summary:hover{background:var(--hover);color:var(--fg)}
+  details.more>summary::-webkit-details-marker{display:none}
+  details.more[open]>summary{color:var(--fg);border-color:var(--ring)}
+  .moremenu{position:absolute;z-index:20;top:calc(100% + .35rem);right:0;display:flex;flex-direction:column;
+        gap:.1rem;padding:.3rem;background:var(--card);border:1px solid var(--line);
+        border-radius:var(--r-md);box-shadow:var(--shadow-md);min-width:20rem;
+        transform-origin:top right;animation:pop 180ms var(--ease)}
+  @keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+  .moremenu button{justify-content:flex-start;text-align:left;background:transparent;color:var(--fg);
+        border:0;border-radius:var(--r-sm);font-size:1rem;font-weight:500;padding:.45rem .6rem;width:100%}
+  .moremenu button:hover{background:var(--hover)}
+  .doc{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);
+       padding:.8rem .95rem;margin-bottom:.6rem}
+  .pill{display:inline-block;background:var(--pill);color:var(--dim);border-radius:var(--r-sm);
+        padding:.05rem .5rem;font-size:.9rem;margin-right:.5rem;font-weight:600}
+  .doctitle{font-weight:600;font-size:.95rem}
+  .src{color:var(--dim);font:.82rem ui-monospace,SFMono-Regular,Menlo,monospace;margin:.4rem 0}
+  .snip{font-size:.94rem;white-space:pre-wrap;word-break:break-word}
+  mark{background:transparent;color:var(--mark);font-weight:700}
+  .empty{color:var(--dim)}
+  .warn{color:var(--mark);font-size:.9rem}
+  .hide{display:none}
+  .ico{width:1em;height:1em;vertical-align:-.12em;flex:0 0 auto}
+  /* 尊重系统「减少动态效果」：动画/过渡全关（ui-animation 的硬规则） */
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+      transition-duration:.01ms !important}
+  }
+</style>
+<a class="skip" href="#main">跳到正文</a>
+<header class="top"><div class="topin">
+  <span class="brand">考试练习台</span>
+  <div class="tabs" role="tablist" aria-label="换个用法">
+    <button class="tab on" id="tab-ask" role="tab" aria-selected="true" aria-controls="pane-ask">查题</button>
+    <button class="tab" id="tab-quiz" role="tab" aria-selected="false" aria-controls="pane-quiz">刷题</button>
+    <button class="tab" id="tab-card" role="tab" aria-selected="false" aria-controls="pane-card">背题</button>
+  </div>
+  <button class="fsbtn" id="fsdown" title="缩小字号" aria-label="缩小字号">A−</button>
+  <span class="fsval" id="fsval" aria-live="polite">17</span>
+  <button class="fsbtn" id="fsup" title="放大字号" aria-label="放大字号">A+</button>
+  <button class="fsbtn" id="theme" title="浅色 / 深色" aria-label="切换浅色或深色主题">◐</button>
+</div></header>
+
+<main class="wrap" id="main">
+  <!-- ================= 查题 ================= -->
+  <section id="pane-ask" role="tabpanel" aria-labelledby="tab-ask">
+    <h1>查题</h1>
+    <div class="sub">本地题库给答案 · 官方原文给依据（管理办法 / 解读 / YD5201 / 教材 / 视频课件）</div>
+    <textarea id="q" autofocus aria-label="要查的题目" placeholder="粘贴题目，带不带选项都行（Ctrl/⌘ + Enter 查询）"></textarea>
+    <div class="bar">
+      <button id="go">查询</button>
+      <button id="clearq" class="ghost" aria-label="清空输入框和查询结果">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>
+        清除</button>
+      <label for="web"><input type="checkbox" id="web" name="web"> 联网兜底（慢，会写 pending.jsonl）</label>
+      <span class="status" id="st"></span>
+    </div>
+    <!-- 导入「有题干、没答案」的文件：逐题先查本地题库，没命中的再给官方原文依据 -->
+    <div class="bar" style="margin-top:.9rem">
+      <button id="impbtn" class="ghost" aria-label="导入有题目没有答案的文件">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>
+        导入题目文件…</button>
+      <input id="impq" type="file" accept=".txt,.md,.csv,.tsv,.docx,.pdf" style="display:none">
+      <span class="status" id="impst"></span>
+    </div>
+    <div class="hint">导入**有题干、没答案**的文件（txt / md / csv / docx / pdf）：逐题先查本地题库要答案，
+      没命中的再去依据库找原文条文；结果能一键导出 txt / csv。一次最多 300 题，切题按题号行（<code>1.</code> / <code>2、</code>）或空行分段。</div>
+    <div id="impout"></div>
+    <div id="out"></div>
+  </section>
+
+  <!-- ================= 刷题 ================= -->
+  <section id="pane-quiz" class="hide" role="tabpanel" aria-labelledby="tab-quiz">
+    <h1>刷题</h1>
+    <div class="sub">选库练习 · 答完立刻看对错和解析 · 「看原文依据」直连官方文件 ·
+      模拟考按真题卷来：60 分钟、随机抽题、<b>交卷前不给答案</b>，交卷后逐题回顾</div>
+    <div class="badges" id="allstat" aria-live="polite"></div>
+    <div class="bar">
+      <select id="bank" aria-label="选题库"></select>
+      <select id="type" aria-label="选题型">
+        <option value="">全部题型</option>
+        <option value="single">单选</option>
+        <option value="multiple">多选</option>
+        <option value="judge">判断</option>
+      </select>
+      <select id="num" aria-label="选本次题量">
+        <option value="10">10 题</option>
+        <option value="20" selected>20 题</option>
+        <option value="50">50 题</option>
+        <option value="0">全部</option>
+      </select>
+    </div>
+    <!-- 主操作单占一行：一个主色按钮定主次，其余都退到次级，不再和下拉/导出挤在同一条 flex 里 -->
+    <div class="bar" style="margin-bottom:.5rem">
+      <button id="start">开始 / 重开</button>
+      <button id="drill" class="ghost">只练错题</button>
+      <button id="mock" class="ghost">模拟考 · 60 分钟 / 50 题</button>
+      <!-- 低频动作收进「⋯ 导出 / 备份」并靠右：企业级练习页的通行做法是左边主流程、右边杂项，
+           不把 4 个导出按钮常年摊在主操作旁边（原生 details，键盘可达、零依赖） -->
+      <details class="more" id="morebox" style="margin-left:auto">
+        <summary>⋯ 导出／备份</summary>
+        <div class="moremenu">
+          <button id="expbank" class="ghost">导出本库 txt（整个题库，可打印）</button>
+          <button id="expbankmd" class="ghost">导出本库 md（丢进 Obsidian / Notion）</button>
+          <button id="expwrongs" class="ghost">错题本导出 json（换浏览器时用）</button>
+          <button id="impwrongs" class="ghost">错题本导入 json（合并，不覆盖）</button>
+          <button id="clrwrongs" class="ghost">清空本库错题本（不可撤）</button>
+          <input id="impfile" type="file" accept=".json,application/json" style="display:none">
+        </div>
+      </details>
+    </div>
+    <div class="bar" style="margin-bottom:.4rem"><span class="prog" id="prog">未开始</span>
+      <span class="prog" id="clock"></span>
+      <span class="status" id="qst"></span></div>
+    <div class="track"><i id="fill"></i></div>
+    <div class="hint">键盘：<kbd>1</kbd>–<kbd>5</kbd> 选选项 · <kbd>Enter</kbd> 提交 / 下一题 ·
+      <kbd>⌘</kbd>+<kbd>=</kbd> / <kbd>⌘</kbd>+<kbd>−</kbd> 调字号　｜　
+      错题本 json 放在右上「导出／备份」里：换浏览器 / 换机器时把错题搬过去（合并，不覆盖）</div>
+    <div id="quizbody"></div>
+  </section>
+
+  <!-- ================= 背题（问答体材料，如《应知应会手册》） ================= -->
+  <section id="pane-card" class="hide" role="tabpanel" aria-labelledby="tab-card">
+    <h1>背题</h1>
+    <div class="sub">官方问答体材料逐条过：先自己想，再点「看答案」；记住了跳过，没记住的进待背清单，下次只背这些。
+      问答题没有选项，所以单列一页，不混进刷题页的判分流程。</div>
+    <div class="badges" id="cardstat" aria-live="polite"></div>
+    <div class="bar">
+      <select id="cbook" aria-label="选背题材料"></select>
+      <select id="cchap" aria-label="选章节"></select>
+      <select id="cnum" aria-label="选本次背多少条">
+        <option value="10">10 条</option>
+        <option value="20" selected>20 条</option>
+        <option value="50">50 条</option>
+        <option value="0">全部</option>
+      </select>
+    </div>
+    <div class="bar" style="margin-bottom:.5rem">
+      <button id="cstart">开始 / 重来</button>
+      <button id="cwrong" class="ghost">只背没记住的</button>
+      <details class="more" id="cmore" style="margin-left:auto">
+        <summary>⋯ 导出／备份</summary>
+        <div class="moremenu">
+          <button id="cexp" class="ghost">导出这本问答 md（可打印 / 可背）</button>
+          <button id="cexpwrong" class="ghost">待背清单导出 json（换浏览器时用）</button>
+          <button id="cimpwrong" class="ghost">待背清单导入 json（合并，不覆盖）</button>
+          <button id="clrcards" class="ghost">清空待背清单（不可撤）</button>
+          <input id="cimpfile" type="file" accept=".json,application/json" style="display:none">
+        </div>
+      </details>
+    </div>
+    <div class="bar" style="margin-bottom:.4rem">
+      <span class="prog" id="cprog">未开始</span><span class="status" id="cqst"></span></div>
+    <div class="track"><i id="cfill"></i></div>
+    <div class="hint">键盘：<kbd>空格</kbd>/<kbd>Enter</kbd> 看答案 · <kbd>1</kbd> 没记住 · <kbd>2</kbd> 记住了 ·
+      <kbd>→</kbd> 跳过　｜　待背清单跟错题本一样存在本机浏览器里，换机器用上面的 json 搬</div>
+    <div id="cardbody"></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const hl  = s => esc(s).replace(/\[([^\]]{1,60})\]/g, "<mark>$1</mark>");
+const TYPE = {single:"单选题", multiple:"多选题", judge:"判断题"};
+/* 图标用内联 SVG，不用 emoji（ui-ux-pro-max 交付清单明确要求；emoji 在不同系统上字形/宽度都不可控） */
+const ICO = {
+  ok:  '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  no:  '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>',
+  clock:'<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  warn:'<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 9.5v4M12 17h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+};
+
+/* ---------------- 字号 / 主题：都记在 localStorage ---------------- */
+const FS_MIN = 13, FS_MAX = 26;
+function setFs(px){
+  px = Math.min(FS_MAX, Math.max(FS_MIN, px));
+  document.documentElement.style.setProperty("--fs", px + "px");
+  $("#fsval").textContent = px;
+  localStorage.setItem("examfs", px);
+}
+function setTheme(t){
+  document.documentElement.dataset.theme = t;
+  const mt = document.querySelector('meta[name="theme-color"]');
+  if(mt) mt.setAttribute("content", t === "dark" ? "#0a0a0a" : "#ffffff");
+  localStorage.setItem("examtheme", t);
+}
+setFs(parseInt(localStorage.getItem("examfs") || "17", 10));
+setTheme(localStorage.getItem("examtheme") || "dark");
+$("#fsup").onclick = () => setFs(parseInt($("#fsval").textContent, 10) + 1);
+$("#fsdown").onclick = () => setFs(parseInt($("#fsval").textContent, 10) - 1);
+$("#theme").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+document.addEventListener("keydown", e => {                 // ⌘/Ctrl + = / - 也能调
+  if(!(e.metaKey || e.ctrlKey)) return;
+  if(e.key === "=" || e.key === "+"){ e.preventDefault(); $("#fsup").click(); }
+  if(e.key === "-"){ e.preventDefault(); $("#fsdown").click(); }
+});
+
+/* ---------------- tab 切换 ---------------- */
+function tab(which){
+  for (const k of ["ask", "quiz", "card"]){
+    $("#pane-" + k).classList.toggle("hide", k !== which);
+    const t = $("#tab-" + k);
+    t.classList.toggle("on", k === which);
+    t.setAttribute("aria-selected", String(k === which));
+  }
+  if(which === "quiz"){ if(!S.banks.length) loadBanks(); }
+  else if(which === "card"){ if(!C.books.length) loadCardBooks(); }
+  else { $("#q").focus(); }
+}
+$("#tab-ask").onclick = () => tab("ask");
+$("#tab-quiz").onclick = () => tab("quiz");
+$("#tab-card").onclick = () => tab("card");
+
+/* ==================== 查题 ==================== */
+async function run(){
+  const q = $("#q").value.trim();
+  if(!q) return;
+  $("#go").disabled = true; $("#st").textContent = "查询中…"; $("#out").innerHTML = "";
+  try{
+    const r = await fetch("/api/ask?web=" + ($("#web").checked ? 1 : 0) + "&q=" + encodeURIComponent(q));
+    renderAsk(await r.json());
+    $("#st").textContent = "完成";
+  }catch(e){ $("#st").textContent = "查询失败：" + e; }
+  $("#go").disabled = false;
+}
+
+function renderAsk(d){
+  const out = [];
+  for(const a of d.answers){
+    out.push(`<div class="card">
+      <div class="ansrow">
+        <div class="ans">${esc(a.answer) || "?"}</div>
+        <div class="meta">${esc(a.type)}${a.num ? " · 第 " + a.num + " 题" : ""}
+          · 命中 ${Math.round((a.score||0)*100)}% · 来源 ${esc(a.src)}</div>
+      </div>
+      ${a.answerText ? `<div class="analysis"><b>选项：</b>${esc(a.answerText)}</div>` : ""}
+      ${a.analysis ? `<div class="analysis"><b>解析：</b>${esc(a.analysis)}</div>` : ""}
+      ${a.question ? `<div class="q">题干：${esc(a.question)}</div>` : ""}
+    </div>`);
+  }
+  if(!d.answers.length && !d.web)
+    out.push(`<div class="card empty">本地题库没命中（相似度不够）。勾上「联网兜底」再查一次，或把题干里的数字改写成原文写法。</div>`);
+  if(d.web && d.web.answer)
+    out.push(`<div class="card"><div class="ansrow"><div class="ans">${esc(d.web.answer)}</div>
+      <div class="meta">联网检索 · 置信度 ${esc(d.web.confidence||"")} · ${esc(d.web.source||"")}</div></div></div>`);
+  if(d.web && !d.web.answer)
+    out.push(`<div class="card"><div class="warn">联网也没定论（已进待办队列）：${esc(d.web.source||"")}</div></div>`);
+  out.push(docsHtml(d.docs, d.probe));
+  $("#out").innerHTML = out.join("");
+}
+
+function docsHtml(docs, probe){
+  if(!docs || !docs.length)
+    return `<div class="sub" style="margin-top:1.4rem">官方原文依据</div>
+      <div class="card empty">没找到对应条文（这份材料里可能确实没写）。</div>`;
+  return `<div class="sub" style="margin:1.4rem 0 .5rem">官方原文依据${probe ? "（探针「" + esc(probe) + "」）" : ""}</div>`
+    + docs.map(x => `<div class="doc">
+        <div><span class="pill">${esc(x.kind)}</span><span class="doctitle">${esc(x.title||"")}</span>
+          ${x.section ? `<span class="meta"> · ${esc(x.section)}</span>` : ""}</div>
+        <div class="src">${esc(x.src)}${x.page ? `<span class="meta"> · 第 ${x.page} 页</span>` : ""}</div>
+        <div class="snip">${hl(x.snippet)}</div>
+      </div>`).join("");
+}
+
+$("#go").onclick = run;
+$("#q").onkeydown = e => { if((e.metaKey||e.ctrlKey) && e.key === "Enter") run(); };
+
+/* 清除：把上一题的题面和结果一起擦掉，光标回到输入框 —— 连着查题时不用自己全选删除。
+   网络兜底的勾选是设置不是内容，不跟着清。 */
+$("#clearq").onclick = () => {
+  $("#q").value = ""; $("#out").innerHTML = ""; $("#st").textContent = "";
+  $("#q").focus();
+};
+
+/* ==================== 导入题目文件（有题没答案） ====================
+   浏览器只做两件事：读成 base64 发给后端、把结果画出来。切题与查答案全在 webui.py
+   （同一套 solve.lookup + kb 探针），所以查题页和导入走的是完全一样的判据，不会两处不一致。 */
+let IMP = null;
+
+function impRow(x, i){
+  const head = `<div class="lbl">${x.num ? "第 " + esc(x.num) + " 题" : "第 " + (i + 1) + " 题"}
+    <span class="pill">${x.status === "bank" ? "题库命中" : x.status === "doc" ? "仅有依据" : "未命中"}</span></div>`;
+  const body = `<div class="qstem" style="font-size:1rem">${esc(x.q.slice(0, 160))}</div>`;
+  let tail;
+  if(x.status === "bank")
+    tail = `<div class="lbl" style="margin-top:.3rem">答案：<b>${esc(x.answer)}</b> ${esc((x.answerText || "").slice(0, 70))}</div>
+      <div class="lbl">题库：${esc(x.src || "")}${x.score != null && x.score < 1 ? " · 模糊命中 " + Math.round(x.score * 100) + "%" : ""}</div>`;
+  else if(x.status === "doc")
+    tail = `<div class="lbl" style="margin-top:.3rem">题库没有这题 · 依据：${esc(x.ev.title || "")}${x.ev.page ? " 第 " + x.ev.page + " 页" : ""}</div>
+      <div class="snip">${esc((x.ev.snippet || "").slice(0, 120))}</div>`;
+  else
+    tail = `<div class="lbl" style="margin-top:.3rem">题库与依据库都没有 —— 可以试试下面的「交给模型兜底」</div>`;
+  return `<div class="wrongitem">${head}${body}${tail}</div>`;
+}
+
+function renderImp(){
+  const d = IMP;
+  if(!d) return;
+  const box = $("#impout");
+  const miss = d.items.filter(x => x.status !== "bank");
+  box.innerHTML = `
+    <div class="sub" style="margin:1.3rem 0 .5rem">导入结果 · ${esc(d.name)}</div>
+    <div class="badges">
+      <span class="badge">共 <b>${d.total}</b> 题</span>
+      <span class="badge">题库命中 <b>${d.hit}</b></span>
+      <span class="badge">仅有依据 <b>${d.doc}</b></span>
+      <span class="badge">未命中 <b>${d.miss}</b></span>
+      ${d.truncated ? `<span class="badge">超出上限截掉 <b>${d.truncated}</b> 题</span>` : ""}
+    </div>
+    <div class="bar" style="margin:.5rem 0 .2rem">
+      <button id="imptxt" class="ghost">导出结果 txt</button>
+      <button id="impcsv" class="ghost">导出结果 csv（丢进 Excel）</button>
+      ${miss.length ? `<button id="impmodel" class="ghost">把没命中的 ${Math.min(miss.length, 20)} 题交给模型兜底（慢）</button>` : ""}
+    </div>
+    <div class="hint">「交给模型兜底」= 逐题联网检索 + 模型判一遍，走的是和查题页「联网兜底」同一条链路，结果会写进待审队列（pending.jsonl）。</div>
+    <div id="impfill"></div>
+    <div class="card" style="padding:0 1rem;margin-top:.6rem">${d.items.map(impRow).join("")}</div>`;
+  $("#imptxt").onclick = () => saveTxt(`导入结果-${d.name.replace(/\.[^.]+$/, "")}.txt`, impText());
+  $("#impcsv").onclick = () => saveTxt(`导入结果-${d.name.replace(/\.[^.]+$/, "")}.csv`, impCsv(),
+                                       "text/csv;charset=utf-8"),
+  $("#impmodel") && ($("#impmodel").onclick = runImpModel);
+}
+
+function impText(){
+  const d = IMP;
+  const head = `${d.name} — 共 ${d.total} 题（题库命中 ${d.hit} / 仅有依据 ${d.doc} / 未命中 ${d.miss}）\n` +
+    "=".repeat(34) + "\n\n";
+  return head + d.items.map((x, i) => {
+    const lines = [`${x.num || i + 1}. ${x.q}`];
+    if(x.status === "bank")
+      lines.push(`   答案：${x.answer} ${x.answerText || ""}`.trim(),
+                 `   题库：${x.src || ""}`);
+    else if(x.status === "doc")
+      lines.push(`   题库无此题；依据：${x.ev.title || ""}${x.ev.page ? " 第 " + x.ev.page + " 页" : ""}`,
+                 `   原文：${(x.ev.snippet || "").replace(/\s+/g, " ")}`);
+    else
+      lines.push("   未命中（题库与依据库都没有）");
+    return lines.join("\n") + "\n";
+  }).join("\n");
+}
+
+function impCsv(){
+  const q = v => `"${String(v == null ? "" : v).replace(/"/g, '""').replace(/\s+/g, " ")}"`;
+  const rows = [["序号", "题目", "状态", "答案", "答案原文", "来源/依据", "页码", "依据摘录"]];
+  IMP.items.forEach((x, i) => rows.push([
+    x.num || i + 1, x.q, {bank: "题库命中", doc: "仅有依据", none: "未命中"}[x.status],
+    x.answer || "", x.answerText || "",
+    x.status === "bank" ? (x.src || "") : (x.status === "doc" ? (x.ev.title || "") : ""),
+    x.status === "doc" ? (x.ev.page || "") : "", x.status === "doc" ? (x.ev.snippet || "") : ""]));
+  return "\ufeff" + rows.map(r => r.map(q).join(",")).join("\r\n");
+}
+
+async function runImpModel(){
+  const btn = $("#impmodel");
+  const miss = IMP.items.filter(x => x.status !== "bank").slice(0, 20);
+  if(!miss.length) return;
+  btn.disabled = true;
+  btn.textContent = `逐题检索中… 0/${miss.length}`;
+  const out = [];
+  for(let i = 0; i < miss.length; i++){
+    btn.textContent = `逐题检索中… ${i + 1}/${miss.length}`;
+    try{
+      const r = await fetch("/api/import_model", {method: "POST", headers: {"content-type": "application/json"},
+        body: JSON.stringify({questions: [miss[i].q]})});
+      const d = await r.json();
+      out.push({q: miss[i].q, r: (d.items[0] || {}).result || {}});
+    }catch(e){ out.push({q: miss[i].q, r: {error: String(e)}}); }
+  }
+  btn.disabled = false;
+  btn.textContent = "再兜底一遍";
+  const hit = out.filter(x => x.r && x.r.answer).length;
+  $("#impfill").innerHTML = `<div class="sub" style="margin:1rem 0 .4rem">模型兜底结果 · 答出 ${hit}/${out.length}</div>` +
+    `<div class="card" style="padding:0 1rem">` + out.map(x => `
+      <div class="wrongitem">
+        <div class="qstem" style="font-size:1rem">${esc(x.q.slice(0, 140))}</div>
+        <div class="lbl" style="margin-top:.3rem">${x.r && x.r.answer
+          ? `模型答案：<b>${esc(x.r.answer)}</b> · 来源 ${esc(x.r.source || "")} · 置信 ${esc(x.r.confidence || "")}`
+          : `没答出来（${esc((x.r && (x.r.source || x.r.error)) || "未知")}）`}</div>
+      </div>`).join("") + `</div>`;
+}
+
+$("#impbtn").onclick = () => $("#impq").click();
+$("#impq").onchange = async e => {
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  $("#impst").textContent = `读取「${f.name}」…`;
+  $("#impout").innerHTML = "";
+  const b64 = await new Promise(res => {
+    const rd = new FileReader();
+    rd.onload = () => res(String(rd.result).split(",")[1] || "");
+    rd.readAsDataURL(f);
+  });
+  let d;
+  try{
+    const r = await fetch("/api/import", {method: "POST", headers: {"content-type": "application/json"},
+      body: JSON.stringify({name: f.name, data: b64})});
+    d = await r.json();
+  }catch(err){
+    d = {error: "上传失败：" + err};
+  }
+  e.target.value = "";
+  if(d.error){
+    $("#impout").innerHTML = `<div class="card warn">${esc(d.error)}</div>`;
+    $("#impst").textContent = "";
+    return;
+  }
+  IMP = d;
+  $("#impst").textContent = `已解析 ${d.total} 题`;
+  renderImp();
+};
+
+/* ==================== 刷题 ==================== */
+const S = {banks:[], cur:null, qs:[], i:0, sel:new Set(), done:false, right:0, wrong:[], mode:"all",
+           mock:false, left:0, timer:null, answered:0, lastWrong:[], lastTotal:0};
+let MOCKCFG = {pick:50, seconds:3600, perScore:2, note:""};
+const BANK_KEY = "examwrong:";
+/* 读 localStorage 一律兜住：一条值被截断/手改，JSON.parse 就会抛错，整块界面刷不出来 */
+const lsArr = k => { try { const v = JSON.parse(localStorage.getItem(k) || "[]"); return Array.isArray(v) ? v : []; } catch(e){ return []; } };
+const wrongBook = b => lsArr(BANK_KEY + b);
+const saveWrong = (b, ids) => localStorage.setItem(BANK_KEY + b, JSON.stringify([...new Set(ids)]));
+
+async function loadBanks(){
+  const r = await fetch("/api/banks");
+  S.banks = (await r.json()).banks || [];
+  const opts = S.banks.map(b =>
+    // 标题里已经写了「· 47 题）」就别再补一次，否则下拉里会出现「（2024 卷 · 47 题）（47 题）」
+    `<option value="${esc(b.file)}">${esc(b.title)}${/\d+\s*题/.test(b.title) ? "" : `（${b.count} 题）`}</option>`).join("");
+  document.querySelector("#bank").innerHTML = opts;
+  showBookInfo();
+}
+$("#bank").onchange = showBookInfo;
+$("#type").onchange = showBookInfo;
+
+function showBookInfo(){
+  const b = S.banks.find(x => x.file === $("#bank").value);
+  if(!b){ $("#qst").textContent = "没读到题库"; return; }
+  const n = wrongBook(b.file).length;
+  $("#qst").textContent = `单选 ${b.types.single||0} · 多选 ${b.types.multiple||0} · 判断 ${b.types.judge||0}`
+    + (n ? `　错题本 ${n} 道` : "");
+  showAllStat();
+}
+
+/* 全库合计：所有库多少题、各题型多少、错题本一共多少（不用一个个库点开数）。
+   数据全在 /api/banks 里，纯前端求和；挂在这条刷新链上，错题本一变它跟着变。 */
+/* 清空本库错题本：先问一句并报要清几道，别让人一键清掉攒了很久的错题 */
+function clearWrongBook(){
+  const bank = $("#bank").value;
+  const n = wrongBook(bank).length;
+  if(!n){ $("#qst").textContent = "这个库的错题本是空的"; return; }
+  if(!confirm(`清空「${$("#bank").selectedOptions[0].textContent}」的错题本？共 ${n} 道，清掉不能恢复。`)) return;
+  localStorage.removeItem(BANK_KEY + bank);
+  showBookInfo();
+  $("#qst").textContent = `已清空错题本（${n} 道）`;
+}
+
+function showAllStat(){
+  if(!S.banks.length) return;
+  const t = S.banks.reduce((a, b) => {
+    const y = b.types || {};
+    a.n += b.count; a.s += y.single || 0; a.m += y.multiple || 0; a.j += y.judge || 0;
+    a.w += wrongBook(b.file).length;
+    return a;
+  }, {n:0, s:0, m:0, j:0, w:0});
+  // 拆成徽标：一串「全库合计 12 套 / 629 题　｜　单选 321…」在深色下会连成一句话，扫不动
+  $("#allstat").innerHTML =
+      `<span class="badge">全库 <b>${S.banks.length}</b> 套 / <b>${t.n}</b> 题</span>`
+    + `<span class="badge">单选 <b>${t.s}</b></span>`
+    + `<span class="badge">多选 <b>${t.m}</b></span>`
+    + `<span class="badge">判断 <b>${t.j}</b></span>`
+    + `<span class="badge">错题本 <b>${t.w}</b> 道</span>`;
+}
+
+async function start(mode){
+  if(mode === "mock") return startMock();
+  // 「开始 / 重开」会丢掉正在做的一轮，问到一半点错就白做 —— 只在这一种情况下问一句
+  if(S.qs.length && !S.done && S.i > 0 && !confirm("这一轮还没做完，重开会丢掉进度。继续？")) return;
+  // 确认重开后：把可能还在跑的模拟考倒计时和 mock 状态清掉，否则新开的一轮会继承「不给答案」并被旧计时器打断
+  clearInterval(S.timer); S.timer = null; S.mock = false; paintClock();
+  const bank = $("#bank").value, type = $("#type").value;
+  if(!bank) return;
+  const r = await fetch(`/api/quiz?bank=${encodeURIComponent(bank)}&type=${type}`);
+  const d = await r.json();
+  if(d.error){ $("#quizbody").innerHTML = `<div class="card warn">${esc(d.error)}</div>`; return; }
+  let pool = d.questions.slice();
+  pool.sort(() => Math.random() - .5);
+  if(mode === "wrong"){
+    const wb = new Set(wrongBook(bank));
+    pool = pool.filter(x => wb.has(x.id));
+    if(!pool.length){
+      $("#quizbody").innerHTML = `<div class="card empty">这个库里还没有错题，先正常刷一轮。</div>`;
+      return;
+    }
+  }
+  const n = parseInt($("#num").value, 10);
+  S.cur = bank; S.mode = mode; S.qs = n > 0 ? pool.slice(0, n) : pool;
+  S.i = 0; S.right = 0; S.wrong = []; S.sel = new Set(); S.done = false;
+  renderQ();
+}
+
+/* ---------------- 模拟考：60 分钟 / 50 题 / 交卷前不给答案 ---------------- */
+async function startMock(){
+  const r = await fetch("/api/quiz?bank=__all__");
+  const d = await r.json();
+  if(d.error || !(d.questions || []).length){
+    $("#quizbody").innerHTML = `<div class="card warn">取不到模拟考题：${esc(d.error || "题库为空")}</div>`;
+    return;
+  }
+  MOCKCFG = Object.assign(MOCKCFG, d.mock || {});
+  const pool = d.questions.slice().sort(() => Math.random() - .5);
+  S.cur = "__all__"; S.mode = "mock"; S.mock = true;
+  S.qs = pool.slice(0, MOCKCFG.pick);
+  S.i = 0; S.right = 0; S.wrong = []; S.answered = 0; S.sel = new Set(); S.done = false;
+  S.left = MOCKCFG.seconds; S.lastWrong = [];
+  startTimer(); renderQ();
+  $("#qst").textContent = `模拟考：${S.qs.length} 题 · ${Math.round(MOCKCFG.seconds/60)} 分钟 · 每题 ${MOCKCFG.perScore} 分`;
+}
+function startTimer(){
+  clearInterval(S.timer); paintClock();
+  S.timer = setInterval(() => {
+    S.left--;
+    if(S.left <= 0){ S.left = 0; paintClock(); finishMock("时间到，自动交卷"); return; }
+    paintClock();
+  }, 1000);
+}
+function paintClock(){
+  const el = $("#clock"); if(!el) return;
+  if(!S.mock){ el.textContent = ""; el.classList.remove("bad"); return; }
+  const m = Math.floor(S.left / 60), sec = S.left % 60;
+  el.innerHTML = ICO.clock + ` 剩 ${m}:${String(sec).padStart(2, "0")}`;
+  el.classList.toggle("bad", S.left <= 300);
+}
+function submitMock(q){
+  const want = new Set(q.answerKeys || []);
+  if(want.size === S.sel.size && [...want].every(k => S.sel.has(k))) S.right++;
+  else S.wrong.push({q, mine:[...S.sel].sort().join(""), want:[...want].sort().join("")});
+  S.answered++;
+  S.done = true; updateProg();
+  if(S.i + 1 < S.qs.length){ S.i++; renderQ(); } else { finishMock("答完了"); }
+}
+function skip(){
+  if(!S.mock) return next();
+  const q = S.qs[S.i];
+  S.wrong.push({q, mine:"", want:[...(q.answerKeys || [])].sort().join("")});
+  S.answered++;
+  if(S.i + 1 < S.qs.length){ S.i++; renderQ(); } else { finishMock("答完了"); }
+}
+function finishMock(reason){
+  clearInterval(S.timer); S.timer = null; S.left = 0;
+  S.mock = false; paintClock();
+  const tot = S.answered, right = S.right, full = S.qs.length, per = MOCKCFG.perScore || 2;
+  const pct = tot ? Math.round(right / tot * 100) : 0;
+  S.lastWrong = S.wrong.slice();
+  S.lastTotal = full;
+  S.lastWrong.forEach(w => {
+    const b = w.q.bankFile || S.cur;
+    saveWrong(b, [...wrongBook(b), w.q.id]);            // 错题落回它自己那个库
+  });
+  const list = S.lastWrong.map((w, i) => `<div class="wrongitem">
+      <div class="qstem" style="font-size:.96rem;font-weight:600;margin:.2rem 0 .35rem">${i + 1}. ${esc(w.q.question)}</div>
+      <div class="lbl">${esc(w.q.srcBank || "")}${w.q.number ? " 第" + w.q.number + "题" : ""} ｜ 你选 ${esc(w.mine) || "（跳过）"} ｜ 正确 ${esc(w.want)}</div>
+      ${(w.q.answerText || []).length ? `<div class="lbl">正确选项：${esc((w.q.answerText || []).join(" ｜ "))}</div>` : ""}
+      ${w.q.analysis ? `<div class="lbl">解析：${esc(w.q.analysis)}</div>` : ""}
+      <button class="ghost" onclick="eviItem(this, ${i})">看原文依据</button>
+      <div class="src"></div>
+    </div>`).join("");
+  $("#prog").textContent = `${reason} · 答 ${tot}/${full} 题 · 正确率 ${pct}%`;
+  $("#quizbody").innerHTML = `<div class="card">
+      <div class="ansrow"><div class="ans">${pct}%</div>
+        <div class="meta">模拟考 · ${esc(reason)} ｜ 答 ${tot}/${full} 题 · 答对 ${right} · 折算 ${right * per}/${full * per} 分（每题 ${per} 分）${
+          tot < full ? `　未答 ${full - tot} 题按 0 分算` : ""}
+        <br>错题已分别记入各自题库的错题本 —— 想清哪个库就在下拉里选它，再点「只练错题」</div></div>
+      ${list ? `<div class="analysis"><b>错题回顾（${S.lastWrong.length} 道）</b>·点每题下面的按钮可拉官方原文</div>${list}`
+             : `<div class="analysis">全对。这状态可以去考了。</div>`}
+      <div class="bar" style="margin:.9rem 0 0">
+        <button onclick="redoWrong()">立即重做这批错题</button>
+        <button class="ghost" onclick="start('mock')">再来一套模拟考</button>
+        <button class="ghost" onclick="exportBatch()">导出这批错题</button>
+      </div>
+      <div class="hint">${esc(MOCKCFG.note || "")}</div>
+    </div>`;
+  S.qs = []; S.i = 0; S.done = true;
+  $("#qst").textContent = "模拟考结束 · 错题已记入各自库的错题本";
+}
+function redoWrong(){
+  if(!S.lastWrong.length){ alert("这批没错题，没得重做。"); return; }
+  S.cur = S.lastWrong[0].q.bankFile || S.cur; S.mode = "wrong"; S.mock = false;
+  S.qs = S.lastWrong.map(w => w.q); S.i = 0; S.right = 0; S.wrong = [];
+  renderQ();
+}
+async function eviItem(btn, i){
+  const w = S.lastWrong[i]; if(!w) return;
+  const box = btn.nextElementSibling;
+  box.textContent = "查原文依据…";
+  const r = await fetch("/api/ask?q=" + encodeURIComponent(w.q.question));
+  const d = await r.json();
+  box.innerHTML = docsHtml(d.docs, d.probe);
+}
+function exportBatch(){
+  if(!S.lastWrong.length){ alert("这批没错题。"); return; }
+  const body = S.lastWrong.map((w, i) => [
+    `${i + 1}. （${TYPE[w.q.type] || w.q.type} · ${w.q.srcBank || ""}）${w.q.question}`,
+    ...(w.q.options || []).map(o => `   ${o.key}. ${o.text}`),
+    `   答案：${w.want}${w.mine ? "（我选 " + w.mine + "）" : "（跳过）"}`,
+    w.q.analysis ? `   解析：${w.q.analysis}` : "",
+    ""].filter(Boolean).join("\n")).join("\n");
+  const txt = `模拟考错题（${S.lastWrong.length} 道）\n${"=".repeat(34)}\n\n${body}`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], {type:"text/plain;charset=utf-8"}));
+  a.download = "模拟考错题.txt";
+  a.click(); URL.revokeObjectURL(a.href);
+}
+function renderQ(){
+  const q = S.qs[S.i];
+  if(!q) return finish();
+  S.sel = new Set(); S.done = false;
+  const opts = (q.options || []).map(o =>
+    `<button type="button" class="opt" data-k="${esc(o.key)}"><span class="k">${esc(o.key)}</span><span>${esc(o.text)}</span></button>`).join("");
+  $("#quizbody").innerHTML = `
+    <div class="card">
+      <div class="meta">${esc(TYPE[q.type] || q.typeLabel || "")} · 第 ${q.number} 题
+        ${q.srcBank ? " · " + esc(q.srcBank) : ""}
+        ${q.warn ? ` · ${ICO.warn} ` + esc(q.warn) : (q.generated ? ` · ${ICO.warn} 生成题（依据见下，非真题）` : "")}
+        ${q.score ? " · " + q.score + "分" : ""}${q.type === "multiple" ? " · 多选，全对才算对" : ""}${
+          S.mock ? " · 模拟考（交卷后才给答案）" : (S.mode === "wrong" ? " · 错题重练" : "")}</div>
+      <div class="qstem">${esc(q.question)}</div>
+      ${opts}
+      <div id="verdict"></div>
+      <div class="bar" style="margin:.7rem 0 0">
+        <button id="submit">${S.mock ? "提交并进入下一题" : "提交"}</button>
+        <button id="next" class="ghost hide">下一题</button>
+        ${S.mock ? "" : `<button id="tip" class="ghost">看原文依据</button>`}
+        <button id="skip" class="ghost">${S.mock ? "跳过（算错）" : "跳过"}</button>
+        <button id="stop" class="ghost">${S.mock ? "交卷看结果" : "结束并看结果"}</button>
+      </div>
+      <div id="evi"></div>
+    </div>`;
+  $("#quizbody").querySelectorAll(".opt").forEach(el => el.onclick = () => pick(el.dataset.k));
+  $("#submit").onclick = submit;
+  $("#next").onclick = next;
+  const tip = $("#tip"); if(tip) tip.onclick = showEvidence;      // 模拟考不显示「看原文依据」（会漏答案）
+  $("#skip").onclick = skip;
+  $("#stop").onclick = () => (S.mock ? finishMock("提前交卷") : finish());
+  updateProg();
+}
+
+function updateProg(){
+  const q = S.qs[S.i];
+  if(S.mock){
+    $("#prog").textContent = q ? `第 ${S.i + 1}/${S.qs.length} 题 · 已答 ${S.answered}` : "未开始";
+    $("#fill").style.width = S.qs.length ? ((S.i + (S.done ? 1 : 0)) / S.qs.length * 100) + "%" : "0%";
+    return;
+  }
+  const ans = S.right + S.wrong.length;
+  $("#prog").textContent = q ? `第 ${S.i + 1}/${S.qs.length} 题 · 已对 ${S.right}`
+    + ` · 正确率 ${ans ? Math.round(S.right / ans * 100) : 0}%` : "未开始";
+  $("#fill").style.width = S.qs.length ? ((S.i + (S.done ? 1 : 0)) / S.qs.length * 100) + "%" : "0";
+}
+
+function pick(k){
+  if(S.done) return;
+  const q = S.qs[S.i];
+  if(q.type === "multiple"){ S.sel.has(k) ? S.sel.delete(k) : S.sel.add(k); }
+  else { S.sel = new Set([k]); }
+  $("#quizbody").querySelectorAll(".opt").forEach(el =>
+    el.classList.toggle("sel", S.sel.has(el.dataset.k)));
+}
+
+function submit(){
+  if(S.done || !S.sel.size) return;
+  const q = S.qs[S.i];
+  if(S.mock){ S.done = false; return submitMock(q); }        // 模拟考：只记答案，不判分
+  const want = new Set(q.answerKeys || []);
+  const ok = want.size === S.sel.size && [...want].every(k => S.sel.has(k));
+  S.done = true;
+  if(ok) S.right++;
+  else S.wrong.push({q, mine:[...S.sel].sort().join(""), want:[...want].sort().join("")});
+  const wbank = q.bankFile || S.cur;   // 模拟考错题重做是跨库混抽：按每题自己的库落，别全塞进第一个库
+  const wb = wrongBook(wbank);
+  saveWrong(wbank, ok ? wb.filter(x => x !== q.id) : [...wb, q.id]);
+  $("#quizbody").querySelectorAll(".opt").forEach(el => {
+    const k = el.dataset.k;
+    el.classList.remove("sel");
+    if(want.has(k)) el.classList.add("right");
+    else if(S.sel.has(k)) el.classList.add("wrong");
+  });
+  const missed = [...want].filter(k => !S.sel.has(k)).sort();
+  const extra = [...S.sel].filter(k => !want.has(k)).sort();
+  $("#verdict").innerHTML = `<div class="verdict ${ok ? "ok" : "no"}">${ok ? ICO.ok + " 答对" : ICO.no + " 答错"}
+      正确答案 ${esc([...want].sort().join(""))}</div>
+    ${ok ? "" : `<div class="lbl">${missed.length ? "漏选 " + esc(missed.join("")) + "　" : ""}${extra.length ? "错选 " + esc(extra.join("")) : ""}</div>`}
+    ${(q.answerText || []).length ? `<div class="analysis"><b>正确选项：</b>${esc((q.answerText||[]).join(" ｜ "))}</div>` : ""}
+    ${q.analysis ? `<div class="analysis"><b>解析：</b>${esc(q.analysis)}</div>` : ""}`;
+  $("#submit").classList.add("hide");
+  const nx = $("#next");
+  nx.classList.remove("hide");
+  nx.textContent = (S.i + 1 < S.qs.length) ? "下一题" : "看结果";
+  updateProg(); showBookInfo();
+}
+
+async function showEvidence(){
+  const q = S.qs[S.i];
+  $("#evi").innerHTML = `<div class="src">查原文依据…</div>`;
+  const r = await fetch("/api/ask?q=" + encodeURIComponent(q.question));
+  const d = await r.json();
+  $("#evi").innerHTML = docsHtml(d.docs, d.probe);
+}
+
+function next(){
+  if(S.i + 1 < S.qs.length){ S.i++; renderQ(); } else { finish(); }
+}
+
+function finish(){
+  const tot = S.right + S.wrong.length;
+  S.qs = []; S.done = true; updateProg();
+  $("#prog").textContent = tot
+    ? `本轮 ${tot} 题 · 对 ${S.right} · 正确率 ${Math.round(S.right / tot * 100)}%` : "未开始";
+  const list = S.wrong.map(w => `<div class="wrongitem">
+      <div class="qstem" style="font-size:.96rem;font-weight:600;margin:.2rem 0 .35rem">${esc(w.q.question)}</div>
+      <div class="lbl">你选 ${esc(w.mine) || "—"} ｜ 正确 ${esc(w.want)}</div>
+      ${w.q.analysis ? `<div class="lbl">解析：${esc(w.q.analysis)}</div>` : ""}
+    </div>`).join("");
+  $("#quizbody").innerHTML = `<div class="card">
+      <div class="ansrow"><div class="ans">${tot ? Math.round(S.right / tot * 100) + "%" : "—"}</div>
+        <div class="meta">本轮 ${tot} 题 · 答对 ${S.right} ｜ 本库错题本 ${wrongBook(S.cur).length} 道</div></div>
+      ${list ? `<div class="analysis"><b>本轮错题</b></div>${list}` : `<div class="analysis">全对，牛。</div>`}
+      <div class="bar" style="margin:.9rem 0 0">
+        <button onclick="start('all')">再来一轮</button>
+        <button class="ghost" onclick="start('wrong')">只练错题</button>
+        <button class="ghost" onclick="exportWrong()">导出错题 txt</button>
+      </div>
+    </div>`;
+}
+
+/* 导出的解析只留「依据 / 原文」，剥掉内部溯源段：
+   题库里存的解析用 ｜ 分段，形如「来源：…本人历史考试记录…得分 100…本题我答对了｜依据：《X法》第Y条：…」
+   或「答案来源：试卷自带（打印版，未逐题核对官方原文）」—— 这些是给自己看的溯源，导出/打印时是噪音。 */
+function cleanAnalysis(a){
+  if(!a) return "";
+  const i = a.indexOf("依据：");
+  if(i >= 0) return a.slice(i).trim();                  // 有依据就整块丢掉前面的溯源，只留依据
+  // 没有依据：把溯源段整段丢掉 —— 除了「来源：/答案来源：/【答案来源】」，
+  // 保密的解析还有第二段「这场得分 100.0，本题我答对了」，只匹配前缀会把它漏出去（用户实测抓到的）。
+  const PROV = /^\s*【?答案来源】?\s*[:：]?|^\s*来源\s*[:：]?|这场得分|本题我答对|本题我答错|本人历史考试记录/;
+  return a.split(/[｜|]/).map(s => s.trim()).filter(s => s && !PROV.test(s)).join("｜").trim();
+}
+
+/* 一道题 → 一段可打印/可背的文本（导出错题、导出整库共用） */
+function fmtQ(q, i){
+  const note = cleanAnalysis(q.analysis);
+  return [
+    `${i + 1}. （${TYPE[q.type] || q.type}·第${q.number}题）${q.question}`,
+    ...(q.options || []).map(o => `   ${o.key}. ${o.text}`),
+    `   答案：${(q.answerKeys || []).join("")}`,
+    note ? `   解析：${note}` : "",
+    ""
+  ].filter(Boolean).join("\n");
+}
+
+function saveTxt(name, txt, mime){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], {type: mime || "text/plain;charset=utf-8"}));
+  a.download = name;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* 把该库错题本导成一份 txt，方便打印/离线背 */
+async function exportWrong(){
+  const ids = new Set(wrongBook(S.cur));
+  if(!ids.size){ alert("这个库的错题本是空的，先刷一轮。"); return; }
+  const r = await fetch(`/api/quiz?bank=${encodeURIComponent(S.cur)}`);
+  const d = await r.json();
+  const pick = (d.questions || []).filter(q => ids.has(q.id));
+  const bank = (S.banks.find(b => b.file === S.cur) || {title:S.cur}).title;
+  saveTxt(`错题本-${S.cur.replace(/\.json$/, "")}.txt`,
+    `${bank} 错题本（${pick.length} 道）\n${"=".repeat(34)}\n\n${pick.map(fmtQ).join("\n")}`);
+}
+
+/* 取一个库的题 + 表头信息（导出 txt/md 共用）。注意取的是下拉里**当前选中**的库，
+   不是 S.cur —— S.cur 只有点过「开始」之后才有值，刚开页面就点导出会一个库都取不到
+   （实测踩过：S.cur 为空 → 接口报错 → 弹「没取到题」）。 */
+async function bankData(file){
+  const r = await fetch(`/api/quiz?bank=${encodeURIComponent(file)}`);   // 不带 type：带 type=all 会一题都不返
+  const d = await r.json();
+  const qs = d.questions || [];
+  if(!qs.length){ alert(d.error || "这个库没取到题，先刷新页面。"); return null; }
+  const bank = (S.banks.find(b => b.file === file) || {title:file}).title;
+  const cnt = ["single", "multiple", "judge"]
+    .map(t => `${TYPE[t] || t} ${qs.filter(q => q.type === t).length}`).join(" · ");
+  return { qs, bank, cnt };
+}
+
+/* 把整个库导成一份 txt（题干/选项/答案/解析/依据），方便打印或离线背 */
+async function exportBank(){
+  const file = $("#bank").value;
+  if(!file) return;
+  const d = await bankData(file);
+  if(!d) return;
+  saveTxt(`题库-${file.replace(/\.json$/, "")}.txt`,
+    `${d.bank}\n${"=".repeat(34)}\n共 ${d.qs.length} 题（${d.cnt}）\n\n${d.qs.map(fmtQ).join("\n")}`);
+}
+
+/* Markdown 版：题干/选项/答案/依据，丢进 Obsidian / Notion / 语雀 直接是排版好的复习页 */
+function fmtQmd(q, i){
+  const note = cleanAnalysis(q.analysis);
+  const lines = [`### ${i + 1}. （${TYPE[q.type] || q.type}·第${q.number}题）${q.question}`, ""];
+  (q.options || []).forEach(o => lines.push(`- **${o.key}.** ${o.text}`));
+  lines.push("", `**答案：** ${(q.answerKeys || []).join("")}`);
+  if(note) lines.push("", `> ${note}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function exportBankMd(){
+  const file = $("#bank").value;
+  if(!file) return;
+  const d = await bankData(file);
+  if(!d) return;
+  saveTxt(`题库-${file.replace(/\.json$/, "")}.md`,
+    `# ${d.bank}\n\n共 ${d.qs.length} 题（${d.cnt}）\n\n---\n\n${d.qs.map(fmtQmd).join("\n")}`,
+    "text/markdown;charset=utf-8");
+}
+
+/* 错题本（浏览器 localStorage 里那本）整体导出/导入 json：
+   换浏览器、换机器、重装系统时把错题搬过去，不用手抄 */
+function wrongBooks(){
+  const out = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if(k && k.startsWith("examwrong:")) out[k.slice("examwrong:".length)] = wrongBook(k.slice("examwrong:".length));
+  }
+  return out;
+}
+
+function exportWrongBooks(){
+  const books = wrongBooks();
+  const n = Object.values(books).reduce((s, a) => s + a.length, 0);
+  if(!n){ alert("所有库的错题本都是空的，先刷几轮。"); return; }
+  saveTxt(`错题本-全部-${new Date().toISOString().slice(0, 10)}.json`,
+    JSON.stringify({v: 1, exportedAt: new Date().toISOString(), books}, null, 1),
+    "application/json;charset=utf-8");
+}
+
+async function importWrongBooks(file){
+  let d;
+  try { d = JSON.parse(await file.text()); } catch (e) { alert("这个文件不是 json：" + (e && e.message || e)); return; }
+  const books = (d && d.books) || d;                       // 容错：只认 {bank: [id…]} 也收
+  if(!books || typeof books !== "object"){ alert("json 里没有 books 字段，不是本工具导出的错题本。"); return; }
+  let add = 0, banks = 0;
+  for (const [bank, ids] of Object.entries(books)) {
+    if(!Array.isArray(ids)) continue;
+    const cur = new Set(wrongBook(bank));
+    const before = cur.size;
+    ids.forEach(id => cur.add(id));
+    if(cur.size !== before){ localStorage.setItem("examwrong:" + bank, JSON.stringify([...cur])); banks++; }
+    add += cur.size - before;
+  }
+  showBookInfo();
+  alert(`导入完成：${banks} 个库、新增 ${add} 道错题（与原有错题本合并，不会覆盖）。`);
+}
+
+$("#start").onclick = () => start("all");
+$("#drill").onclick = () => start("wrong");
+const closeMore = () => { const d = $("#morebox"); if (d) d.open = false; };
+$("#expbank").onclick = () => { exportBank(); closeMore(); };
+$("#expbankmd").onclick = () => { exportBankMd(); closeMore(); };
+$("#expwrongs").onclick = () => { exportWrongBooks(); closeMore(); };
+$("#impwrongs").onclick = () => $("#impfile").click();
+$("#clrwrongs").onclick = () => { clearWrongBook(); closeMore(); };
+$("#impfile").onchange = (e) => { const f = e.target.files && e.target.files[0]; if(f) importWrongBooks(f); e.target.value = ""; };
+$("#mock").onclick = () => start("mock");
+
+
+/* ==================== 背题：问答体材料逐条过 ====================
+   为什么单列一页：这些是问答（题干 + 一段答案），没有选项，刷题页的判分/选项渲染套不上。
+   真源是 crawl/*问答*.json（parse_handbook_qa.py 的产物），页面只读不复制。 */
+const CARD_KEY = "examcards:";
+const cardWrong = b => lsArr(CARD_KEY + b);
+const saveCardWrong = (b, ids) => localStorage.setItem(CARD_KEY + b, JSON.stringify([...new Set(ids)]));
+const C = {books: [], book: "", items: [], i: 0, ok: 0, miss: [], shown: false, mode: "all"};
+
+function curCardBook(){ return C.books.find(b => b.file === $("#cbook").value) || C.books[0] || null; }
+
+async function loadCardBooks(){
+  const r = await fetch("/api/cardbooks");
+  C.books = (await r.json()).books || [];
+  if(!C.books.length){ $("#cbook").innerHTML = "<option>（没有背题材料）</option>"; return; }
+  $("#cbook").innerHTML = C.books.map(b =>
+    `<option value="${esc(b.file)}">${esc(b.title)}（${b.count} 条）</option>`).join("");
+  fillChapters(); C.book = curCardBook().file; paintCardStat();
+}
+
+function fillChapters(){
+  const b = curCardBook();
+  $("#cchap").innerHTML = '<option value="">全部章节</option>'
+    + ((b && b.chapters) || []).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+}
+
+function paintCardStat(){
+  const b = curCardBook(); if(!b) return;
+  const w = cardWrong(b.file).length;
+  $("#cardstat").innerHTML =
+      `<span class="badge">材料 <b>${b.count}</b> 条</span>`
+    + `<span class="badge">本次 <b>${C.items.length}</b> 条</span>`
+    + `<span class="badge">待背 <b>${w}</b> 条</span>`;
+}
+
+/* 清空待背清单：同上，报数 + 二次确认 */
+function clearCardWrong(){
+  const b = curCardBook(); if(!b) return;
+  const n = cardWrong(b.file).length;
+  if(!n){ paintCardStat(); return; }
+  if(!confirm(`清空「${b.title}」的待背清单？共 ${n} 条，清掉不能恢复。`)) return;
+  localStorage.removeItem(CARD_KEY + b.file);
+  paintCardStat();
+  $("#cqst").textContent = `已清空待背清单（${n} 条）`;
+}
+
+async function cardStart(mode){
+  const b = curCardBook(); if(!b) return;
+  if(C.items.length && !C.shown && C.i > 0 && mode !== "wrong"
+     && !confirm("这一轮还没背完，重开会丢掉进度。继续？")) return;
+  C.book = b.file; C.mode = mode || "all";
+  const r = await fetch(`/api/cards?book=${encodeURIComponent(C.book)}&chapter=${encodeURIComponent($("#cchap").value)}`);
+  const d = await r.json();
+  if(d.error){ $("#cardbody").innerHTML = `<div class="card warn">${esc(d.error)}</div>`; return; }
+  let pool = (d.items || []).slice().sort(() => Math.random() - .5);
+  if(C.mode === "wrong"){
+    const wb = new Set(cardWrong(C.book));
+    pool = pool.filter(x => wb.has(x.id));
+    if(!pool.length){ $("#cardbody").innerHTML = '<div class="card empty">这本还没有「没记住」的，先正常背一轮。</div>'; return; }
+  }
+  const n = parseInt($("#cnum").value, 10);
+  C.items = n > 0 ? pool.slice(0, n) : pool;
+  C.i = 0; C.ok = 0; C.miss = []; C.shown = false;
+  renderCard(); paintCardStat();
+}
+
+function renderCard(){
+  const it = C.items[C.i];
+  if(!it) return finishCard();
+  C.shown = false;
+  $("#cardbody").innerHTML = `
+    <div class="card">
+      <div class="meta">${esc(it.chapter || "")} 第 ${it.num || "?"} 条${it.page ? ` · 手册第 ${it.page} 页` : ""}
+        ${C.mode === "wrong" ? " · 只背没记住的" : ""}</div>
+      <div class="qstem">${esc(it.q)}</div>
+      <div id="canswer"></div>
+      <div class="bar" style="margin:.7rem 0 0">
+        <button id="creveal">看答案</button>
+        <button id="cno" class="ghost hide">没记住</button>
+        <button id="cyes" class="ghost hide">记住了</button>
+        <button id="cskip" class="ghost">跳过</button>
+      </div>
+    </div>`;
+  $("#creveal").onclick = reveal;
+  $("#cno").onclick = () => mark(false);
+  $("#cyes").onclick = () => mark(true);
+  $("#cskip").onclick = () => cardNext();
+  updateCardProg();
+}
+
+function reveal(){
+  const it = C.items[C.i]; if(!it || C.shown) return;
+  C.shown = true;
+  $("#canswer").innerHTML = `<div class="analysis"><b>答：</b>${esc(it.a)}</div>`
+    + `<div class="lbl">出处：${esc(it.chapter || "")} 第 ${it.num} 条${it.page ? `（手册第 ${it.page} 页）` : ""}</div>`;
+  $("#creveal").classList.add("hide");
+  $("#cno").classList.remove("hide");
+  $("#cyes").classList.remove("hide");
+}
+
+function mark(ok){
+  const it = C.items[C.i]; if(!it) return;
+  const wb = new Set(cardWrong(C.book));
+  if(ok){ C.ok++; wb.delete(it.id); }
+  else { C.miss.push(it); wb.add(it.id); }
+  saveCardWrong(C.book, [...wb]);
+  cardNext();
+}
+
+function cardNext(){ C.i++; renderCard(); paintCardStat(); }
+
+function updateCardProg(){
+  const it = C.items[C.i];
+  $("#cprog").textContent = it
+    ? `第 ${C.i + 1}/${C.items.length} 条 · 记住 ${C.ok} · 没记住 ${C.miss.length}` : "未开始";
+  $("#cfill").style.width = C.items.length ? (C.i / C.items.length * 100) + "%" : "0";
+}
+
+function finishCard(){
+  const tot = C.items.length, miss = C.miss.length, yes = tot - miss;
+  $("#cprog").textContent = tot ? `本轮 ${tot} 条 · 记住 ${yes} · 没记住 ${miss}` : "未开始";
+  $("#cfill").style.width = tot ? "100%" : "0";
+  const list = C.miss.map((it, i) => `
+    <div class="wrongitem">
+      <div class="qstem" style="font-size:1rem;font-weight:600;margin:.2rem 0 .35rem">${i + 1}. ${esc(it.q)}</div>
+      <div class="lbl">${esc(it.chapter || "")} 第 ${it.num} 条 ｜ 答：${esc(it.a)}</div>
+    </div>`).join("");
+  $("#cardbody").innerHTML = `
+    <div class="card">
+      <div class="ansrow"><div class="ans">${tot ? Math.round(yes / tot * 100) + "%" : "—"}</div>
+        <div class="meta">本轮 ${tot} 条 · 记住 ${yes} · 没记住 ${miss} ｜ 待背清单共 ${cardWrong(C.book).length} 条</div></div>
+      ${miss ? `<div class="analysis"><b>没记住的（已进待背清单）</b></div>${list}`
+             : '<div class="analysis">全记住了。这本可以先放下。</div>'}
+      <div class="bar" style="margin:.9rem 0 0">
+        <button onclick="cardStart('wrong')">只背没记住的</button>
+        <button class="ghost" onclick="cardStart('all')">再背一轮</button>
+        <button class="ghost" onclick="exportCardMd()">导出这本问答 md</button>
+      </div>
+    </div>`;
+  C.items = []; C.i = 0; paintCardStat();
+}
+
+async function cardData(){
+  const b = curCardBook(); if(!b) return null;
+  const r = await fetch(`/api/cards?book=${encodeURIComponent(b.file)}`);
+  const d = await r.json();
+  if(d.error || !(d.items || []).length){ alert(d.error || "没取到问答。"); return null; }
+  return {d, b};
+}
+
+async function exportCardMd(){
+  const x = await cardData(); if(!x) return;
+  const body = x.d.items.map((it, i) =>
+    `### ${i + 1}. ${it.q}\n\n**答：** ${it.a}\n\n> 出处：${it.chapter || ""} 第 ${it.num} 条${it.page ? `（手册第 ${it.page} 页）` : ""}\n`).join("\n");
+  saveTxt(`问答-${x.b.file.replace(/\.json$/, "")}.md`,
+    `# ${x.d.title}\n\n共 ${x.d.items.length} 条${x.d.note ? `\n\n> ${x.d.note}` : ""}\n\n---\n\n${body}`,
+    "text/markdown;charset=utf-8");
+}
+
+function cardWrongs(){
+  const out = {};
+  for (let i = 0; i < localStorage.length; i++){
+    const k = localStorage.key(i);
+    if(k && k.startsWith(CARD_KEY)) out[k.slice(CARD_KEY.length)] = cardWrong(k.slice(CARD_KEY.length));
+  }
+  return out;
+}
+
+function exportCardWrongs(){
+  const books = cardWrongs();
+  const n = Object.values(books).reduce((s, a) => s + a.length, 0);
+  if(!n){ alert("待背清单是空的，先背一轮。"); return; }
+  saveTxt(`待背清单-${new Date().toISOString().slice(0, 10)}.json`,
+    JSON.stringify({v: 1, kind: "examcards", exportedAt: new Date().toISOString(), books}, null, 1),
+    "application/json;charset=utf-8");
+}
+
+async function importCardWrongs(file){
+  let d;
+  try { d = JSON.parse(await file.text()); } catch (e) { alert("这个文件不是 json：" + (e && e.message || e)); return; }
+  const books = (d && d.books) || d;
+  if(!books || typeof books !== "object"){ alert("json 里没有 books 字段。"); return; }
+  let add = 0, bs = 0;
+  for (const [bank, ids] of Object.entries(books)){
+    if(!Array.isArray(ids)) continue;
+    const cur = new Set(cardWrong(bank));
+    const before = cur.size;
+    ids.forEach(id => cur.add(id));
+    if(cur.size !== before){ localStorage.setItem(CARD_KEY + bank, JSON.stringify([...cur])); bs++; }
+    add += cur.size - before;
+  }
+  paintCardStat();
+  alert(`导入完成：${bs} 本、新增 ${add} 条待背（与原有清单合并，不覆盖）。`);
+}
+
+$("#cbook").onchange = () => { fillChapters(); C.items = []; $("#cardbody").innerHTML = ""; $("#cprog").textContent = "未开始"; paintCardStat(); };
+$("#cstart").onclick = () => cardStart("all");
+$("#cwrong").onclick = () => cardStart("wrong");
+const closeCMore = () => { const d = $("#cmore"); if (d) d.open = false; };
+$("#cexp").onclick = () => { exportCardMd(); closeCMore(); };
+$("#cexpwrong").onclick = () => { exportCardWrongs(); closeCMore(); };
+$("#cimpwrong").onclick = () => $("#cimpfile").click();
+$("#clrcards").onclick = () => { clearCardWrong(); closeCMore(); };
+$("#cimpfile").onchange = (e) => { const f = e.target.files && e.target.files[0]; if(f) importCardWrongs(f); e.target.value = ""; };
+
+/* 背题页键盘：空格/Enter 看答案 · 1 没记住 · 2 记住了 · → 跳过 */
+document.addEventListener("keydown", e => {
+  if($("#pane-card").classList.contains("hide")) return;
+  if(["SELECT","TEXTAREA","INPUT","BUTTON"].indexOf(e.target.tagName) >= 0) return;   // 焦点在按钮上时交给按钮自己
+  if(!C.items[C.i]) return;
+  if(e.key === " " || e.key === "Enter"){ e.preventDefault(); C.shown ? cardNext() : reveal(); }
+  else if(e.key === "1" && C.shown) mark(false);
+  else if(e.key === "2" && C.shown) mark(true);
+  else if(e.key === "ArrowRight") cardNext();
+});
+
+/* 点完按钮把焦点还给页面：否则焦点留在按钮上，空格/Enter 会被浏览器当成「再点一次这个按钮」，
+   刷题页的 1–5 和背题页的空格/1/2 快捷键就全哑了（实测踩到） */
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("button");
+  if(b && !b.closest(".tabs")) b.blur();
+});
+
+/* 键盘：数字选选项 · Enter 提交/下一题 */
+document.addEventListener("keydown", e => {
+  if($("#pane-quiz").classList.contains("hide")) return;
+  if(["SELECT","TEXTAREA","INPUT"].indexOf(e.target.tagName) >= 0) return;
+  const q = S.qs[S.i];
+  if(!q) return;
+  if(/^[1-9]$/.test(e.key)){
+    const i = parseInt(e.key, 10) - 1;
+    const k = ((q.options || [])[i] || {}).key || ["A","B","C","D","E"][i];
+    if(k) pick(k);
+  } else if(e.key === "Enter"){
+    e.preventDefault();
+    S.done ? next() : submit();
+  }
+});
+</script>
+</html>

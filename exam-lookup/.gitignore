@@ -1,0 +1,25 @@
+# exam-lookup：本地备考工具。只提交源码；数据、语料、浏览器 profile 都不入 git。
+# 索引可重建（kb.py build / solve.py build）、语料可重抓（jr/ 脚本），故这些都不提交。
+
+# ── 大件 / 生成物 ──
+*.sqlite3
+*.sqlite3-journal
+banks/
+crawl/
+jr/out/
+jr/profile/
+tools/*.zip
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+pending.jsonl
+learned.jsonl
+
+# ── 抓取落盘的原始页面 / 报告（体积大、可重抓、含本机绝对路径）──
+*.html
+!ask.html
+*.pdf
+*.csv
+*.txt
+!solve-使用说明.txt
+/*.json
