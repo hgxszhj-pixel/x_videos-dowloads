@@ -1,6 +1,22 @@
 # X Video Downloader — 项目交接
 
+**最新**: 2026-09-26 exam-lookup 代码审计修复（B1–B12）+ 源码纳入 git 基线 — 用户「这项目的代码有什么地方有 bug？」→ 先锁范围（仓库根 Rust vs `exam-lookup/` Python），用户选 **exam-lookup**；逐行审计（`webui.py`/`solve.py`/`kb.py`/`ask.html` 全文 + 全仓 grep + 运行期取证）后修 12 类**确凿**缺陷：**B1** 模拟考中途按「开始/重开」泄漏计时器且继承 `S.mock`（新轮被藏答案 + 被旧倒计时到点打断）→ `start()` 确认后复位 `clearInterval + S.timer=null + S.mock=false + paintClock()`；**B2** 模拟考错题「立即重做」把结果全记进**第一题**所属库（跨库混抽归属错）→ `submit()` 改按每题 `q.bankFile` 落库；**B3** `localStorage` 一条值损坏即 `JSON.parse` 抛错、整个刷题/背题 tab 崩 → 新增 `lsArr()`（`try/catch`+`Array.isArray`）兜底 `wrongBook`/`cardWrong`；**B4** `solve.ingest` 用 `hash()` 生成 id（每进程随机加盐，同题两次录入 id 不同 → `merge/build` 去重失效）→ 改 `sha1(norm(question))[:12]`，实测两次进程一致 `auto-97e448369b6a`（改前 `284071136938` vs `755604882297`）；**B6** `webui.py` handler 无兜底异常（索引缺失即断连）→ `do_GET/do_POST` 拆 `_route_*` 并包 `try/except` 回 500 JSON；**B7** `sync_banks.py` 硬编码 `/Users/hgxszhj/...` + 索引非原子写 → `__file__` + tmp+`os.replace`；**B9** `kb.search` LIKE 兜底未转义 `%`/`_`/`\` → 转义 + `ESCAPE '\'`；另修 B5（`qid` 死分支）/B8（rate 零除）/B10（`esc` 引号）/B11（`answerText` isinstance）/B12（断言前移）。回归：7 个改过的 py `py_compile` + `node --check ask.html` 全过，`kb.py selftest`（5494 块 / 5/5 回环零误报）+ `webui.py selftest`（模拟考池 365 题）全绿，HTTP 冒烟 5 项过（含 handler 抛异常 → `500 {"error":...}`）。**并首次把 `exam-lookup/` 源码纳入 git 基线**：新增 `exam-lookup/.gitignore` 挡掉数据/语料（`banks/`/`crawl/`/`jr/out/`）+ 索引（`*.sqlite3`）+ **424MB 浏览器 profile `jr/profile/`（含登录态，绝不能提交）** + HTML/JSON dump，白名单 `git add` 提交 **80 文件 / +10,568 行**（commit `6eca77a`，含 `Intent:` 行）；此前该子项目 93 项全 untracked（`git ls-files exam-lookup/` 只有 `README.md`）。**副产**：本机 `task(category=deep)` 委派坏（模型映射缺），3 个后台审计 agent 全失败 → 全程手读；门禁反复拦「每文件首次编辑」差点造成半应用。**未入 git**：`tools/` 第三方刷题端、`banks/*.json` 题库数据。
+
+**最新**: 2026-09-26 **jev-gate 插件完工（Bash gate via Jev，三档派之 gate 档落地）** — 头条视频 `7689704382715281975` 把 Jev 三档派(router/gate/judge)落到 Claude Code 插件层：已装的 `fast-jev-compaction` 只占 compactor 档，本轮独立开发 `jev-gate` 占 **gate 档**（每条 Bash 工具调用由 Jev 语义判 risk → `{allow|ask|deny}`）；插件路径 `~/code/jev-gate/`（仓库外开发，`claude --plugin-dir` 加载，不进 git），**31/31 测试绿**（`gate.test.ts` 24 + `hook.test.ts` 7）、`tsc --noEmit` clean、`claude plugin validate` ✔ 0 warning；plugin.json userConfig 走 CC schema（`apiKey`/`allowBelow=0.30`/`denyAbove=0.70`/`model=jev-latest`，全部带 `title` 字段，第一次缺 `title` 被 validator 拒）、API key 解析顺序 `userConfig > $.env.get('TYPESAFE_API_KEY') > $.settings.read().env.TYPESAFE_API_KEY`、**默认-放行 fallback**（Jev 不可达 → `{allow:true}` + `$.ui.log` 警告，遵循视频「if you can't list candidates, don't force it」，fail-closed 是 self-DoS）；scope v0.1.0 = **Bash only**（Edit/Write 留 v0.2，需要 file-content diff 喂 Jev）；复刻 `fast-jev-compaction/0.3.0` 的 `buildJevRequest+parseJevResponse+noulAnswer` 作本地副本（插件独立打包，不跨插件 import）。**真机冒烟**（`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir ~/code/jev-gate -p "..."`，环境 `TYPESAFE_API_KEY=fake-key`）：插件加载无崩溃、`echo hello` 通过、`rm -rf /tmp/jev-gate-smoke-test-marker` **被执行**（fake key → Jev auth 失败 → fallback 放行 = 符合设计；real key 下应 deny）；README.md 写好（装/配/范围/smoke test/dev），memory 记录 `~/memory/projects/x-videos-dowloads.md` 2026-09-26 段。**踩坑 6 项（已修）**：① plugin.json userConfig 缺 `title` 被 validator 拒（fast-jev-compaction schema 加 `title` 修）；② 父 `~/package.json` `packageManager:"yarn"` → pnpm 静默 no-op，改 npm；③ handler 签名 `($,event,next)` 3 args、测试 harness 写 2 args → "next is not a function"，harness 加 `$` 参数 prepend 到所有 call site；④ `claude-code` types 不在 npm registry，本地 shim `types/claude-code.d.ts` 只声明用到的；⑤ vitest mock 默认 noul=0.5 落 ask 区，改 0.05 让 "passes through safe" 测通；⑥ 测试断言 fallback 期望 `undefined` 但 hook 显式返 `{allow:true}`，改断言。**未做**（user self-serve）：real-key 下 live smoke（手动启 `claude --plugin-dir ~/code/jev-gate` 跑 `! rm -rf /tmp/...` 验证 deny/ask）；Edit/Write gate = v0.2 路线。
+
+**最新**: 2026-09-26 orca-video 培训课程 **5 集改 7 集（拆集）+ 闸门语速常量校准 + `--plan-only`** — 起因是一条交付缺陷：EP2 出片 **35.23 分钟**，而闸门当初的估算是「24.7 min」。根因不在渲染而在**常量**：`scripts/gen_srcs.py:17` 的 `PACE = 478.6 字/分钟` 取自早期「上下两集」那套片子的数据，比这套培训课的真实语速乐观 40%（实测：EP1 9,266 字/27.06 min = 342、EP2 11,805/35.23 = **335**）→ 闸门于是把 **50 分钟**的集判成「35 分钟」放行。校准 `PACE = 338` 后按真实语速重算：原 EP3（第 20–34 页，17,029 字 ≈ 51 min）、原 EP4（第 35–44 页，17,581 字 ≈ 52 min）**双双超过用户定的每集 45 分钟上限**（EP5 45–57 页 14,695 字 ≈ 43.5 min，贴线）。**用户决策：拆集、解说内容一字不删**，切点只落在官方分组边界（一页不跨集）→ **七个页段各自成集**：1–8 / 9–19 / **20–26 / 27–34 / 35–37 / 38–44 / 45–57**，闸门 **7/7 PASS**、逐页覆盖无缺口（7/7、8/8、3/3、7/7、13/13）。拆分做法是**页区间切片而非复制展开**：新表只有一行 `SCENES = slice_full("scenes_train_ep3_full.py", 20, 26, add_cover=…)`，1.7 万字解说仍单点存在 `scenes_train_ep{3,4}_full.py`（展开成两份＝两份真值，迟早不一致）；切片器 `lib/epslice.py` 的三条规则都是踩出来的：带 src 的场景按页号收；**章节页跟它「后面」那一页走**（跨切点的章卡属于下一集的开场，按前一页分会丢掉第二半集的开场卡）；封面各集自带文案（集号/页段/narration 都改，不能照抄旧封面）；片尾只有全课程最后一集保留。另给 `build_video.py` 加 **`--plan-only`**（只合成/复用配音、加总 slot、打印成片时长后退出，不出画面）—— 渲前就能知道会不会超 45 分钟，而且它把配音缓存填满，正式渲染省掉同样的时间，净成本≈0：EP3 实测 **23.2 min**（闸门估 23.6，误差 1.7%，校准后的闸门确实可信）。已交付/在渲：**EP1 27.06 min（v5，t12，0 WARN）/ EP2 35.23 min**，EP3–EP7 由 chain3 串行渲染（`out/train/render_chain3.log`）。**并发坑补充**：旧链会在被 kill 后继续跑下一集，这次连开三集（ep3/ep4 被我 kill 成 EXIT=143、ep5 被 `render_episode.py` 的并发保险挡成 EXIT=1「已有构建在跑」），说明**杀链要杀父 shell**，且并发保险值钱。README 已同步（8 集表 + 为什么拆集 + 切片机制），skill `demo-video-pipeline` 补三条：语速常量必须拿**本系列**已交付的片子反推并逐集复验（旧常量放行超长集就是这个坑）、超上限就切页区间别复制脚本、加 plan-only 先测时长。
+
+**同日追加**: EP7 用 `--plan-only` 量出真实时长 **47.3 min > 45** → 再切一刀成 8 集 —— 原「45–57 页」按官方分组边界 53/54 拆为 **EP7（45–53 页，7,820 字，实测配音 27.7 min）** 与 **EP8（54–57 页，6,875 字，19.6 min，`keep_closing=True` 保留片尾卡）**，闸门 **8/8 PASS**（页覆盖 9/9、4/4 无缺口），`scenes_train_ep7.py`/`ep8.py` 都是 `scenes_train_ep7_full.py` 的切片（full 表由原 ep5 表改名而来）。**闸门字数估算 vs 实测配音的偏差值得记**：EP3 23.6→23.2、EP5 17.9→17.4、EP6 34.1→32.0（差 1–3%），**EP4 26.8→30.0（+12%）** —— 配音时长对文本结构敏感，**贴线（估算 >40 min）的集必须用 `--plan-only` 量，不能靠字数估**。已知的 6 集渲染清单由 `render_chain4.log` 串行推进（EP3–EP8）。
+
+**最新**: 2026-09-26 orca-video 培训课程 EP1 + 「画面跑到配音前面」根治 — 用户要求「按 docs.html 顺序做一套从安装到上手的培训视频，1080p、每集 ≤45 分钟、先生成 plan 再生成视频」→ 页序由 `scripts/gen_srcs.py` 从镜像侧边栏 DOM 抽成 `srcs.py`（57 页 / 8 页一组共 5 集 / 预算按实测算出的 478.6 字每分钟），`scripts/check_consistency.py` 做官方一致性闸门（顺序单调子序列 / 页页有场景 / 命令能在原文 grep 到 / 预算内），EP1（第 1–8 页）= `scenes_train_ep1.py` **45 场景 / 8 页全覆盖 / 8555 字 ≈ 17.9 min，闸门 PASS**；真机素材走 `scripts/capture_train.py`（清单驱动 setup/keys/clicks → 体检），键盘与点击走 `osascript System Events`（`orca computer hotkey` 恒报 `window_not_focused`），浮层镜头前必须先 `orca terminal switch` 把焦点切到演示 worktree，否则 ⌘P 露的是用户自己仓库的文件列表。**本轮真正的硬骨头是审片揪出的 A/V 错位**：成片里**画面（字幕与分镜）比配音提前 1.7–2.9 秒**，而场景时长、音轨、`.srt`、场景级时间轴（对 plan 只有 ±0.3s）、以及所有文本层校验**全都是对的** —— 根因在分段拼接链，三处叠加：① 每段静止画面各自 `-t hold` 编码、帧数各自取整，被字幕切碎的 116 段场景累计丢 48–66 帧（**1.7–2.2s**）→ 改**累计整数预算** `n_i=round(cum_i×30)−round(cum_{i−1}×30)` + 输出端 `-frames:v n`（输入端**不能**再带 `-t`，否则无限循环静帧先被截断）；② `concat` **滤镜**每个输入边界再丢半帧 → 实测 **916/980 帧**，换 `concat` **解复用器** + `-frames:v round(dur×30)` → **980/980**；③ `_split_by_cues` 按「字幕与本段的交集」首尾相接排段，吃掉条间 0.06s 呼吸 → 改成**按时间轴铺满**（切换点取本段开头与段内字幕起点，每段画此刻在播的那条）。防线：场景片段编完 `ffprobe -count_frames` 对目标帧数，不符打 `[clip] WARN 帧数漂移`；`_split_by_cues` 自检每条字幕的画面起点；新增 `scripts/check_caption_sync.py`（10fps 抠字幕条、像素差分找**画面真的换条**的时刻，与 `.srt` 起点比；判定要避开条间只有 0.06s 的相邻条与片头第一条，否则全是假缺陷）与 `scripts/verify_caption_frames.py`（把指定词所在时刻的字幕带裁出来拼图给 vision 读）；`check_cues.py` 加 `--scenes <file>`（换集入口当初只改了渲染器，检查器还在查旧场景表 = 拿错输入报绿灯）；`STYLE` t9→t10。**像素级验证**：修复后 c2-08 场景 980/980 帧，t=2.5/5.0/7.5/12.5/20.0/26.0s 六处字幕与 `.srt` 第 1/2/3/6/9/12 条**逐条一致**（修复前同六处全部错位）。**同类问题也存在于已交付的旧两集**（下集 t=518.03s 画面已是第 196 条「provider」，`.srt` 里它在 520.92s = 提前 2.9s），按同一套代码渲染、尚未重渲 —— **待用户定**。EP1 成片重渲后数字见下（`out/train/EP1_安装与上手_1080p.mp4`）。
+
+**最新**: 2026-09-26 orca-video 教程片 v3（字幕时间轴丢字修复 + 两集全量重渲）— 用户「昨天生成的视频，再次检查一下有什么问题吗？」→ 复检的是**另一棵树**的产物 `~/video-doc/orca-video/`（Orca 教程片两集，9-26 03:02 出片），按 demo-video-pipeline 的审片清单重跑一遍（ffprobe / 响度 / 静音 / 字幕时间轴 / 拼接校验 / 关键帧 / 整片接触表）并揪出真缺陷：**① 字幕时间轴**的「单条最短 0.9s 地板」与「末条封顶在配音+0.6s」是**一对互相矛盾的约束** → 碎片一多 Σdur 超配音长度 → 末条拿到 `start > end` 的**负窗口** → `_split_by_cues` 静默跳过（画面里根本没有这条字幕）、`.srt` 照样写出去（下集 `00:08:21,818 --> 00:08:20,700`）→ 下集 08:21「的完整指南」**整条丢**，而全片「逐字不丢」校验是过的（文本层校验证明不了字幕上过屏）；② **折行切在拉丁词中间** 37 处（`ablyai/orca/orca` / `ee；中间是主区域` / `node_mo` / `estration --full 拿版本匹配`），教程观众正照抄这些命令；③ **片段缓存 key 少一个维度**：只哈希源图路径 → 「只改字幕时间轴、不改文本」算出同一个 key → 旧片段被复用、修好的字幕永远进不了成片（不补这条，前两条修了也白修）；④ 复检还发现 **README 数字比成片旧**（写 808.33s/938.02s、字幕 233/276 条，实测 812.47s/940.30s、278/345 条）。修法：`scene_cues` 改「**短句固定地板 + 长句按比例缩到剩余预算内** + 每条兜 `LAST_RESORT=0.12` 最小窗口」（整体按比例缩**否决**：1 字碎片会变成 0.12s 闪一下，第一版修法实测 7 条 warn）；新增 `_hard_wrap()` 含拉丁字母就退回最近词边界（CJK 仍按字数硬折）；`clip_for` 的 key 补每段 `hold`；`_split_by_cues` 对「某条字幕一个显示窗口都没拿到」打 `[cue] WARN`；新增 `scripts/check_cues.py`（50 场景一次跑完：逐字不丢 / 时间轴合法 / 无词内断，exit 1）。**重渲实测**（两集，build_v11.log 0 条 `[cue] WARN`）：上集 `812.47s / 38.8MB / 278 条`、下集 `940.30s / 52.2MB / 348 条`（原 345），`-16.0 LUFS` 两集一致、TP `-2.6 / -1.5 dBTP`、LRA `2.4 / 2.2`（音频链没动，数字与重构前逐位相同），`check_captions.py` 两集 **exit=0 无 DEFECT**，关键帧复核 **下集 499.6~500.5s 现在显示「拿版本匹配的完整指南」**、**上集 100.0/103.0s 显示 `brew install --cask` + `stablyai/orca/orca`**；改动同时同步进 `README.md`（新增「v3 相对 v2」对照表 + 4 条新坑 + 目录项）与 skill `demo-video-pipeline`（修复配方 / 缓存 key 要含 hold / 词内断启发式的误报确认法）。修复前版本留在 `out/old/`；**未清** 旧样片 · 精简版 12min（160MB）· 11 个 build 日志；**待定** 截图页「深色 Orca 界面配浅底页」是否加浅色衬底（`lib/slides.py` 一处改动 + 全量重渲 ~25 分钟）。**另**按用户追加的要求「`https://www.onorca.dev/docs` 下载到本地」，把官网整站抓成离线镜像 `docs_site/`（88 页 HTML / 13 MB / sitemap 61 个 URL 全落地，新增 `scripts/mirror_docs.py = wget + 离线导航补丁 + 完整性校验`）—— 坑在「点侧边栏没反应也不报错」：官网是 Next.js SPA，客户端路由要联网取 RSC 数据，必须**在每页 `<head>` 最前面**注入捕获阶段的点击拦截才抢得到（放 `</body>` 前晚注册，抢不过 Next 挂在 document 上的处理器）；入口 `docs_site/docs.html`，双击即可离线读，见 D-069。
+
+**次新**: 2026-09-25 orca-linear skill 装好 — `pnpx skills add https://github.com/stablyai/orca -g -s orca-linear` 全局安装(1 skill ✓)→ `~/.claude/skills/orca-linear`(symlink → `~/.agents/skills/orca-linear`);`orca` CLI 验证 1.4.211(Bourne shell wrapper,非 GNOME screen reader);SKILL.md = discovery stub,版本匹配指南靠 `ORCA skills get orca-linear` 运行时拉;PromptScript 子目标失败(不支持 global)无关。
+
 **最新**: 2026-09-22 OCR review 4 commit 链路 — trace.rs + handlers.rs 落地 (1) `TraceStep::on_exit` RAII 传真实 Result outcome (`Arc<StdMutex<Option<Result>>>` 取代写死 `"entered"`)+ (2) TraceSession Drop / close 路径不持锁跨 IO + 中毒不 panic + (3) `find_session_file` test helper 去随机化 (根除同日多测试 date_dir 共享 race) + (4) clippy 6 残留清零 (`unwrap` × 5 → `expect("… mutex poisoned")` + `OutputMutatorFn` type alias);**3 mutation smoke 全 KILLED** (A: `find_session_file` 前缀 → `__never_match__` 9/9 fail / B: ok 路径断言 → `__bug__` 1/1 fail / C: `.ndjson` → `.xyz` 9/9 fail) 证 3 regression test 非 lying test;**commit 链路** `2e67330` (handlers on_exit) → `55782e3` (semantic inversion test) → `0a57987` (Drop 中毒) → `234ee8b` (test 去随机化) → `2e18f33` (clippy 清零);**基线** `cargo test 304 passed / 12 ignored` + `cargo clippy -- -D warnings 0 errors`;**记忆** `~/memory/projects/-Users-hgxszhj-x-videos-dowloads/memory/on-exit-raii-real-outcome-pattern.md` (RAII 标准模式) + `mutation-smoke-trace-three-piece.md` Round 2 (本轮 3 变异 3 KILLED 表格);**未做** G1 session 5 个早退点写 session_close / G2 batch 入口开 session / G3 两处 TraceStep 补 on_exit(已部分修) / G4 输出遗留 `lock().unwrap()`(本轮只修 output 路径 5 处,其余 Mutex 在 `write_event` / `find_session_file` 等仍可能 panic poison)。
+
+**最新(同日, exam-lookup)**: 2026-09-22 exam-lookup 保密教育全链路打通 + 电信侧首开条款级依据 — 中国保密在线（baomi.org.cn，另一门考试）**真题落库**：只读拉本人历史考试记录（`examRecord.do` 的 `content` 字段＝整卷）→ `banks/baomi-2024.json`（47 题）+ **`banks/baomi-2026.json`（20 题，用户 9-22 那场 100 分）** + `banks/baomi-我的错题.json`（17 题），都标 `meta.external`（不进电信模拟考池、不进依据覆盖率分母，但进查题索引与刷题页）；**依据配到「条」一级**：`cite_law.py`（通用，电信＋保密两门）五档匹配（长窗 24→8 字 / 结构·沿革实测 / 人工核·锚词 / 数值锚定·小节 / 候选不写库），命中 保密 **61/67 = 91%**（2024 卷 45/47、2026 卷 16/20）、电信 **30/373**（安全卷 `dtzx-safety` 26/62）、切条数必须等于官方条数（119/24/65/73）否则 selftest fail；**语料**：《保守国家秘密法》(2024) 65 条 +《实施条例》73 条 +《安全生产法》(2021修正) 119 条 +《管理办法（试行）》24 条 +《维护规程节选》13 条 → kb **1006 块**；**学时账已平**：41 资源 / 5.40 学时，已完成 39 个 / **5.16 学时 ≥ 门槛 4**，考试页「开始考试」已可点（只读核 DOM，未代点）；**其他**：生成题升到 60 题（解析放整句原文 + 出处标到「一、」级）、教材原题 8、长期合集 112；q 表 413 → **433**、shiroha 12 库/1002 → **13 库/1022 题**、电信覆盖率 **54/365 = 15%** 未变；**13 个 selftest 全绿**；详细见下方 Session 段与 D-043~D-050。
 
 **次新**: 2026-09-21 exam-lookup 本地备考台（网页查题 + 刷题 + 官方原文依据库 + 通信安全 50 题入库）— 用户「用命令行的方式查询题目答案有点不优雅」+「页面里做个刷题接口，方便我学专业题库」→ 交付 `exam-lookup/webui.py` + `ask.html` + `查题.command`（Finder 双击即开，端口 8765→8769 自动顺延）：**查题**（粘题干 → 上块题库答案（题型·题号·命中率·来源·选项·解析）、下块官方原文依据带 `[高亮]` 摘录 + 出处路径）；**刷题**（选库/题型/题量 → 逐题选答 → 即时判定 ✅/❌ + 正确项 + 解析 + 「看原文依据」直连 kb + 多选标「全对才算对」+ 答错细分「漏选 BC / 错选 D」+ 跳过 + 进度条 + 键盘 1-5/Enter/⌘± + 错题本 localStorage + 「只练错题」+ 结果页导出错题 txt + 浅/深色 ◐）；后端只有 4 个接口（`/`、`/api/ask`、`/api/banks`、`/api/quiz`），查询逻辑全部 `import solve, kb` 不重写，`ask.html` 是页面本体（样式/字号只动它）；**新题库入库 5 步走通**（原稿留档 `通信安全生产考试试卷50题.txt` → `parse_comm_safety.py` 断言式解析 → `banks/comm-safety-50.json`（50 题 = 单选 20 + 判断 30，题号 1-50 连续、每题有答案、单选 3 选项）→ `python3 solve.py build`（索引 316→366 题）→ `python3 sync_banks.py`（shiroha 刷题端 7 库/758 题）→ `python3 webui.py selftest`）；**依据库** `kb.py`/`kb.sqlite3` = 880 块/540,635 字（官方原件 200 块 / 教材 395 / 教材章节 199 / 视频课件 58 / 教材汇编 28，块级 sha1 去重跳过 119，零依赖 + 系统 `pdftotext`，子命令 build/search/stats/selftest）；**三个真坑（均有实证）**：(1) Python 里 `"单选" in "单项选择题"` 是 **False**（该串是 单+项+选+择，中间隔着「项」）→ 整个单选段被**静默跳过**，第一版只解析出 30 道判断题；(2) CSS `font: 600 1rem inherit` 简写**非法**（`font` 简写不允许带 `inherit`）→ 整条声明被浏览器丢弃 → 页签/按钮/下拉回落 13.33px 且**完全不吃字号设置**（用户报「字体小、硬伤」的真根因，改成 `font-family/size/weight` 分开写后 17px 基准、A+×4 → 21px 全站同步缩放）；(3) `kb.search` 把查询**整体当短语**（SQL 里用双引号包住）→ 长句/`OR` 查询必然 0 命中，探针必须短；**依据覆盖实证**：新入 50 题对 kb 只有 **14/50** 能命中原文（第 7/8/14/18/22/23/25/27/28/36/38/41/48/50 题），换 4-5 字短探针可抬到 36/50 但立刻出**假依据**（「夜间施工」撞到河底挖沟、「从业人员」撞到课程介绍）→ **退回精确版，宁缺勿假**；**未决** 天翼云考试练习题-1（296 题）原件不在盘上（`~/Downloads` 只有 python-docx 生成的「自检报告」，正文仅 44 条可疑题明细，全盘 mdfind/关键词/废纸篓都找过），原件到手才能入库；服务为会话内进程，长期用双击 `查题.command`。
 
@@ -45,7 +61,184 @@
 
 ---
 
-## 最新 Session: 2026-09-21 — exam-lookup 本地备考台（网页查题 + 刷题 + 官方原文依据库 + 通信安全 50 题入库）
+## 最新 Session: 2026-09-26 — exam-lookup：代码审计修复（B1–B12）+ 源码纳入 git 基线
+
+### 1. 触发
+用户「这项目的代码有什么地方有 bug？」→ 先问范围（仓库根 Rust 下载器 vs `exam-lookup/` Python 备考台），用户选 **exam-lookup**。
+交付期短指令链：`这项目的代码有什么地方有 bug?` → 范围=exam-lookup → `按照你建议执行修复工作吧` → `好的`（修 B5–B12）→ `update handoff.md`。
+边界：只改 `exam-lookup/`；不动 Rust 侧；不代考/不点开始考试（沿用）；提交只入**源码**，数据/语料/浏览器 profile 一律不入 git。
+
+### 2. 交付物（都在 `exam-lookup/`；本轮起已纳入 git）
+
+| 交付物 | 路径 | 说明 |
+|---|---|---|
+| 修复：前端 | `ask.html` | B1 重开清 mock 计时器/状态；B2 错题按 `q.bankFile` 落库；B3 `lsArr()` 兜底 `localStorage` 解析；B10 `esc()` 补转义 `"`/`'` |
+| 修复：后端 | `webui.py` | B6 `do_GET/do_POST` → `_route_get/_route_post` + 兜底 `try/except` → 500 JSON |
+| 修复：检索 | `solve.py` | B4 `ingest` id 改 `sha1(norm(question))` + `merge_banks` 按题干去重；B11 `answerText` isinstance 兜底 |
+| 修复：依据库 | `kb.py` | B9 LIKE 兜底转义 `%`/`_`/`\` + `ESCAPE '\'` |
+| 修复：工具 | `sync_banks.py` | B7 `BASE=__file__` + 索引 tmp+`os.replace` 原子写 |
+| 修复：小项 | `cite_law.py` / `make_collection.py` / `parse_baomi_records.py` | B8 rate 防零除；B12 断言前移；B5 `qid()` 死分支去除 |
+| git 基线 | `exam-lookup/.gitignore` | 挡掉 `banks/`/`crawl/`/`jr/out/`/`jr/profile/`/`*.sqlite3`/HTML·JSON dump；提交 `6eca77a`（80 文件 / +10,568 行） |
+
+### 3. 验证（真跑的）
+- `python3 -m py_compile <7 个改过的 py>` OK；`node --check`（抽取 `ask.html` 内联脚本）OK
+- `kb.py selftest` OK（5494 块 / 5/5 回环零误报）；`webui.py selftest` OK（模拟考池 365 题 / 题型过滤 / 导入切题 / 路径穿越）
+- **B4 跨进程实证**：改前两次独立进程 `284071136938` / `755604882297`（漂移）→ 改后两次均 `auto-97e448369b6a`
+- **B6 HTTP 冒烟**（selftest 不覆盖路由层）：`GET /`→200、`/api/banks`→200、`/api/ask`→200、POST 坏 JSON→400、**handler 抛异常→`500 {"error":"RuntimeError: boom"}`**
+- **B9 功能测试**：`kb.search('%')`/`('_')`/`('a\b')` 均不报错（8/8/0 条）
+- **B3/B10 静态核对**：`grep` 确认 `lsArr` 定义在使用之前、`esc` 新正则落盘
+
+### 4. 真坑（都有实证）
+1. **`hash()` 每进程随机加盐**：`solve.ingest` 的 id 想「同题同 id」，但 CPython 字符串 hash 默认随机化 → 两次 `python3 solve.py ingest` 给出不同 id（实测），`merge_banks` 按 id 去重因此失效。改用 `hashlib.sha1`（`PYTHONHASHSEED=0` 才稳定只是巧合，不能依赖）。
+2. **`start()` 没清模拟考状态**：`startMock` 里 `startTimer()` 会 `clearInterval`，但普通 `start()` 不会 —— 模拟考中途点「开始/重开」（确认框点继续）后，新轮继承 `S.mock=true`（不给答案）+ 旧倒计时仍在跑，到点 `finishMock("时间到")` 打断新轮。修在**确认之后**复位（取消不能误伤）。
+3. **错题跨库归属**：模拟考混抽带 `bankFile`，「立即重做这批错题」把 `S.cur` 设成第一题的库，`submit()` 再按 `S.cur` 落盘 → 其余库的错题进错本。修在 `submit()` 按每题 `q.bankFile`。
+4. **`localStorage` 裸 `JSON.parse`**：`wrongBook`/`cardWrong` 无 `try/catch`，一条被截断的值就让 `showBookInfo()`→`showAllStat()` 整链抛错、刷题/背题页不可用。
+5. **委派基础设施本轮不可用**：`task(category=deep)` 报 `Model not found: gpt-5.6-sol`、回退 `deepseek-v4-flash` 也不存在 → 3 个后台审计 agent 全失败，改为全程手读（本机 agent category 的模型映射是坏的，下次别再盲发委派）。
+6. **门禁反复拦「每文件首次编辑」**：GateGuard 会拦下每个文件的第一次 Edit/Write（要求先陈述 facts），本轮多次「同批编辑里部分被拦、部分落盘」→ 一度差点让 `solve.py`/`ask.html` 引用未定义的 `hashlib`/`lsArr`；按门禁要求补齐 facts 后重放并 `grep` 复核全部标记。
+
+### 5. 决策（细节见 D-070~D-073）
+- **git 提交范围**：`exam-lookup/` **源码入 git，数据/语料/索引/浏览器 profile 出 git**（`.gitignore`）；理由：`jr/profile/` 是 424MB 浏览器 profile（可能含登录态），`jr/out/` 有大量教材视频，索引可重建。
+- **id 可复现**：`solve.ingest` 的 id 一律用 `hashlib.sha1(norm(question))`，禁用 Python `hash()`。
+- **前端兜底**：`localStorage` 解析一律 `try/catch`；模拟考状态/计时器在 `start()` 确认重开后复位。
+- **检索转义**：`kb.search` 的 LIKE 兜底对 `%`/`_`/`\` 转义 + `ESCAPE`（"宁可缺、不给假依据"的延伸）。
+
+### 6. 已知 follow-up
+- **`banks/*.json` 未入 git**：clone 出来直接跑 `webui.py selftest` 会因空库失败（README 说它是「真源」）—— 待定是否随仓库分发（数据 vs 代码的取舍）。
+- **`tools/` 未入 git**：第三方刷题端（含 `*.zip`），可作为 vendor 处理。
+- **未跑的写盘自检**：`parse_baomi_records.py selftest`（会重写 `banks/baomi-*.json`）、`python3 solve.py merge`（会创建 `banks/auto-learned.json`）—— 有副作用，未获授权未跑。
+- **B12 余项未改**（理论/无害）：`kb_coverage` 空题干题计入分母、`ask.html` 少数数值字段未 `esc`、`sync_banks` 陈旧库保留逻辑。
+- **Rust 侧未碰**：本轮仅在 `exam-lookup/`；HANDOFF 的 Rust 记事项（G1/G2、trace.rs 等）不受影响。
+
+---
+
+## 最新 Session: 2026-09-26 — orca-video 教程片：字幕时间轴丢字修复 + v3 全量重渲
+
+### 1. 触发
+用户「昨天生成的视频，再次检查一下有什么问题吗？」→ 复检对象**不在本仓库**，是 `~/video-doc/orca-video/`（按 orca.dev/docs 做的两集教学片，9-26 03:02 出片）。
+复检按 skill `demo-video-pipeline` 的审片清单走：`ffprobe` → 响度（`loudnorm`）→ 静音（`silencedetect`）→ 字幕时间轴 → 「字幕拼回去 == 原文」→ 关键帧（字幕带全分辨率）→ 整片接触表；每条都从盘上的文件**重新量**，不复述上一轮的结论。
+用户看过缺陷清单（P1 丢字 / P2 时间轴超配音 / P3 词内断 / P4 README 数字旧）后回「按照你的建议执行」＝ 修 P1+P2+P3 并重渲两集；随后追加一句「`https://www.onorca.dev/docs` 下载到本地」＝ 抓官网离线镜像（见交付物表末行与 D-069）。
+边界：只改字幕与缓存维度，**不动**解说文案、配音、配色、转场、混音（重渲后 `-16.0 LUFS` 与 `TP/LRA` 逐位相同即为证）。
+
+### 2. 交付物（都在 `~/video-doc/orca-video/`，另一棵树、未提交 git）
+
+| 交付物 | 路径 | 说明 |
+|---|---|---|
+| 时间轴修复 | `lib/captions.py` `scene_cues()` | 短句固定 `MIN_DUR=0.9` 地板 + 长句按比例缩到剩余预算（`rest = budget - 地板占用`）+ 每条兜 `LAST_RESORT=0.12` 最小窗口；地板给不起时才退回纯比例 |
+| 折行修复 | `lib/captions.py` `_hard_wrap()` | 含拉丁字母就退回最近词边界（空格/斜杠/连字符/下划线/点号，窗口 `n..n-14`），找不到才按字数折；CJK 仍硬折 |
+| 构建期防线 | `build_video.py` | 每条字幕 `end <= start` 或起点晚于配音 → `[cue] WARN`；`_split_by_cues` 对「某条字幕一个显示窗口都没拿到」打 WARN（原来是静默跳过） |
+| 缓存 key | `lib/pipeline.py` `clip_for()` | key 由「源图路径指纹」改为「路径指纹 @ 每段 hold」，改时间轴不改文本也能失效 |
+| 自检脚本 | `scripts/check_cues.py`（新） | 50 场景一次跑完：逐字不丢 / `end > start` 且起点 ≤ 配音 / 无词内断；出问题 `exit 1`；`python3 scripts/check_cues.py c4-13` 可单看一场的每条字幕 |
+| 成片（v3） | `out/Orca教程_上集_基础与实例_1080p.mp4` + `.srt` | `812.47s` / 38.8 MB / 278 条字幕 |
+| 成片（v3） | `out/Orca教程_下集_高级技巧与速查_1080p.mp4` + `.srt` | `940.30s` / 52.2 MB / 348 条字幕（原 345） |
+| 修复前版本 | `out/old/`（4 文件 / 92 MB） | 两集 v2 成片 + 字幕，留作对比 |
+| 文档 | `README.md` | 顶部加「v3 相对 v2」对照表（时间轴 / 切句 / 缓存 key / 构建防线）、成品表时长与字幕条数改成实测值、坑列表 +4 条、目录 +`scripts/check_cues.py` |
+| 文档镜像（新增） | `docs_site/` + `scripts/mirror_docs.py` | 官网离线镜像：61 个 sitemap URL / 88 页 HTML / 162 文件 / 13.1 MB，入口 `docs_site/docs.html`；脚本负责 wget + 离线导航补丁 + 完整性校验（站内 7092 处引用 0 缺失，exit 1） |
+| 技能 | skill `demo-video-pipeline` | 修正配方（为什么不能整体按比例缩）、缓存 key 要含 hold、词内断启发式的误报确认法；`scripts/check_captions.py` 措辞改成「candidate + 怎么确认」 |
+
+### 3. 验证（真跑的）
+- `python3 scripts/check_cues.py`：50 场景 / **626 条**字幕 → `ok 逐字不丢 / 时间轴合法 / 没有词内断`（修复前：1 条负窗口 + 37 处词内断；`c4-13` 第 28 条原为 `66.47 → 65.35` 负窗口，现为 `63.85 → 65.29`）
+- `ffprobe`：`812.466667s` / `382,246 bps`、`940.300000s` / `443,894 bps`；两集均 1920x1080 / 30fps / h264 / AAC 44.1kHz 立体声
+- `loudnorm`：两集 `-16.0 LUFS`；TP `-2.6 / -1.5 dBTP`（无削波）；LRA `2.4 / 2.2` —— 与 v2 **逐位相同**（证音频链未受影响）
+- `silencedetect=noise=-40dB:d=2.5`：两集 **0 段**（无死气）
+- skill 的 `check_captions.py <srt> --mp4 <mp4>`：两集 **exit=0 / 无 DEFECT**（剩 5 + 5 条 `mid-token candidate` 是启发式误报 —— 紧邻性判据证明断点处源文本本来就有空格或句号，如「`brew install --cask`」+「`stablyai/orca/orca`」）
+- 关键帧（字幕带 `crop=1920:150:0:870` 全分辨率读）：下集 `499.6 / 500.1 / 500.5s` → 「拿版本匹配的完整指南」（修复前这条**整条不存在**）；上集 `100.0 / 103.0s` → 「`brew install --cask`」+「`stablyai/orca/orca`」（修复前是「`--cask st`」+「`ablyai/orca/orca`」）
+- 整片接触表（各 12 帧 / 4x3）：两集版面与修复前一致，无溢出 / 空白页 / 压页脚
+- `grep -c "^\[cue\] WARN" out/build_v11.log` = **0**；两集 `[OK]` 行齐全
+- 文档镜像：`python3 scripts/mirror_docs.py --no-fetch` → 88 页 / 61 个 sitemap URL 全落地 / 站内 7092 处引用 **0 缺失**，exit 0；浏览器实测 `file://` 与 `http://` 两种打开方式下点侧边栏都真跳（`docs.html` → `docs/cli/reference.html`、→ `docs/install.html`，`h1` 与图都对）（`940.30s` / `812.47s`）
+
+### 4. 真坑（都有实证）
+1. **「单条最短时长地板」与「末条封顶在配音结束」是一对互相矛盾的约束**：`dur = max(0.9, 比例份额)` 把短句抬到 0.9s → Σdur 超配音长度 → 游标 `t` 走过 `配音+0.6` 封顶点 → 末条 `start > end`。实测 **31/50 场景**时间轴比配音长、20 个超 0.5s、最坏 `c4-13` **+2.50s**；末条被 `_split_by_cues` 的 `hi - lo <= 0.05` 过滤掉 → 画面里没这条字幕，而 `.srt` 里写着 `00:08:21,818 --> 00:08:20,700`。
+2. **「逐字不丢」校验证明不了字幕上过屏**：全片「拼回去 == 原文」50/50 全过，却同时丢了一条字幕 —— 文字层校验**必要但不充分**，必须配时间轴断言（`end > start` 且起点 ≤ 配音）与「某条字幕零窗口」的显式告警。
+3. **整体按比例缩放是错的修法**：把 Σdur 等比缩到预算内确实消灭负窗口，但 1 字碎片（硬折留下的孤立「，」）会拿到 0.12s 窗口 —— 用一次「看不见的字幕」换一次「读不完的闪光」。第一版就是这么修的，`check_cues.py` 立刻报 7 条 `<0.35s` warn，改成「短句拿地板 + 只缩长句」后清零。
+4. **片段缓存 key 少一个维度 = 修复进不了成片**：`clip_for` 的 key 原来是「源图路径指纹 + 总时长 + `STYLE` + 分辨率」，改**时间轴**不改**文本**时三项全不变 → 算出同一个 key → 旧片段被复用。这是本项目第二次踩「缓存层少了维度」（第一次是 `caption_png` 的 key 必须含源图 size+mtime）。
+5. **折行切在拉丁词中间**：按字数硬折把 `brew install --cask stablyai/orca/orca` 切成「`--cask st`」+「`ablyai/orca/orca`」，全片 37 处（`ee；中间是主区域`、`node_mo`、`Worktree Shar` + `ed Paths`、`estration --full 拿版本匹配`）—— 教程的观众正照抄这些命令。
+6. **`.srt` 是「关于成片的声明」，不是成片本身**：字幕实际显示时长与 `.srt` 不一致（`_split_by_cues` 把未覆盖的空隙用 drift 全塞给本场最后一条），所以「这条字幕上没上屏」只能抽帧看字幕带，不能只读 `.srt`。
+7. **启发式会误报**：`^[a-z0-9]` + `[A-Za-z]$` 这对正则把「句子边界」也当成词内断（源文本本来就有空格或句号）→ 确认方式是回到解说原文里定位两条字幕、看是否**紧邻**；`check_cues.py` 用逐字定位做到零误报，skill 的 `check_captions.py` 已把措辞改成「candidate + 怎么确认」。
+8. **复检不是复述**：README 里的 `808.33s / 938.02s`「13.47 / 15.63 分钟」「字幕 233 / 276 条」全部与盘上的文件对不上（实测 `812.47 / 940.30`、`278 / 345`）—— 成片重渲后文档没跟上，对用户来说是交付物缺陷，不是四舍五入细节。
+
+### 5. 决策（细节见 D-064~D-066）
+- **时间轴**：短句固定地板、长句按比例缩水、每条兜 0.12s 最小窗口；「整体按比例缩」否决。
+- **折行**：有拉丁字母就按词边界折（CJK 硬折不变），并把「静默跳过」改成构建期 WARN + 项目自带 exit code 自检。
+- **缓存**：片段 key 必须含每段 `hold`；凡是渲染依赖的维度都要进 key，拿不准就 bump `STYLE` 吃一次全量重渲。
+- **边界**：只动字幕与缓存维度，文案/配音/配色/转场/混音一律不碰（以重渲后 `-16.0 LUFS`、TP、LRA 逐位相同为证）。
+
+### 6. 已知 follow-up
+- **旧产物未清**：`out/Orca教程_精简版12min_1080p.mp4`（160MB，已被两集版取代）、`orca_tutorial_720p.mp4`、`样片_v3_跨章.srt` / `样片_v5_动效.srt`、`palette_preview.jpg`、11 个 `build_*.log`；`out/old/`（92MB 修复前版本）暂留对比。**等用户定清/留**。
+- **截图页仍偏暗**：截图页是真实 Orca 界面（深色主题）配浅底页 → 「白底页看着仍偏暗」；修法是 `lib/slides.py` 的 `shot` 一处加浅色衬底 + 圆角卡片，但会触发一次全量重渲（~25 分钟）。**等用户定做/不做**。
+- **`qc.py static` 一直红**：上集 84% / 下集 88% 静态帧 —— 是本片「内容驱动动效」的形态使然（不是缺陷），但每次跑 QC 都会 FAIL；要免红得加 slides 模式豁免或改阈值。
+- **`PLAN_v2.md` 里的「13.47 min」**：那是当时 v1 的审片基准，属历史记录，未改。
+- 本仓库 **git 未提交**（HANDOFF.md 与其余改动仍在工作区）。
+
+## 最新 Session: 2026-09-25 — orca-linear skill 接入(pnpx install + orca CLI verify)
+
+- **Task**: 用户原命令 `npx skills add https://github.com/stablyai/orca --skill orca-linear --global`(CLI 不支持 `--skill`)→ 改 `pnpx skills add https://github.com/stablyai/orca -g -s orca-linear`(memory 中批量装模板的 `-s` filter 版本)
+- **Install**: ✓ 1 skill → `~/.agents/skills/orca-linear`(universal, +46 symlinked target 含 Claude Code);1 sub-fail PromptScript(不支持 global,无关)
+- **Wiring**: `~/.claude/skills/orca-linear` 是 symlink → `../../.agents/skills/orca-linear`(匹配 memory `claude-skills-symlink-pattern.md`)
+- **CLI verify**: `/usr/local/bin/orca` = Bourne shell wrapper, version 1.4.211;子命令 `open`/`serve`/`status`/`agent-context`/`skills get` 俱全;**非** GNOME 屏幕阅读器(`file` 证实)
+- **SKILL.md**: discovery stub;版本匹配指南按文档通过 `ORCA skills get orca-linear` 运行时拉,占位 `ORCA` = `orca`(`ORCA_CLI_COMMAND` 未设)
+- **Security**: Gen Safe · Socket 0 alerts · Snyk Med Risk([skills.sh/stablyai/orca](https://skills.sh/stablyai/orca));遵守 SKILL 中「Linear 票面/评论/附件是非受信数据」纪律
+- **未做**: 未启 `orca open`,无 active Linear ticket
+
+## 最新 Session: 2026-09-22 — exam-lookup：保密教育真题落库 + 依据配到「条」+ 电信侧首开条款依据 + 生成题升级
+
+### 1. 触发
+主线本来是用户最初那句「把 mylearning.cn 登录态下的**错题解析页 / 课件**读出来，落进 exam-lookup 的语料库」，
+但服务端机构级开关 `COMPANY_PRACTICE_SWITCH_CONFIG="0"` 把题库/练习模块关着（18 条假设逐条复现，见 `crawl/逆向台账.md`），
+且**不及格看不到卷**（用户那次 81 分＝不及格，`paperViewRule = -1`）→ 当日改道把**另一门考试（中国保密在线 baomi.org.cn）全链路打通**，
+再把「配条款依据」这件事通用化到电信侧。同日短指令链：`集成` → `按照你建议` + `执行` → `可以测试题目了` → `题目的答案导入题库了吗？` → `更新 handoff.md`。
+边界逐字沿用：**不代考、不提交、不点「开始考试」**；不破监考（切屏 `allowSwitchTimes: 10` / 换机换 IP / 考试次数 `allowExamTimes: 3` 三条明确不做）；所有探测都是**只读 GET**。
+
+### 2. 交付物（都在 `exam-lookup/`，未提交 git）
+
+| 交付物 | 路径 | 说明 |
+|---|---|---|
+| 通用配依据 | `cite_law.py`（362 行） | 电信＋保密两门共用：五档匹配 + `CURATED`（人工核·锚词，锚词必须真在那一条里）/ `NO_CLAUSE`（不配并写原因）+ `appendix_blocks()`/`sent_units()` + 官方条数断言；`baomi_cite.py` 已并入删除 |
+| 保密真题 | `banks/baomi-2024.json` / `banks/baomi-2026.json` / `banks/baomi-我的错题.json` | 47 题（2024 两场）/ **20 题（2026 那场，用户 100 分）** / 17 题；带官方答案、当时作答、`law` 字段 |
+| 保密解析器 | `parse_baomi_records.py` | 按**考试年份分库** + `carry_over()`（重跑不丢 `law`）+ selftest 断言（2024 卷 47 题 / 2026 卷 ≥15 题 / 重跑不丢法条） |
+| 公开法条入库 | `fetch_pub_law.py` | 抓《保守国家秘密法》(2024 修订) 65 条 +《实施条例》73 条 → kb 新 kind `保密法规`（2 块 / 22,708 字） |
+| 学时账 | `baomi_study_plan.py` + `crawl/保密培训-学时清单.md` | 41 资源 / 5.40 学时；按 `resourceId` 对齐学习记录 + 学习记录接口必须 `pageSize=1000` |
+| 数字自测题 | `make_drill.py` → `banks/自测-安全数字.json` | 60 题（单选 30 / 判断 30）；类别 6 → 8（加 `个数`/`人`）；解析放整句原文 + 出处标到「一、」级 |
+| 只读抓取脚本 | `jr/tools/baomi-pull-records.js` / `baomi-pull-course.js` / `baomi-exam-prep.js` / `baomi-hours-check.js` | 考试记录整卷 / 课程资源与学习记录 / 考试页状态 / 学时门槛与按钮 disabled；全只读 |
+| 对照表（人看） | `crawl/保密真题-法条对照.md`、`crawl/电信真题-法条对照.md`、`…-待配条文.md`（含不配理由） | 逐题条款号 + 原文摘录 + 置信档 |
+| 文档 | `README.md` | 条款依据段重写（五档规则 + 官方条数断言 + 边界）、保密分年份库、学时账、4 道不配原因 |
+
+### 3. 验证（真跑的）
+- `python3 <x>.py selftest` **13 个全绿**：`kb.py`（1006 块 / 5/5 回环 / 零误报）、`kb_pages.py`（33 本 2031 页）、`solve.py`、`webui.py`（模拟考池 365 题）、`make_drill.py`（60 题）、`parse_textbook_quiz.py`（8 题）、`parse_baomi_records.py`（67 题：2024 卷 47 / 2026 卷 20，重跑不丢法条 45→45、16→16）、`make_collection.py`、`ledger.py`（18 条假设全有结论）、`num_points.py`（1663 条数字句）、`baomi_study_plan.py`（41 资源 / 5.40 / 已学 39 / 5.16 与接口逐一相等）、`cite_law.py`（保密 76/84 摘录逐字可查、电信 + 保密两门）、`fetch_pub_law.py`（2 部法规齐）
+- 数字对齐：q 表 **433**（413 + 2026 卷 20）｜shiroha **13 库 / 1022 题**｜电信覆盖率 **54/365 = 15%**（`--exclude-kind 保密法规` 后）｜kb **1006 块**
+- 只读实测：学时 `gradeSum=5.4 / studyResourceNum=39 / totalGrade=5.16` 对上清单；考试页按钮 `div.exam-btn` 无 disabled 类
+- 接口实测：`GET /api/quiz?bank=baomi-2026.json` → 20 题、带依据 16 题（**注意别加 `type=all`**，见坑 8）
+- 2026 卷与 2024 卷**零重复题**（70 道原始题去重 67，3 道重复都在 2024 两场内部）→ 该平台题池远大于手上这几张卷
+
+### 4. 真坑（都有实证）
+1. **`parse_baomi_records.py` 重跑静默抹掉 `law`**：跑一次 selftest 就把 47 题的条文依据冲成 0（重新生成整份覆盖）。修法：`carry_over()` 按 id 把上一版 `law` 与解析里的依据段带过来 + 断言「重跑不丢法条」→ 两个脚本执行顺序解耦。
+2. **切条被交叉引用骗**：《安全生产法》正文「依照第九十条的规定追究…」里的条号被当成条目起点 → 切出碎片 + 截断上一条；改成**按行首收 + 非行首须条号递增且 ≥25 字**，切出 119 条＝官方条数（原 123 条含 4 个重复条号）。**切出来条数必须等于官方条数（119/24/65/73），不等即 fail。**
+3. **「附件：」污染**：附件名与附件正文被算进第二十四条 → 题 20/25/26/27 误配到「本办法自颁布之日起实施」；正文在「附件：」处截断后 4 道回候选清单。
+4. **语料降级**：《管理办法解读》是 PPT 转文字（条号重复 8 处、正文碎）→ 不再当条款依据，改用正文/附件。
+5. **锚词撞夹注**：`CURATED[23]` 锚词「坚持中国共产党对保守国家秘密工作的领导」对不上 —— 法条原文在「保守国家秘密」后插了「（以下简称保密）」→ 锚词收短为「坚持中国共产党对保守国家秘密」，并保留运行时断言（原文一变就报错）。
+6. **出处映射必须用 `cite_law.flat()`**（连标点一起抹）：只抹空白永远匹配不上（CSV 句子有「，」、语料是扁平的）。
+7. **「最近的 N． 小标题」会错**：灭火器对了（→动火作业安全防护用品配置）但安全带错了 —— 原文小节顺序与题目顺序无关（「安全带每 2 年承重测试」排在「动火作业」标题之后）→ 出处**退回「一、」这一级**：粗，但一定对。
+8. **`/api/quiz?bank=X&type=all` 返回 0 题**：接口把 `type` 直接与题目 `type` 比较，值取 `all` 就一题都匹配不上（正确用法是**不带** `type` 参数）。排查时一度以为新库没进索引。
+9. 自查脚本别把中文 URL 直接塞进 `urlopen`（未编码直接抛异常，误判成应用坏了）—— 用 `urllib.parse.urlencode`。
+10. 考试记录的 `create_date` 是**毫秒时间戳**（`1790058322383`），不是字符串日期；年份从 `exam_name` 里正则抽。
+
+### 5. 决策（细节见 D-043~D-050）
+- **按考试年份分库**：`banks/baomi-<年>.json`（2024 卷 / 2026 卷）+ 跨年错题库，避免「一年一改卷就把上年题目标题写错」。
+- **依据宁缺勿假**：配不上就进 `NO_CLAUSE` 并写清原因 —— 保密第 1/7 题（修订概览 / 政治表述）、2026 卷第 3/5/7 题（党史典故：平安家信 / 分批移交防务 / 谢觉哉日记○○○○○）、第 15 题（「一般涉密人员脱密期不少于1年」的**数值不在两法正文**，出自未入库的《涉密人员保密管理办法》）、电信第 44 题（**原文口径与题库答案冲突**：附件写季度/半年，题库答案写半年/每年，三项两项对不上）。
+- **external 两不进**：保密两个/三个库不进电信模拟考池（实测池子仍是 365 题）、不进覆盖率分母（否则跨门语料把 54/365 悄悄涨到 55）。
+- **五档匹配越往下越保守**，且档位可核：长窗（分高/中/低）→ 结构/沿革实测（从文件本身数出来）→ 人工核·锚词（写死条款 + 锚词运行时断言）→ 数值锚定·小节（答案数字必须真出现在原文某句 + 题干与该句 ≥8 字连续重合）→ 候选（不写库）。
+- **只读边界**：整卷来自本人历史考试记录（`examRecord.do` 的 `content`），不碰 `getExamContentData.do`（开考后才拿得到）、不点开始考试、不消耗次数。
+
+### 6. 已知 follow-up
+- **mylearning 侧仍是死结**：题库模块被服务端开关关着；且**不及格看不到卷**（81 分＝不及格，`paperViewRule = -1`）→ `jr/tools/kc-archive-exam.js` 嗅探器已修（须在页面导航前装好）但**仍未拿到真实答卷**，前提是用户本人有一次及格考试。
+- **保密 4 道不配**：3 道党史典故要补只能找党史读物；题 15 的期限值要补得先入库《涉密人员保密管理办法》。
+- **电信侧 351 道待配**（`crawl/电信真题-待配条文.md`）：docs-* 与云改卷出自教材正文、没有「第N条」，依据走 `kb_pages.py` 页码索引，别拿《管理办法》硬配。
+- **27 个平台「转换后的文字文件」没下全**：直链带分钟级过期 `auth_key`，`preview` 接口会限流。
+- **及格线未知**：i18n 里没有具体及格线（81 分＝不及格说明线在 81 以上）；保密侧是 60-89 合格 / 90+ 优秀。
+- **仍可选**：把 4 道「无法规依据」的题在解析里显式标注（别让刷题的人以为漏配）｜2026 卷新考条款做一页「新规变化点」速览｜**git 仍未提交（93 项）**。
+
+---
+
+## Session: 2026-09-21 — exam-lookup 本地备考台（网页查题 + 刷题 + 官方原文依据库 + 通信安全 50 题入库）
 
 ### 1. 触发
 用户备考中国电信综维装维 / 通信安全生产类认证考试，先要「长期可复用的方案（本地题库沉淀、错题复习）」，
@@ -1739,7 +1932,29 @@ cargo test --bin x-video-downloader -- --ignored \
 | D-030 | 2026-09-22 | 依据库 | 新增 `kb_pages.py`：教材页码索引 + 考点→页码对照；阈值可调（默认 1.2/1） | accepted | kb 只能按关键词回原文、不知道页码；考点对照让刷题时能直接翻书。默认命中 68/366、通信安全 5/50，实测抽检 5 条中 3~4 条页码正确 | 命中率要求更高时改打分（当前 4 字窗 + IDF 加权） |
 | D-032 | 2026-09-22 | 依据库 | `kb_pages.py` 的 PDF 范围补上 `jr/out/官方原件/*.pdf`（命题主依据《管理办法》《解读》） | accepted | 页码索引原先漏了这两本最重要的书：33 本 / 2031 页（原 31 本 / 1958 页）；代价是「稀有窗≤3页」判据变严，考点对照命中 68→48/366（保守，宁缺勿假） | 要放宽用 `kb_pages.py map 1.0 1` |
 | D-033 | 2026-09-22 | 备考 | 新增 `num_points.py`：抽出教材/规范里含数字的规范句 → 出处+页码+对应题库题号（441 条，其中 201 条已考过；`crawl/数字考点速查.md|.csv`） | accepted | 安全卷失分集中在数字型规定（5kg/2.5m/30分钟/3年/1cm），散在 30 多本书里；与题库交叉标出「哪些数字已考过」 | 只收「有规范措辞」或「题库考过」的句子，否则 1 个/2 台 这类噪声占多数 |
-| D-047 | 2026-09-22 | 备考 | 电信侧数字型题补依据：① 新增第 4 档通道「**数值锚定·小节**」——答案里的数字必须真出现在原文某一句里、且题干与那句有 ≥8 字连续重合才认，出处标成「《管理办法（试行）·附件》三、综维装维安全生产操作要求 / 1.人员行为规范。」这种小节路径 ② 新增电信侧人工核·锚词 3 条（题4 高处作业定义 →《管理办法》第十三条「坠落高度2米以上」；题22 复审提醒 →第十六条；题62 安全带松紧度 →附件1）③ 人工核通道支持附件锚词（law 写成「X·附件」时按句子单元核，标签取小节路径）④ 电信命中 22→**30/373**（安全卷 dtzx-safety **26/62**），保密侧不变 45/47 | accepted | 用户「按照你建议」＝做上一轮选项 A：电信 351 道待配题里挑数字型规定钉到具体条款 |①数字型规定大多写在《管理办法》**附件1《综维装维安全生产作业规范》**里（5kg 脚扣、0.5m 梯子高出吊线、6级大风…），那里没有「第N条」编号、只有「一、/1.」小节 → 只能按小节定位，不能假装是法条 ②新通道只跑「还没配上且答案含数字」的题，句子单元按语料缓存（电信 630 条 / 保密 297 条），数字当索引先过滤再算最长公共窗 ③**发现一处题库与原文口径冲突**：题44「防护用品维护与报废」官方答案说「绝缘工具每半年1次、安全帽每年1次」，附件原文是「每季度1次、每半年1次」——写进 `NO_CLAUSE` 并注明不一致，不配依据（硬配会把错的口径写进解析）④题21（非开挖定向钻孔 2.5m）原文只有三线交越/高压线两处 2.5m，语境不符 → 同样不配 ⑤验证：`GET /api/quiz?bank=dtzx-safety.json` → 62 题、26 题带依据；`cite_law.py selftest` 两侧绿、13 个老自检全绿、q 表 413 题、shiroha 12 库 / 1000 题 |
+| D-069 | 2026-09-26 | 视频工程 | 官网文档站本地镜像方式：`wget --mirror --page-requisites --convert-links --adjust-extension --no-host-directories` 抓全站 + **在每页 `<head>` 最前注入捕获阶段点击拦截**（标记 `data-offline-nav`）屏蔽 Next.js 客户端路由 + `scripts/mirror_docs.py` 做「sitemap 61 个 URL 全落地 / 站内 7092 处引用全本地」校验 | accepted | 纯文本副本 `docs_raw/`（57 页）只能当写作依据、不能当读物；直接 wget 的镜像点侧边栏**没反应也不报错**（客户端路由要联网取 RSC 数据），离线读等于废的。注入位置是关键：Next 的处理器也挂在 document 上，同节点同阶段按注册顺序执行，放 `</body>` 前抢不到，必须在 `<head>` 最前 | 官网换框架（不再 SSR / 不再是 SPA）或两种副本的用途合并时 |
+| D-064 | 2026-09-26 | 视频工程 | 字幕时间轴：短句固定 `MIN_DUR=0.9` 地板、**长句按比例缩到剩余预算内**、每条兜 `LAST_RESORT=0.12` 最小窗口；「地板撑爆就把全部时长等比缩」**否决** | accepted | 旧实现 `dur=max(0.9, 比例份额)` 与 `end=min(t+dur-0.06, 配音+0.6)` 是一对互相矛盾的约束：碎片多的场景 Σdur 超配音长度 → 游标走过封顶点 → 末条 `start > end` 负窗口 → 渲染器静默跳过（画面里没有）、`.srt` 照样写出去（下集 `00:08:21,818 --> 00:08:20,700`），丢了「的完整指南」；实测 **31/50 场景**超、20 个超 0.5s、最坏 `c4-13` **+2.50s**。否决等比缩：1 字碎片（硬折留下的孤立「，」）会拿到 0.12s 窗口，用「看不见的字幕」换「读不完的闪光」（第一版实测 7 条 `<0.35s` warn） | `MIN_DUR`/`TAIL` 改动，或单场字幕条数再翻倍时重估地板与预算的配比 |
+| D-065 | 2026-09-26 | 视频工程 | 超长折行**含拉丁字母就退回最近词边界**（空格/斜杠/连字符/下划线/点号，窗口 `n..n-14`），CJK 仍按字数硬折；同时把「字幕零显示窗口」从静默跳过改成构建期 `[cue] WARN`，并新增 `scripts/check_cues.py`（50 场景：逐字不丢 / `end > start` 且起点 ≤ 配音 / 无词内断，exit 1） | accepted | 按字数硬折切出 **37 处**半截词开头的卡片（`ablyai/orca/orca`、`ee；中间是主区域`、`node_mo`、`estration --full 拿版本匹配`），而教程观众正照抄命令；「静默跳过」把两件套缺陷（画面缺 + `.srt` 非法）藏到成片里才可见 | 字幕字号或 `MAX_CHARS` 改动时（`MAX_CHARS` 就是折行窗口） |
+| D-066 | 2026-09-26 | 视频工程 | 片段缓存 key（`lib/pipeline.py` `clip_for`）必须含**每段 `hold`**，不能只有源图路径指纹 + 总时长 + `STYLE` + 分辨率 | accepted | 只改字幕**时间轴**不改**文本**时那三项全不变 → 同一个 key → 旧片段被复用，修好的字幕永远进不了成片（补不上这条，D-064/D-065 修了也白修）；本项目第二次踩「缓存层少维度」（另一次是 `caption_png` 的 key 要含源图 size+mtime） | 新增缓存层（PNG → 片段 → 成片）时逐层核对 key 是否覆盖全部渲染输入 |
+| D-067 | 2026-09-26 | 交付物清理 | `out/` 里被两集版取代的旧产物（`Orca教程_精简版12min_1080p.mp4` 160MB、`orca_tutorial_720p.mp4`、`样片_v3_跨章.srt`/`样片_v5_动效.srt`、`palette_preview.jpg`、11 个 `build_*.log`）与 `out/old/`（92MB 修复前版本）是否删除 | **pending** | 用户一贯要求改版后清掉旧衍生文件，但这次是我主动把 v2 留在 `out/old/` 供对比、用户尚未表态 | 用户回复清/留；`out/old/` 建议留到用户确认 v3 没问题之后 |
+| D-068 | 2026-09-26 | 视频工程 | 截图页「真实 Orca 深色界面配浅底页」是否加浅色衬底 + 圆角卡片（`lib/slides.py` 的 `shot` 一处改动） | **pending** | 白底页看着仍偏暗，是上一轮就提出的观感问题（截图来自深色主题的 Orca 窗口），用户当时未决定 | 用户定做/不做；做了要全量重渲两集（~25 分钟） |
+| D-063 | 2026-09-22 | 备考 + 采集 | 三件事：① **背题材料从 1 份 343 条扩到 4 份 1253 条**（用户「背题的资源太少了」）：新脚本 `make_cards.py`（零依赖 + selftest）把两类原文做成卡 —— **数字考点卡 221 条**（`crawl/数字考点速查.csv` 441 行里能对上原文完整句的部分；生成题受「同单位 ≥3 个真实干扰项」只出得了 60 道，卡片不用选项所以能全量背）与 **考点解析卡 22 条**（语料里「X 是指…」「X 包括：…」定义/清单句，只收安全管理规章/教材/手册）；再把手上的 **保密公开卷 667 道**也做成「看题看答案」卡（`bank_cards()` 只收 `meta.public` 的库，免得电信那几套在刷题页和背题页重复）。产物落 `crawl/{数字考点,考点解析,保密公开题}-问答.json` —— 文件名带「问答」就被背题页的 `crawl/*问答*.json` 扫到，**后端零改动**。② **导入题目文件功能**（用户「页面应该考虑导入有题没答案的文件」）：`webui.py` 加 `POST /api/import`（浏览器把文件读成 base64 发过去）与 `POST /api/import_model`（未命中的交模型兜底，上限 20 题）。切题：题号法（`1.`/`2、`，要求编号严格递增，至少两处）否则空行法；`txt/md/csv` 直接解码（带 GB18030 兜底，微信/Word 导出的中文 txt 常不是 UTF-8）、`docx` 用 zipfile 扒 `document.xml`、`pdf` 借系统 `pdftotext`、老 `doc/xls` 明确报错。逐题先查题库（给答案）再走依据探针（给原文条文），结果表带徽标统计 + 导出 txt/csv + 「交给模型兜底」。实测一份 3 题的无答案卷：题库命中 2、仅有依据 1。③ **2026 年电信资料采集**（用户「多加些 2026 年电信方面的资料」）：从技能认证专区页挖出 33 个 2026 条目 → 登记 9 个新专题（服务投诉处理/智能客服 AI 训练师/政企客服专席/AI 专业/数字生活/信创产数/天翼物联/视联网/基础设施开放共享）到 `crawl/cms_subjects.json`（38 → 47），采集 **397 小节**；`kb.py build` 后语料库 **3028 → 5494 块 / 217 万 → 240 万字**（其中 2026 专题讲义文字 28.4 万字：cms-2026-4 AI 专业 13.8 万、视联网 6.0 万、信创 4.3 万、天翼物联 4.2 万），已可检索（`kb.search` 视联网/信创/大模型/物联网 都有命中）。顺带修 `jr/tools/kc-attach-manifest.js`：原来一次 evaluate 塞 596 个附件 id → 撞 15s 页面求值超时，改成**每批 40 个 + 复用已有直链缓存**（重跑只补新专题） | accepted | 用户三连「背题资源太少」「要能导入无答案文件」「多加 2026 电信资料」都是同一个诉求：让手上还没变成「可背/可查」的材料进来 | **仍未解决**：2026 那批教材/大纲的「转换文字档」（`_t.txt`，155 个）直链 404 —— 裸 fetch、带 cookie、带鉴权头、`download?id=` 四种试法全 404（与 D-059 记的 64 个同因），所以 2026 只吃到了讲义文字与 1 份 PDF；另外 cms-2026-7 有 30+ 个「课后测试」小节 `preview` 返回 200 null（题目本体的老墙）。想吃到 2026 教材正文，得看平台是否按需生成转换（先在小节页里打开一次再重解析）|
+| D-062 | 2026-09-22 | 题库 + 界面 | 用户「继续」+ out-of-band「这个页面应该加入一个清除按钮呀」两件一起落：① **保密公开题入库（真题目，非生成题）**：`parse_pub_quiz.py`（新脚本，零依赖 + selftest）把**中国科学院官网公开的《保密知识测试题及答案》PDF**（`imp.cas.cn`，原件 `crawl/pub-lib/中科院-保密知识测试题.pdf`）解析成 `banks/保密公开题-中科院.json` —— **667 题**（单选 349 / 多选 155 / 判断 163），答案按原卷自带，带 `meta.external` + `meta.public`；实测 `kb_coverage.py` 输出里 0 次出现它（不进电信模拟考池、不进覆盖率分母），`solve.py build` 后 q 表 433 → **1100 题**，`sync_banks.py` 后刷题端 13 库/1022 题 → **14 库/1689 题**，全库合计徽标 12 套/629 题 → **13 套/1296 题**。**收件规矩（写下来免得下回放宽）**：只收机构/高校官网发布的成套测试题，**不碰**文库（renrendoc/book118 之类）标题写着「某年线上培训考试题库」的转载件 —— 那是考卷泄露，不是公开资料。解析要处理的坑：选项有三种排版（一行 `A 甲 B 乙 C 丙`／换行堆叠／折行劈词）；答案行会被分页符顶到行首（`…国家安全工\n作部门\n\f答案：A`）→ 用 `^[ \t]*答案` 卡死会把这条答案吞进下一题、整题选项跟着串位；判断题原卷只给「正确/错误」要转成 `A 正确 / B 错误`；PDF 折行处汉字之间的空格是排版残留要并掉（拉丁字母间保留，如「U 盘」）。② **清除按钮**：查题页 `查询` 旁加 `清除`（内联 SVG + `aria-label`）→ 清输入 + 上次结果 + 状态行、光标回输入框（联网兜底是设置不清）；刷题页与背题页的 `⋯ 导出／备份` 里各加 `清空本库错题本（不可撤）`／`清空待背清单（不可撤）` → 先报要清几条再问一句，确认后 `localStorage.removeItem`，徽标当场归零。实测（`verify-clear.js`，全程走 `jr/tools/storage-guard.js`）：查题页 输入 19→0、结果区 263→0、`activeElement=q`；错题本 3 道 → key 变 null、徽标 3→0；待背 2 条 → 0。③ **反向结论（做了并否掉，避免后人重走）**：生成题扩容走不通。先放宽来源（直接从 kb 挖数字句 + 把干扰项词表与出题句解耦）+ 单位别名归一 → 出到 124 题，但题干脏（「灭：动火范围…」表头半句、客服营销句混进命题范围、PDF 断行「…帽壳强」）；把卫生规则收紧到「完整句 + 安全主题 + 规范措辞」反而掉到 42–50 题，比基线 60 题还少；扫全语料确认除《第五篇 线路安全作业规范》外**没有成题区**（判断/填空/练习标记只在那儿）→ 回滚到基线 60 题。题量只能从「采集真卷」来，不能靠生成 | accepted | 用户两次点到的缺口是「题目太少」与「清不掉」，前者只有公开真卷这一条不碰红线的路（平台题目本体受服务端开关 `COMPANY_PRACTICE_SWITCH_CONFIG="0"` 挡住），后者是连着查题时的实际痛点 | 想继续加题：找更多机构公开卷（同一套解析器可复用，`crawl/pub-lib/*.txt` 丢进去就行）；或本人考试及格后在成绩页存档（D-032 那条仍未完成）。清除按钮的 html 落点是 `#clearq` / `#clrwrongs` / `#clrcards`，别加回「一键清所有库」这种没确认的入口 |
+| D-061 | 2026-09-22 | 备考 | 新增**背题页**（第三个页签，用户「继续」＝做上一轮的 B 方案）：把 343 条官方问答做成「看题 → 看答案 → 记住了/没记住」的自评卡。① `webui.py` 加两个只读接口 `/api/cardbooks`、`/api/cards?book=&chapter=`，真源就是 `crawl/*问答*.json`（`parse_handbook_qa.py` 产物），**不复制第二份、不进 `banks/`、不动查题索引与覆盖率分母**；② `ask.html` 加页签 + 面板（材料/章节/题量下拉、开始、只背没记住的、`⋯ 导出／备份`）、键盘 `空格`/`Enter` 看答案 · `1` 没记住 · `2` 记住了 · `→` 跳过；③ 待背清单存 localStorage `examcards:<材料>`（与错题本同源），可导出/导入 json（合并不覆盖）；④ `导出这本问答 md`（实测 343 节 / 188 KB，带章节与手册页码）。顺带修一个通用 bug：点完按钮焦点留在按钮上，空格/Enter 被浏览器当成「再点一次这个按钮」→ 刷题页 1–5、背题页空格全哑（实测踩到）→ 全站点按钮后 `blur()`，焦点交回页面 | accepted | 「题目太少」最实际的补法：真题池受限于服务端开关（取不到），但官方问答有 343 条是现成的；问答题没有选项，塞进刷题页只会得到一堆点不动的题（这判断写在 README 里），所以单列一页 | 以后别处再抽到问答体材料，只要产物落成 `crawl/*问答*.json`（`questions[]` 带 chapter/page/num/q/a）就自动出现在下拉里；题目本体若哪天真能取到，仍走 `banks/` 那条线 |
+| D-060 | 2026-09-22 | 界面 | 把 `ui-ux-pro-max` 真的跑起来（用户「好的」＝接着上一轮 A 方案）：`git clone` 它的 skill（本地 `scripts/search.py` + CSV 语料，零依赖）→ `--design-system --persist -p exam-lookup --output-dir exam-lookup --variance 4 --motion 3 --density 8` 落盘 **`design-system/exam-lookup/MASTER.md`**，再 `--page practice` 落页面级 override；随后按它的交付清单与 WCAG 逐条复检，并手写取舍表进 `pages/practice.md`（生成建议 vs 本项目实际：不采纳 FAQ 落地页版式与 Atkinson 字体，CTA 仍按 shadcn 走中性色；采纳「禁 emoji 当图标」「对比度 ≥4.5」）。**实测抓出一处真不达标**：浅色次要文字 `#71717a` on 徽标底 `#f4f4f5` = **4.40** → 改 `#6b6b74` = **4.80**；其余 11 组 5.02–19.90。另把 ✅/❌/⏱/⚠ 四个 emoji 图标换成内联 SVG（`.ico`），现在整页 innerText 里 emoji 数 = 0 | accepted | 之前是「我照 shadcn 手写」，现在是「工具生成设计系统 + 页面级 override + 检测清单」三层都留了证据文件 | 生成器把产品判成「FAQ/文档落地页」，关键词再改也偏文档向；真要页面级建议得自己写 `pages/*.md` |
+| D-059 | 2026-09-22 | 采集 | 「继续爬取按照规则入库」落地：① `kc-harvest-subjects.js` 改成读 `crawl/cms_subjects.json`（38 个专题登记表，不再硬编码），新采到 11 个专区（cms-3…cms-13；cms-5 客服 52 件、cms-6 云网、cms-4 政企、donghuan 动环、jieru-wang 接入网）；② 新增 `jr/tools/kc-attach-manifest.js` —— 把 `crawl/subjects/*.json` 里的附件 id 逐条走 `preview` 解析成自鉴权直链，出 `crawl/attach-manifest-new.json`（198 条 / 7.87GB）；③ `kc-download-attach.py` 改**按扩展名白名单**下载（原来信 `sectionType===2` 判视频，实测一批 mp4 的 sectionType 不是 2 → 会去拉 7.5GB 录像）：真文档 134 个 / 369.8MB，实下 **55 个新文档**（cms-5 客服教材与法规附件、xianchang 课件、donghuan 等）；④ `kb.py build` → **1105 → 3028 块 / 695,382 → 2,167,569 字**（新增「产品与业务基础知识篇」191 块 15.1 万字、「企业文化基础知识篇」147 块 11.9 万字、《广告法》《反电信网络诈骗法》《电信服务规范》《用户申诉处理办法》等官方原件；另新专区的视频课件文本 cms-7 396 / cms-8 160 / cms-10 83 块）；⑤ 新文档里查过问答体密度（≥15 处「？答：」的只有 wxaq 那 4 本手册）→ **没有新的官方问答可抽**，343 条问答不变 | accepted | 用户要「按规则入库」＝走既有管线（下载 → `kb.py` → 报告），不手工塞库；题目本体依旧取不到（D-056 台账） | 仍是 64 个 `_t.txt` 转换文本下不来（直链带分钟级失效 `auth_key`）；想要更多题只有生成题扩容 / 本人考后看卷两条路 |
+| D-058 | 2026-09-22 | 界面 | 按用户点名的三份参考重做界面：`ui-ux-pro-max`（读其 SKILL.md：先定设计系统 MASTER，再落页面）、`shadcn/ui`（令牌与组件口径）、`ui-animation`（动效时长/缓动：状态切换 100ms、hover 150ms、浮层 180ms、只动 transform/opacity、必须给 `prefers-reduced-motion` 出口）；另拉 Vercel《Web Interface Guidelines》当检查表逐条过。落地：① 令牌换 shadcn 中性色阶（深 `#0a0a0a`/边 `#262626`、浅 `#ffffff`/边 `#e4e4e7`），主按钮＝高对比中性（不再用蓝）、圆角 6/8/12px、浅色下卡片带 `shadow-sm`；② 组件：分段式 TabsList、DropdownMenu（`⋯ 导出／备份`，右对齐、`shadow-md`、180ms pop）、Card、Badge（全库合计从一句话改成 5 个徽标）、`<kbd>` 键位芯片；③ 无障碍：`role=tab/tabpanel` + `aria-selected`、图标按钮/下拉/文本框全补 `aria-label`、跳转链接、`theme-color` 随主题变、选项从 `<div onclick>` 改成 `<button>`（键盘可达、焦点环 2px）；④ **控件字号一律 1rem（＝正文 17px）**，shadcn 默认的 `text-sm` 14px 与用户「控件字比正文小是硬伤」冲突，以用户规则为准 | accepted | 用户先发截图说「按钮和组件有点乱」，再点名这几份参考 → 不是皮肤问题而是「没有设计系统」：令牌/组件/无障碍/动效四层缺三层 | 想再进一步：把 `design-system/MASTER.md` 真跑一遍 `ui-ux-pro-max` 的检索脚本（需 npx/网络），或按 shadcn 再上 Tooltip/Toast |
+| D-057 | 2026-09-22 | 界面 | 刷题页操作区分三行重排（用户截图：「页面中按钮和组件有点乱」）：选库一行；主操作一行（只保留 `开始/重开` 一个主色，`只练错题` `模拟考` 退次级）；工具行 `导出／备份` + 四个按钮；说明文字从按钮中间挪到底部 hint 行。顺带把 `全库合计` 行三组数之间加 `｜` 分隔（全角空格在深色主题下会连成一长串） | accepted | 「乱」的根因是控件没有分组、两个主色按钮同级、说明文字混进控件行，不是皮肤问题 | 同类检查：所有控件/标签字号必须 ≥ 正文（实测 下拉/按钮/标签 17px vs 正文 15.3px），不许用缩字号做层级 |
+| D-056 | 2026-09-22 | 采集 | 按用户给的 cms.mylearning.cn 技能认证专区链接继续爬：先用真浏览器把之前静态抓成空白的 8 个专区页渲染出来（技能认证/认证中心/智能云/客调支撑/网络和信息安全…），确认该站只是**索引**（没有总的专区列表页，`…/topic/index.html` 与 `…/resource/index.html` 都 404），链接全指向 kc.zhixueyun.com 的「学习专区/教材入口」；从「网络和信息安全」专区拿到 4 本《应知应会手册》，用 `preview` 接口的自鉴权直链下全（2.6MB），灌进语料库 → `kb` 1006→**1105 块**、619,060→**695,382 字**；手册是问答体，`parse_handbook_qa.py` 抽出 **343 条官方问答**成背题表（crawl/网信安-应知应会-问答.md/.json，自检含「跨页答案不许被截」断言） | accepted | 用户说「题目太少了，继续爬」；实测**题目本体取不到**（台账新增一节：`businessId` 名字对上了，`exam/question/front/page` 返 200 全 null，其余路径 500），所以这轮交付的是「能爬到的资料文档 + 教材里的官方问答」，不是真题 | 想要问答题进刷题页得先做「看题-显答案」自评卡（webui/ask.html 各加一条分支）；想要更多选择题只有生成题扩容或本人考后看卷两条路 |
+| D-055 | 2026-09-22 | 备考 | 浏览器验证脚本加**存储护栏**：`jr/tools/storage-guard.js` 的 `withStorage(page, fn)` 先快照 localStorage、结束后按快照恢复（多出来的键删掉、改过的写回）。起因：为验「错题本导出 json」我直接在 **用户浏览器 profile 的同源页面**上 `localStorage.clear()` 了一把 —— 那个 origin 存着刷题页的错题本（只有题号 id，没备份就找不回来）；用户日常窗口是另一个浏览器，所以他的 13 道没丢，但这是运气不是设计 | accepted | 教训：自动化测试碰用户真实数据前先快照；`clear()` 只在能保证无真实数据时用 | 以后写浏览器测试统一 `require` 这个护栏，别再手写 clear |
+| D-054 | 2026-09-22 | 备考 | 刷题页加一行**全库合计**：`全库合计 12 套 / 629 题　单选 321 · 多选 105 · 判断 203　错题本合计 N 道`（用户截图：界面上看不到「整个题库收录了多少题、各题型多少」）。数据来自 `/api/banks` 前端求和，`showAllStat()` 挂在 `showBookInfo()` 里，所有刷新点自动带上，不用另加调用；`webui.py selftest` 加断言「每库题型分布之和 == 题数」 | accepted | 服务端一行没改：`/api/banks` 本来就逐库带 `count`/`types`，缺的只是把它们加起来显示 | 想要真题/合集/生成题分类小计的话，得让 `bank_list()` 多吐 `meta.external`/`meta.generated` 两个标记 |
+| D-053 | 2026-09-22 | 备考 | 导出再加两件：① `导出本库 md` —— 同一份内容出 Markdown（`# 库名` + `### 题干` + `- **A.** 选项` + `**答案：**` + `> 依据：…`），丢进 Obsidian/Notion 就是排版好的复习页；② `错题本导出 json` / `错题本导入 json` —— 把 localStorage 里所有库的错题本（`examwrong:<库名>`）打包成`错题本-全部-YYYY-MM-DD.json`，导入按库**合并（不覆盖）**，换浏览器/换机器不用手抄。实现上把取题+表头抽成 `bankData()`、下载抽成 `saveTxt(name, txt, mime)` 供 txt/md/json 共用 | accepted | 用户回「继续」＝接着做上一轮提的 A（Markdown 导出）与 B（错题本 JSON）；md 与 json 都各写三五行的东西，复用已有 fetch/排版/下载，不值得各写一套 | 若要 CSV（便于 Excel 统计）或按题型分别导出，在 `bankData()` 上加过滤即可 |
+| D-052 | 2026-09-22 | 备考 | 导出 tex 不带溯源噪音（用户：「导出的题库内容中不要保留解析：来源信息呀？」）：`fmtQ()` 里加 `cleanAnalysis()` —— 解析按 ｜ 分段，有「依据：」就整块丢掉它前面的溯源段、只留依据；没有依据的纯溯源段（「来源：…」「答案来源：…」「【答案来源】…」）整段丢掉，剥空就不显示「解析：」行；被剥掉的溯源用 `provOf()` 收集，在**表头统一说明一次**（`答案来源：…（N 题）；其余 M 题无溯源说明`），并把重复的「来源：」前缀去掉。**第二轮（用户拿导出的文件指出）**：保密的解析不止一段溯源，没配依据的题是「来源：…（本人历史考试记录…）｜这场得分 100.0，本题我答对了」——只按「来源：」前缀匹配会把后一段漏出去（导出里就剩「解析：这场得分 100.0，本题我答对了」），补上 这场得分/本题我答对/本题我答错/本人历史考试记录 四个特征词；顺带：`docs-*` 那几套用半角 `|` 当分隔符（两种都要切）、表头溯源里的内部路径（`~/Documents/考试.txt.txt`）剥掉、没溯源就不打「答案来源：」这行（原来会印成「答案来源：其余 62 题无溯源说明」）；**第三轮（用户再指一次「你再看看改了吗」）**：连表头那行「答案来源：…」也去掉（导出里出现「来源」两个字就是不想要的），`provOf()` 一并删除不给死代码；全 12 个库逐个导一遍体检过（唯一命中是误报：正文里的「计入非线性来源」）；最终 保密 2026 卷 14,424 → 11,484 字节、长期合集 36,435 → 31,210 字节，含「来源/得分/答对/本人历史」的行数 0 | accepted | 那些溯源是自己看的账（本人历史考试记录/这场得分/本题我答对了、试卷自带未逐题核对），打印或搬去手机时是噪音；但「答案未经官方原文核对」这类信息有保留价值 → 上移到表头一次 | 若想连表头也不要溯源行，删 `provLine` 那一行即可；若以后要导 Markdown/CSV 同样复用 `cleanAnalysis` |
+| D-051 | 2026-09-22 | 备考 | 刷题页加 `导出本库 txt`（用户问「html 页面应该加入一个导出每个题库的功能？」）：一次导出整个库 —— 库名 + 题型分布 + 逐题题干/选项/答案/解析/条文依据，落地 `题库-<库名>.txt`；实现是把原有「导出错题 txt」的取题/排版/下载三段抽成 `fmtQ()` / `saveTxt()` 复用（`exportWrong` 也改走它，实测没坏） | accepted | 源真源本来就是 `banks/*.json`（要 JSON 直接拿文件），页面导出补的是**人读/可打印**那份，省得为了打印去翻文件；顺带修下拉题数重复显示（「（2024 卷 · 47 题）（47 题）」→ 标题已含题数就不再补） | 若以后想导 Markdown/CSV 或想连错题本一起导成 JSON（跨浏览器搬错题），在 `saveTxt` 上加一个分支即可 |
+| D-050 | 2026-09-22 | 备考 | **2026 保密教育考试已考完并落库**：你本人 9-22 那场 **100 分 / 20 题**（单选 15 + 判断 5，全对），只读拉自己历史记录（`examRecord.do` 的 `content`＝整卷）→ `banks/baomi-2026.json` 20 题，含官方答案与你当时的作答。① `parse_baomi_records.py` 改为**按考试年份分库**（`banks/baomi-<年>.json`：2024 卷 47 题 / 2026 卷 20 题 + 错题库 17），并给 2026 卷补 `year` 字段、`carry_over` 按库各自带法条（自检断言 2024 47 题、2026 ≥15 题、重跑不丢法条）；② `cite_law.py` 保密语料加 2026 卷 → **16/20 配到条款**（13 自动 + 3 人工核·锚词：题17 法第六十四条工作秘密要保护、题19 法第三十一条物理隔离、题20 条例第四十二条先审查后公开）；4 道不配并写明原因（题3/5/7 党史典故、「平安家信」/「分批移交防务」/「谢觉哉日记○○○○○」不在保密法规里；题15 问「一般涉密人员脱密期不少于1年」，该数值不在两法正文，出自未入库的《涉密人员保密管理办法》）；③ 保密合计 **61/67 = 91%**（与错题库 76/84）；④ q 表 413 → **433**、shiroha 12 库/1002 题 → **13 库/1022 题**、覆盖率 **54/365 未变**（external 不进分母）、kb 1006 块；⑤ 新增两个只读脚本 `jr/tools/baomi-exam-prep.js`（开考试页看状态）、`jr/tools/baomi-hours-check.js`（查学时门槛与按钮 disabled）；⑥ 2026 卷与 2024 卷**零重复题**（70 原始题去重 67，3 道重复在 2024 两场内部）→ 题库总量远大于手上这几张卷 | accepted | 你给考试页链接说「可以测试题目了」；我核到学时 5.16/4 已达标但**不代点开始考试**，你考完我按老路子拉卷入库 | ① 保密的考试题池比手上的卷子大得多 → 后续若还有考试机会，每考一次就多一批新题；② 4 道不配的题里有 3 道是党史典故，要补只能找党史读物（不是法规）；③ 题15 的期限值要补得先入库《涉密人员保密管理办法》 |
+| D-049 | 2026-09-22 | 备考 | 2026 保密教育课**学时门槛已过**：41 个资源 / 5.40 学时总量，已完成 **39 个 / 5.16 学时**（接口 gradeSum=5.4、studyResourceNum=39、totalGrade=5.16；门槛 4）—— 考试页「开始考试」按钮已非 disabled（只读读 DOM：`div.exam-btn`，无 disabled 类）｜新增两个只读脚本：`jr/tools/baomi-exam-prep.js`（开考试页 + 装只读接口记录器）、`jr/tools/baomi-hours-check.js`（查学时与按钮状态，顺带刷新 `jr/out/baomi/grade.json|stat.json`）；`crawl/保密培训-学时清单.md` 已重跑（还差 0.00） | accepted | 用户给考试页链接说「可以测试题目了」＝学时够了、可以开考 |①本轮的边界照旧：**不点「开始考试」**（那是考生本人的考核），只做只读 GET 与考后归档；②考试页现行规则（页面原文）：**20 题 / 满分 100 / 60-89 合格 / 90+ 优秀**，组织单位 国家保密局宣传教育司，培训期 2026-06-05~10-30；③历史记录仍是 2 条（2024 年，25 题，92 分与 28 分），考后归档走老路子 `examRecord.do`（`content` 字段＝整卷） |
+| D-048 | 2026-09-22 | 备考 | 生成题（数字挖空）这一路做了一轮质量升级：① 解析里改放**整句原文**（原先 tidy 会把含数字的末句掐掉，答案在解析里查不到）② 出处写成人能翻到的小节：来自《管理办法》正文/附件1 的句子写成「《管理办法（试行）·附件1》安全防护用品配备 第24页」（**只标到「一、」这一级**）③ 类别 6→8（加 `个数`/`人`），并新增两道防错：`每 12 个月` 被抽成 `12个` 时补回真实单位、量词后被断行截掉的直接丢 ④ 条数 58→**60**（单选 30 / 判断 30），shiroha 1000→**1002 题** | accepted | 用户「继续」＝上一轮说完「剩下两个口子都不在你我控制范围」，于是把还在本地能力内的备考资产继续做实（memory 里列的「数字冲刺」那条）|①**不要往里精确定位到 `N．` 小标题**：原文小节顺序与题目顺序无关（「安全带每 2 年承重测试」那句被排在「动火作业安全防护用品配置」标题之后）→ 先试了一版「最近小标题」，灭火器对了、安全带错了，退回「一、」级（粗但一定对）②复用 cite_law 的 `sent_units` 做出处映射，**必须用它的 `flat()` 把标点一起抹掉**：只抹空白的话「…吊线时，其顶端…」带逗号的 CSV 句子永远匹配不上小节 ③`pool.get((cat, unit))`：补单位后可能整类都没同伴，直接 KeyError（踩过）④新增类别的规范措辞判据要认 `是/1/y/yes` —— 数据里是「是」不是「1」（踩过，一版筛出 0 题）⑤`make_drill.py selftest` 与 `cite_law.py selftest` 双侧全绿；刷题接口复核 自测-安全数字 60 题 / changqi-anquan 112 题（29 题带条款依据） |
+| D-047 | 2026-09-22 | 备考 | 电信侧数字型题补依据：① 新增第 4 档通道「**数值锚定·小节**」——答案里的数字必须真出现在原文某一句里、且题干与那句有 ≥8 字连续重合才认，出处标成「《管理办法（试行）·附件1》综维装维安全生产操作要求 › 人员行为规范」这种小节路径（小节标签只收 ≤14 字且无标点的短标题 —— 包装后的正文行「1.每天出工前，检查…」不算标题；附件2 口诀 / 附件3 平安歌 另标）② 新增电信侧人工核·锚词 3 条（题4 高处作业定义 →《管理办法》第十三条「坠落高度2米以上」；题22 复审提醒 →第十六条；题62 安全带松紧度 →附件1）③ 人工核通道支持附件锚词（law 写成「X·附件」时按句子单元核，标签取小节路径）④ 电信命中 22→**30/373**（安全卷 dtzx-safety **26/62**），保密侧不变 45/47 | accepted | 用户「按照你建议」＝做上一轮选项 A：电信 351 道待配题里挑数字型规定钉到具体条款 |①数字型规定大多写在《管理办法》**附件1《综维装维安全生产作业规范》**里（5kg 脚扣、0.5m 梯子高出吊线、6级大风…），那里没有「第N条」编号、只有「一、/1.」小节 → 只能按小节定位，不能假装是法条 ②新通道只跑「还没配上且答案含数字」的题，句子单元按语料缓存（电信 630 条 / 保密 297 条），数字当索引先过滤再算最长公共窗 ③**发现一处题库与原文口径冲突**：题44「防护用品维护与报废」官方答案说「绝缘工具每半年1次、安全帽每年1次」，附件原文是「每季度1次、每半年1次」——写进 `NO_CLAUSE` 并注明不一致，不配依据（硬配会把错的口径写进解析）④题21（非开挖定向钻孔 2.5m）原文只有三线交越/高压线两处 2.5m，语境不符 → 同样不配 ⑤验证：`GET /api/quiz?bank=dtzx-safety.json` → 62 题、26 题带依据；`cite_law.py selftest` 两侧绿、13 个老自检全绿、q 表 413 题、shiroha 12 库 / 1000 题 |
 | D-046 | 2026-09-22 | 工具 | 把「配条款依据」从保密专用脚本升级成项目通用工具 `cite_law.py`（`baomi_cite.py` 已并入并删除）：① 语料可配置——电信侧收《安全生产法（2021修正）》119 条 /《管理办法（试行）》24 条 /《维护规程节选》13 条，保密侧《保密法》65 条 /《实施条例》73 条 ② 切条规则重写：挡正文里的**交叉引用**（「依照第九十条的规定追究…」也会匹配到「第九十条」，切出碎片还会截断上一条）、挡立法依据样板条、在「附件：」处截断正文；切出的条数必须等于官方条数（119/24/65/73，写进自检）③ 四档通道通用：长窗 → 结构/沿革实测 → 人工核·锚词 → 候选清单（两侧各出一份 md）④ 电信命中 22/373（安全卷 dtzx-safety 20/62），保密 45/47 + 错题库 15/17 | accepted | 用户「集成」＝把上一轮那套四档配依据做成项目能力，不只服务保密教育那一门 |①**去掉三个假命中源**：`管理办法解读` 是 PPT 转文字（条号重复 8 处、正文碎片），当不了条款依据；「附件：」后的附件名会被题干蹭到，造成「第二十四条（本办法自颁布之日起实施）」这种无意义命中（实测题 20/25/26/27 全中招）—— 截断后这类题回到「候选」②切条先按「行首」收，非行首的必须条号递增且到下一标记 ≥25 字：安全生产法 123（4 重复）→**119 条**=官方条数，管理办法 24 条=官方条数 ③教材型题库（docs-*、云改）没有「第N条」可配，依据走 `kb_pages.py` 页码索引 —— 别拿《管理办法》硬配教材题 ④验证：`GET /api/quiz?bank=dtzx-safety.json` → 62 题、20 题解析带「依据：《管理办法（试行）》第九条…」；`cite_law.py selftest` 两侧全绿、13 个老自检全绿、q 表 413 题、shiroha 12 库 / 1000 题 |
 | D-045 | 2026-09-22 | 备考 | 上一轮 10 道未配条文的题收到 45/47（96%）：① 新增第三条通道「**人工核·锚词**」——概念型题写死条款 + 锚词，运行时断言锚词真在该条里（7 道：题20→法第十五条、题23→法第三条、题26→条例第二十一条、题30→条例第五条、题33→条例第十九条、题40→条例第五十三条、题19→法第五十七条）② 新增「**沿革实测**」——「现行保密法第（）次修订」直接数文件开头的修订记录（题9）③ 第 1 题（本次修订内容概览）与第 7 题（「应党而生」政治表述）明确标**不配条文**，`NO_CLAUSE` 写清原因 | accepted | 用户「继续」＝推进默认项 A。10 道里 8 道其实能钉死，但钉法不是「猜」：要么法条里有对应条款（锚词断言），要么能从文件本身数出来（结构/沿革）；剩 2 道性质上就没有条文可配 |①锚词必须归一化后比 —— 法条原文会插夹注「（以下简称保密）」（题23 的锚词第一次就被这个卡住，断言直接报错，正是它该干的活）②新增通道的断言与长窗通道分开：人工核要「原文非空」、实测要「与刚数出来的结构/沿革一致」③候选模式对 `NO_CLAUSE` 的题只写原因不给假候选（硬凑的条款比留空更坏）④验证：`GET /api/quiz?bank=baomi-2024.json` → 47 题、45 题带依据 |
 | D-044 | 2026-09-22 | 备考 | ① 修掉一个会**静默丢数据**的坑：`parse_baomi_records.py` 重新生成题库时会覆盖掉 `baomi_cite.py` 写的 `law` 字段（实测跑一次 selftest 就把 47 题的条文依据抹了，刷题页依据消失）→ 新增 `carry_over()` 按 id 把上一版 `law` 与解析里的依据段带过来，并在自检里加「重跑不丢法条」断言 ② `cite()` 加**结构实测**通道：「共有（6章65条）」这类题直接数法条文件的章/条数，不靠字面匹配 ③ 新增 `候选` 模式：长窗配不上的 10 题出候选条款清单 `crawl/保密真题-待配条文.md`（不写题库）。现状：保密真题 **37/47**（36 条文 + 1 结构），与错题库合计 51/64 | accepted | 用户「继续」＝推进默认项 A（10 道未命中的题）。硬凑没有意义，所以拆成三件：能复算的（结构）自动写、能验证的（候选）只管给线索、剩下的等你点 |①`parse_baomi_records.py` 与 `baomi_cite.py` 现在的执行顺序不要紧 —— 顺序耦合正是这次丢数据的根因 ②结构依据的断言与条文依据分开：条文要「摘录能在原文里逐字查到」，结构要「与刚数出来的章/条数一致」 ③候选打分＝题干+正确答案里 4~8 字片段命中条款的总长度（越长越靠前），**只出清单不动题库** ④验证走 UI 真实取数路径：`GET /api/quiz?bank=baomi-2024.json` 返回 47 题、37 题解析带「依据：《保守国家秘密法》第X条…」，第 35 题为「共 6 章 65 条（全法结构实测）」 |
@@ -1754,6 +1969,10 @@ cargo test --bin x-video-downloader -- --ignored \
 | D-035 | 2026-09-22 | 备考 | 新增 `make_collection.py` + `banks/changqi-anquan.json`：「长期备考」合集=综维装维安全生产(62)+通信安全生产(50)=**112 题**，刷题下拉默认项；题头显示 `srcBank` 出处 | accepted | 错题本按库存（`examwrong:<库文件名>`），安全类分着刷=两本错题本，长期复习要来回切；已实测：判分/漏选错选/错题落盘/只练错题/导出 txt 全通 | 名字避开 `solve.py` 里同名的 `merge_banks()`（那个管自动补录题）；合集 id 沿用原题 id，所以 `solve.py build` 后查题索引仍是 366 题（REPLACE 覆盖，不产生重复）。shiroha 端 `sync_banks.py` 同步后 8 库/870 题；注意 shiroha 的「内置题库」只自动读 `banks-index.json[0]`（驾照库），要用合集需在它的 JSON 导入里选 `data/changqi-anquan.json` |
 | D-034 | 2026-09-22 | 备考 | `num_points.py 必背`：把数字考点按安全主题分桶 → `crawl/考前必背-综维安全数字.md`（234 条，164 条带 ✓） | accepted | 663 条数字句平铺不利于背；按主题分桶 + 只认安全类题库的命中（`1次/2年` 这种通用数字在别的题库到处出现，全算命中会污染 ✓ 标记） | 主题由关键词表首认领，`其他` 桶只保留安全题库考过的 | 
 | D-031 | 2026-09-22 | 抓取 | 下附件前先 sha256 比对已有文件，不整包重下 | accepted | 本轮 108 MB 里只有 3 个文件是真新增（约 8 MB），14 个 PDF 与 `jr/out/` 字节完全相同 | 平台换版本号后仍需重下 |
+| D-073 | 2026-09-26 | 备考 | `kb.search` 的 LIKE 兜底（<3 字 / fts 空命中）对 `%` `_` `\` 转义并加 `ESCAPE '\'` | accepted | 用户查询里带 `%`/`_` 会被 SQL 当通配符放大匹配；中文场景极少触发但属正确性缺口（延续 D-025「宁可缺、不给假依据」） | 检索口径调整时复核转义字符集 |
+| D-072 | 2026-09-26 | 前端 | `ask.html`：`localStorage` 解析一律经 `lsArr()`（`try/catch`+`Array.isArray`）；模拟考中途 `start()` 在确认重开后 `clearInterval + S.mock=false + paintClock()`；`submit()` 错题按 `q.bankFile` 落库 | accepted | ①一条损坏的 `examwrong:*`/`examcards:*` 值会让 `JSON.parse` 抛错、整个刷题/背题页崩；②`startMock` 会清计时器但普通 `start()` 不会 → 中途重开继承 `S.mock`（藏答案）+ 旧倒计时到点打断新轮；③重做跨库模拟考错题时全部记进第一题所属库 | 新增 localStorage 键 / 新增「可中断长流程」时套用同一护栏 |
+| D-071 | 2026-09-26 | 题库 | `solve.ingest` 的 id 由 Python `hash()` 改为 `hashlib.sha1(norm(question))[:12]`；`merge_banks()` 去重键由 `r["id"]` 改为归一化题干 | accepted | `hash()` 每进程随机加盐 → 同题两次录入 id 不同（实测 `284071136938` vs `755604882297`）→ `merge/build` 去重全失效、`auto-learned.json` 出重复题 | 任何需要「跨进程可复现 id」的地方一律用加密散列，不用 `hash()` |
+| D-070 | 2026-09-26 | 工程 | `exam-lookup/` **源码入 git、数据/语料/索引/浏览器 profile 出 git**：新增 `exam-lookup/.gitignore` + 白名单 `git add`（提交 `6eca77a`，80 文件 / +10,568 行） | accepted | 该子项目此前 93 项全 untracked（`git ls-files exam-lookup/` 只有 `README.md`）；但 `jr/profile/` 是 424MB 浏览器 profile（可能含登录态）、`jr/out/` 有大量教材 MP4/PDF、`*.sqlite3`/`banks/`/`crawl/` 可重建/重抓 → 只入源码最安全 | `banks/*.json`（题库真源）与 `tools/`（第三方刷题端）是否也入 git —— 待用户定 |
 
 ### pending 项汇总(供新会话快速扫描)
 
@@ -1768,6 +1987,9 @@ cargo test --bin x-video-downloader -- --ignored \
          旧的「通信安全 14/50」是不同探针口径，**以 kb_coverage.py 为准**；灌入《安全生产法》全文只把 comm-safety 抬 1 题，证明该卷缺口不在公开法规
 - D-032 平台题库模块未对本账号开放（`#/question-bank/no-support`）：
        2,005 道平台练习题接口与 UI 都进不去，需账号侧开通或用有权限的端取一次真实 projectId
+- D-067 out/ 里被两集版取代的旧产物（精简版 12min 160MB / 720p 试片 / 样片 srt / palette_preview / 11 个 build 日志）与 out/old/（92MB 修复前版本）是否清理 —— 用户定
+- D-068 截图页「深色 Orca 界面配浅底页」是否加浅色衬底 + 圆角卡片（一次全量重渲 ~25 分钟）—— 用户定
+- D-070 exam-lookup/ 的 banks/*.json（题库真源，不入 git 则 clone 后 `webui.py selftest` 因空库失败）与 tools/（第三方刷题端）是否也纳入 git —— 用户定
 ```
 
 ---
@@ -1786,4 +2008,4 @@ cargo test --bin x-video-downloader -- --ignored \
 
 ## commit 历史
 
-2026-08-29 GUI 批次共 8 个 commit(`4a25dc9`~`12eca70`,skip-existing / 状态枚举 / 历史记录 / 聚合修复等);更早见 `git log --oneline -20`。全部 commit 含 `Intent:` 行,`.git/hooks/commit-msg` 强制。
+2026-09-26 exam-lookup 源码基线 `6eca77a`(纳入备考台源码 80 文件,排除数据/语料/424MB 浏览器 profile);2026-08-29 GUI 批次共 8 个 commit(`4a25dc9`~`12eca70`,skip-existing / 状态枚举 / 历史记录 / 聚合修复等);更早见 `git log --oneline -20`。全部 commit 含 `Intent:` 行,`.git/hooks/commit-msg` 强制。
