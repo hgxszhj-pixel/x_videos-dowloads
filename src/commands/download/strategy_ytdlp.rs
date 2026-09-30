@@ -70,8 +70,11 @@ async fn download_direct_twimg_url(
                 .clone()
                 .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
         )
-        .with_strategy(info.download_strategy);
-    info!("DEBUG: download_strategy = {:?}", info.download_strategy);
+        // 这个分支已经决定交给 Rust VideoDownloader，但 info.download_strategy 是 resolver 的默认值
+        // (YtDlp)；原样透传会被 download() 转去 yt-dlp 子进程（downloader/mod.rs:116），Rust 直连分支
+        // 永远不会执行。HLS 分支（本文件 :127）就是显式写死策略的。
+        .with_strategy(DownloadStrategy::Native);
+    info!("DEBUG: download_strategy = {:?}", request.download_strategy);
 
     let progress_callback: Arc<dyn Fn(DownloadProgress) + Send + Sync> =
         Arc::new(|progress: DownloadProgress| {
