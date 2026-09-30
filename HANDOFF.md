@@ -1,6 +1,10 @@
 # X Video Downloader — 项目交接
 
-**最新**: 2026-09-26 exam-lookup 代码审计修复（B1–B12）+ 源码纳入 git 基线 — 用户「这项目的代码有什么地方有 bug？」→ 先锁范围（仓库根 Rust vs `exam-lookup/` Python），用户选 **exam-lookup**；逐行审计（`webui.py`/`solve.py`/`kb.py`/`ask.html` 全文 + 全仓 grep + 运行期取证）后修 12 类**确凿**缺陷：**B1** 模拟考中途按「开始/重开」泄漏计时器且继承 `S.mock`（新轮被藏答案 + 被旧倒计时到点打断）→ `start()` 确认后复位 `clearInterval + S.timer=null + S.mock=false + paintClock()`；**B2** 模拟考错题「立即重做」把结果全记进**第一题**所属库（跨库混抽归属错）→ `submit()` 改按每题 `q.bankFile` 落库；**B3** `localStorage` 一条值损坏即 `JSON.parse` 抛错、整个刷题/背题 tab 崩 → 新增 `lsArr()`（`try/catch`+`Array.isArray`）兜底 `wrongBook`/`cardWrong`；**B4** `solve.ingest` 用 `hash()` 生成 id（每进程随机加盐，同题两次录入 id 不同 → `merge/build` 去重失效）→ 改 `sha1(norm(question))[:12]`，实测两次进程一致 `auto-97e448369b6a`（改前 `284071136938` vs `755604882297`）；**B6** `webui.py` handler 无兜底异常（索引缺失即断连）→ `do_GET/do_POST` 拆 `_route_*` 并包 `try/except` 回 500 JSON；**B7** `sync_banks.py` 硬编码 `/Users/hgxszhj/...` + 索引非原子写 → `__file__` + tmp+`os.replace`；**B9** `kb.search` LIKE 兜底未转义 `%`/`_`/`\` → 转义 + `ESCAPE '\'`；另修 B5（`qid` 死分支）/B8（rate 零除）/B10（`esc` 引号）/B11（`answerText` isinstance）/B12（断言前移）。回归：7 个改过的 py `py_compile` + `node --check ask.html` 全过，`kb.py selftest`（5494 块 / 5/5 回环零误报）+ `webui.py selftest`（模拟考池 365 题）全绿，HTTP 冒烟 5 项过（含 handler 抛异常 → `500 {"error":...}`）。**并首次把 `exam-lookup/` 源码纳入 git 基线**：新增 `exam-lookup/.gitignore` 挡掉数据/语料（`banks/`/`crawl/`/`jr/out/`）+ 索引（`*.sqlite3`）+ **424MB 浏览器 profile `jr/profile/`（含登录态，绝不能提交）** + HTML/JSON dump，白名单 `git add` 提交 **80 文件 / +10,568 行**（commit `6eca77a`，含 `Intent:` 行）；此前该子项目 93 项全 untracked（`git ls-files exam-lookup/` 只有 `README.md`）。**副产**：本机 `task(category=deep)` 委派坏（模型映射缺），3 个后台审计 agent 全失败 → 全程手读；门禁反复拦「每文件首次编辑」差点造成半应用。**未入 git**：`tools/` 第三方刷题端、`banks/*.json` 题库数据。
+**最新(同日, x-video-downloader 下载链)**: 2026-09-30 x.com 直链下载策略修复 + 单段跳过合并（Rust 下载器首次真上场）— 起因是用户给一条 x.com 链接要求实测 `download`，日志自己打脸：`src/commands/download/strategy_ytdlp.rs:55` 打印「检测到直接视频URL，使用 Rust 下载器」，`:74` 却是 `download_strategy = YtDlp`，`:512`（`downloader/mod.rs`）真去调 yt-dlp 子进程 —— FxTwitter 返回 `video.twimg.com` 直链，但 `DownloadRequest` 的策略是构造函数默认值（`types.rs:296`/`:366` `DownloadStrategy::YtDlp`），无人改成 `Native`，于是并行分段 + 退避重试那套 Rust 直连分支**从未执行过**。**修 2 处**：① `strategy_ytdlp.rs:73` 改 `.with_strategy(DownloadStrategy::Native)`（该分支既然已判定交给 Rust 下载器，就不该透传 resolver 默认值；同文件 HLS 分支 `:127` 本来就是写死 `Hls` 的对照组），`:74` 调试日志改打 `request.download_strategy` 而非 `info.download_strategy`；② `src/downloader/parallel.rs:324` 单段（`segments == 1`）跳过 `merge_segments`，直接 `rename(part_0.tmp → 输出)`（分段尺寸 < `SEGMENT_VALIDATION_RATIO` 或跨卷 `EXDEV` 时退回原拷贝合并，行为与改前一致；日志「合并完成」改「最终文件」以免走快路径时说假话）。**验证（同一 URL 三次真跑）**：改前 yt-dlp 路径 8.07s / transfer 6.25s；改后 Native+合并 10.19s / transfer 6.49s + HEAD 探测 1.35s + 合并 50ms；跳过合并 6.26s / transfer 3.61s + HEAD 0.95s —— **三次耗时不可横向比较**（网络 5.7 vs 10.4 MB/s，波动远大于改动本身），改动真正省掉的是单段那次整文件拷贝（38MB 读 + 38MB 写）。**三次产物 sha256 全等** `bc70965a8bf7dc3d…`、`ffprobe` h264 1280x720 + aac / 370.033197s / 38,718,248 bytes —— 证明 Native 路径不损坏文件。编译 `cargo build --release` 6m11s（首次含拉依赖）/ 5m59s。**已提交 2 个 commit**：`8829ab8`（直链策略）+ `6211667`（单段跳合并），各自只含 1 个文件、钩子已注入 `Intent:` 与 DID/VC trailer。**副产（仓库外）**：装上 HumanLayer 的 `show-me` skill 至 `~/.hermes/skills/show-me/`（官方 `npx skills add … --copy` 路线）。**已修**：进度字节翻倍（删掉 `parallel.rs:272` 的重复 `fetch_add`——`download_segment` 已按块累加；收尾 `bytes_downloaded` 一律取文件真实大小，累加器超限时 warn。实测进度末值 73.8 MB → 36.9 MB）。**新增验收闸门** `scripts/check_download_artifact.sh`（改下载/落盘路径必跑：断言字节数 + 与对照版 sha256 逐字节对拍，并校验日志自检与进度末值；本轮实测 PASS）。**待定**：`~/Movies/history.json` 三条测试记录去留；本轮这两个文件尚未提交。
+
+**最新**: 2026-09-30 全局 CLAUDE.md 行为哲学层扩充（X 派工作流借鉴）— 引入 X 站 @Parrobot7 / @garlotic 派 CLAUDE.md 的 6 条行为触发器至 `/Users/hgxszhj/.claude/CLAUDE.md` 顶部「执行哲学」层（13 Rules 表不动，行为层是独立维度不计入"13 条冻结"硬上限）：**① Plan Mode 触发器**（任务步骤 ≥3 / 改动文件 ≥2 / 涉及架构层 / 用户纠正或 bug 报告 — 任一即 `EnterPlanMode`，意外时 STOP 重新规划而非硬推）；**② Self-Improve Loop**（用户纠正 → 立即 `grep tasks/lessons.md` 同类 → 合并/新增，规则必须可执行）；**③ Demand Elegance**（改动 ≥2 文件先停 30 秒问"有更优雅的方式吗"，hacky fix 重写为已知全貌下的优雅解，单行 typo / 明显 bug 跳过别过度）；**④ Autonomous Bug Fix**（收到 bug 报告直接看 logs/errors/failing tests → 根因 → 修复 → 验证，不求 hand-holding）；**⑤ 实施节奏三件套**（Track Progress 每步勾 todo / Explain Changes 每步给高层 recap / Document Results 关键交付物末尾写 review 段）；**⑥ 质量自检双问**（提交前问 "Would a Staff engineer approve this?" + "Diff main behavior when relevant"，任一否则不交付）。**层间联动契约**写明：哲学层定「何时触发 + 反思 + 自检」，规则层定「做什么 + 边界」；触发条件成为两层接口 — Plan Mode → Rules #1/#4，Bug Fix → #8/#9/#12，自检通过才允许走 #12（completed）。**与图片差异**：图片给的是 6+6+3=15 条通用口号（撞"超 14 条遵从率暴跌"硬上限）；本轮做法是**只补未覆盖的「何时」触发条件 + 自检姿势**，已有 Plan/Simplicity/Verify/Minimal 引用 13 Rules 不重复。**验证**：`sed` 抽查 CLAUDE.md 6 条条目 + 13 Rules 表完整 + 总长 106 行；本项目 x_videos-dowloads CLAUDE.md 无改动（Intent Lock 规则未触发，因为是用户私有全局配置非仓库文件）。**未做**：`~/memory/preferences.md` 同步登记此偏好（属于"未来大概率还会用"类，等下次"复盘"触发写入）；未跑 e2e 验证（无脚本能测 CLAUDE.md 遵从率，需 N 个真实任务观察）。**同日 bg**：`orca-video 8 集 v2_credits 重渲进行中`（EP1-EP5 ✅，EP6 在跑；详见下方 session 段 + `/tmp/orca_credits_rerun/`）。
+
+**最新**: 2026-09-30 orca-video 培训课程 8 集加片尾 credits + 重渲 — 用户需求：「使用新的脚步重新生成一次 ep1-8的视频文件，并且在每个视频末尾加入作者的信息和邮箱 视频创作者：hgxszhj,邮箱：hgxszhj@gmail.com」，AskUserQuestion 三选项确认：每集专属 credit clip / 独立 credits 主题（浅底+头像位预留）/ 5 秒。实施 surgical：① `lib/slides.py:444–533` 新增 `credits` 主题（浅色编辑风背景 + 圆形头像占位 + 「视频创作者/姓名/邮箱/感谢观看 · Thank you for watching」四行，3 阶段轻微动效 (2,1,4)，可选 `avatar_path` 走真头像否则用 name[0] 占位），注册到 `RENDERERS`。② 8 个 `scenes_train_epN.py` 末尾追加 credits scene dict：`EP1/EP2`（直 tail 含 closing）后插 `{id:"c2-credits"/"c4-credits", kind:"credits", chrome=False, title:"感谢观看", name:"hgxszhj", email:"hgxszhj@gmail.com", narration:"…hgxszhj@gmail.com。"}`，`EP3/EP4/EP5/EP6/EP7/EP8`（slice_full 半片）改成 `SCENES = SCENES + [_CREDITS]`；EP8 已是 `keep_closing=True`，credits 追加在 closing 之后。③ 驱动 `render_all_with_credits.sh`（755, 1.3K, 保 `orca-video/` 根）串行 8 集 `--force --workers 6 --name train/EP{N}_<原标题>_1080p_v2_credits`，bg `bhqudq07f` + `nohup + disown`，日志 `/tmp/orca_credits_rerun/`，**保留原片不覆盖**（EP1–EP8 原 mp4 在 `out/train/` 原位保留；v2_credits 走 train/ 子目录共存）。烟测 credits PNG（`/tmp/credits_smoke.png`，lib 27 KB）人工检查：浅底 + 圆形灰头像 + 「h」占位字 + 标题「感谢观看」+ 创作者「hgxszhj」+ 橙色 `hgxszhj@gmail.com` + 双语 footer — 排版/字号/对比全部 OK。**bg 进度 04:31 启动**：EP1 加载 46 条 TTS（45 旧 + 1 新 credits），`[page]` 显示 c2-credits:白（浅底页），`edge_tts` 子进程已起 c1-03 配音。**预估壁时**：单集 ~25 min × 8 = ~3.3 h，全链 ~3.5 h。**已知 follow-up**：v3 bg `b82ms2k3m` 已可弃（与 v2_credits 不冲突，v3 是 EP8 单独 A/B 不带 credits）；新版比 v2 多 ~5s × 8 集 ≈ 40s 总时长；credits 段集末字幕走 `_split_by_cues` 仍会烧字（narration 含「hgxszhj@gmail.com」会被识别为一条字幕）— 故意保留，让电话号/邮箱在画面字幕里也出现一次。 — 2026-09-29 orca-video EP8 教程片：方案 #1 并行 clip 渲染— 串行版 EP8 v2 壁时 1313.07s / 84.7 MB / 30 场景 / workers=1 是基线；方案 #1 用 `ProcessPoolExecutor(max_workers=6)` 包 `build_video.py` 的 `for scene in scenes` 循环，2 处 surgical 改动：`build_video.py` `_render_scene_in_worker` (line 49–58) 把 `lib.slides.SHOT_DIR` 通过 job dict 显式传入 worker 内重设（macOS `spawn` 模式下 worker 全量 re-import，模块全局不传），job dict 构建 (line 397–409) 增 `shot_dir=SHOTS`；`--workers` argparse (line 288 旁) + `--force-clips` (line 289) 已就位。烟测 `/tmp/bv_smoke.py` 4 clip × 2 档：`workers=1 wall=27.7s (6.93s/clip)` → `workers=4 wall=15.4s (3.86s/clip)`，**1.80×**；外推到 30 clip × workers=6 估 1.5–2× → EP8 v3 估 ~10 min（vs v2 21.9 min）。用户「重渲 EP8 作为 A/B (Recommended)」 → bg `b82ms2k3m` 起 `python3.10-intel64 -u build_video.py --scenes scenes_train_ep8.py --name "EP8_v3_设置·隐私·排错_1080p" --workers 6 --force-clips`。**真坑**：(1) `lib/pipeline.py:bgm_segmented → synth_bgm → import numpy` (line 171) 在 pyenv 3.14 直接 `ModuleNotFoundError`，根因 numpy 1.23.3 只在 `/usr/local/bin/python3.10-intel64` 的 site-packages；v2 用 3.10-intel64、v3 第一跑用了 `/usr/local/bin/python3`(=pyenv 3.14) → BGM step 崩 → 改成 3.10-intel64 重起。(3) python stdout 走 `> log 2>&1` 时块缓冲，bg task 死得无声 → 改 `python -u` + `tee` 实时可见。(3) 删 `.work/ep8_v3/` 遇「Directory not empty」是真僵尸 Python 进程 (87614/87615) 持 slides png，**先 kill -9 再 rm** 才成功。**决策**：并行仅限 clip 阶段（TTS 缓存全命中仅 ~30s 单进程，concat+bgm+encode 顺序强不强无差别；BgmSegmentedWorker 串行更稳）；采样与混音逻辑零改；产物 `out/train/EP8_v3_*.mp4` 期望时长 ~1313s（v2 同源场景），壁时目标 8–12 min。**未决**：v3 实际壁时 + A/B 比 + `out/train/` 文件 size vs 84.7MB；v3 完成才算 A/B 落地，再 mark Task #13 completed。**未提交 git**：HANDOFF + 全套改动（与上轮一致）。**follow-up（EP1 完成时挂起，8 集跑完再动）**：clip 阶段 CPU 占用 350–560% 长时间打满 — 根因 `build_video.py --workers 6` 并行 ffmpeg，每个 ffmpeg 又带 `-threads 0` (吃满所有核) → 6 × 全核 = 互相抢 CPU，得不偿失。**优化方案**（按收益/风险排序）：① 给 ffmpeg clip 阶段加 `-threads 2` 上限（workers=6 × threads=2 = 12 线程，本机 M-series 多为 10–12 核，恰好平衡），改动 1 处（`build_video.py` 里调用 ffmpeg 拼参处）；② `--workers` 默认从 6 降到 `min(4, os.cpu_count())` 自动适配；③ 高级：把 clip 阶段从 `ProcessPoolExecutor` 换 `ThreadPoolExecutor + 每个 ffmpeg -threads 2`` + 内存常驻，降低 fork 成本。**风险**：动 `build_video.py` 触发 cache key 漂移 → 8 集 clip 全重渲一次（~30+ 分钟），且已交付的 4 集原 mp4 也得验证不被影响 → 必须等 8 集全跑完、产物稳定后单独迭代。**实施时机**：EP1–EP8 v2_credits 全交付后开 Task #20 「clip 阶段 CPU 限流」，先烟测单 EP 对比 wall/peak_cpu 再推广。**实测样本**：`/tmp/orca_credits_rerun/resource_usage.log` 已记录 05:06:54–05:15:08 EP1→EP2 切换窗口的 ffmpeg_cpu_pct（350–560%）+ etime，可作为基准。 — 用户「这项目的代码有什么地方有 bug？」→ 先锁范围（仓库根 Rust vs `exam-lookup/` Python），用户选 **exam-lookup**；逐行审计（`webui.py`/`solve.py`/`kb.py`/`ask.html` 全文 + 全仓 grep + 运行期取证）后修 12 类**确凿**缺陷：**B1** 模拟考中途按「开始/重开」泄漏计时器且继承 `S.mock`（新轮被藏答案 + 被旧倒计时到点打断）→ `start()` 确认后复位 `clearInterval + S.timer=null + S.mock=false + paintClock()`；**B2** 模拟考错题「立即重做」把结果全记进**第一题**所属库（跨库混抽归属错）→ `submit()` 改按每题 `q.bankFile` 落库；**B3** `localStorage` 一条值损坏即 `JSON.parse` 抛错、整个刷题/背题 tab 崩 → 新增 `lsArr()`（`try/catch`+`Array.isArray`）兜底 `wrongBook`/`cardWrong`；**B4** `solve.ingest` 用 `hash()` 生成 id（每进程随机加盐，同题两次录入 id 不同 → `merge/build` 去重失效）→ 改 `sha1(norm(question))[:12]`，实测两次进程一致 `auto-97e448369b6a`（改前 `284071136938` vs `755604882297`）；**B6** `webui.py` handler 无兜底异常（索引缺失即断连）→ `do_GET/do_POST` 拆 `_route_*` 并包 `try/except` 回 500 JSON；**B7** `sync_banks.py` 硬编码 `/Users/hgxszhj/...` + 索引非原子写 → `__file__` + tmp+`os.replace`；**B9** `kb.search` LIKE 兜底未转义 `%`/`_`/`\` → 转义 + `ESCAPE '\'`；另修 B5（`qid` 死分支）/B8（rate 零除）/B10（`esc` 引号）/B11（`answerText` isinstance）/B12（断言前移）。回归：7 个改过的 py `py_compile` + `node --check ask.html` 全过，`kb.py selftest`（5494 块 / 5/5 回环零误报）+ `webui.py selftest`（模拟考池 365 题）全绿，HTTP 冒烟 5 项过（含 handler 抛异常 → `500 {"error":...}`）。**并首次把 `exam-lookup/` 源码纳入 git 基线**：新增 `exam-lookup/.gitignore` 挡掉数据/语料（`banks/`/`crawl/`/`jr/out/`）+ 索引（`*.sqlite3`）+ **424MB 浏览器 profile `jr/profile/`（含登录态，绝不能提交）** + HTML/JSON dump，白名单 `git add` 提交 **80 文件 / +10,568 行**（commit `6eca77a`，含 `Intent:` 行）；此前该子项目 93 项全 untracked（`git ls-files exam-lookup/` 只有 `README.md`）。**副产**：本机 `task(category=deep)` 委派坏（模型映射缺），3 个后台审计 agent 全失败 → 全程手读；门禁反复拦「每文件首次编辑」差点造成半应用。**未入 git**：`tools/` 第三方刷题端、`banks/*.json` 题库数据。
 
 **最新**: 2026-09-26 **jev-gate 插件完工（Bash gate via Jev，三档派之 gate 档落地）** — 头条视频 `7689704382715281975` 把 Jev 三档派(router/gate/judge)落到 Claude Code 插件层：已装的 `fast-jev-compaction` 只占 compactor 档，本轮独立开发 `jev-gate` 占 **gate 档**（每条 Bash 工具调用由 Jev 语义判 risk → `{allow|ask|deny}`）；插件路径 `~/code/jev-gate/`（仓库外开发，`claude --plugin-dir` 加载，不进 git），**31/31 测试绿**（`gate.test.ts` 24 + `hook.test.ts` 7）、`tsc --noEmit` clean、`claude plugin validate` ✔ 0 warning；plugin.json userConfig 走 CC schema（`apiKey`/`allowBelow=0.30`/`denyAbove=0.70`/`model=jev-latest`，全部带 `title` 字段，第一次缺 `title` 被 validator 拒）、API key 解析顺序 `userConfig > $.env.get('TYPESAFE_API_KEY') > $.settings.read().env.TYPESAFE_API_KEY`、**默认-放行 fallback**（Jev 不可达 → `{allow:true}` + `$.ui.log` 警告，遵循视频「if you can't list candidates, don't force it」，fail-closed 是 self-DoS）；scope v0.1.0 = **Bash only**（Edit/Write 留 v0.2，需要 file-content diff 喂 Jev）；复刻 `fast-jev-compaction/0.3.0` 的 `buildJevRequest+parseJevResponse+noulAnswer` 作本地副本（插件独立打包，不跨插件 import）。**真机冒烟**（`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir ~/code/jev-gate -p "..."`，环境 `TYPESAFE_API_KEY=fake-key`）：插件加载无崩溃、`echo hello` 通过、`rm -rf /tmp/jev-gate-smoke-test-marker` **被执行**（fake key → Jev auth 失败 → fallback 放行 = 符合设计；real key 下应 deny）；README.md 写好（装/配/范围/smoke test/dev），memory 记录 `~/memory/projects/x-videos-dowloads.md` 2026-09-26 段。**踩坑 6 项（已修）**：① plugin.json userConfig 缺 `title` 被 validator 拒（fast-jev-compaction schema 加 `title` 修）；② 父 `~/package.json` `packageManager:"yarn"` → pnpm 静默 no-op，改 npm；③ handler 签名 `($,event,next)` 3 args、测试 harness 写 2 args → "next is not a function"，harness 加 `$` 参数 prepend 到所有 call site；④ `claude-code` types 不在 npm registry，本地 shim `types/claude-code.d.ts` 只声明用到的；⑤ vitest mock 默认 noul=0.5 落 ask 区，改 0.05 让 "passes through safe" 测通；⑥ 测试断言 fallback 期望 `undefined` 但 hook 显式返 `{allow:true}`，改断言。**未做**（user self-serve）：real-key 下 live smoke（手动启 `claude --plugin-dir ~/code/jev-gate` 跑 `! rm -rf /tmp/...` 验证 deny/ask）；Edit/Write gate = v0.2 路线。
 
@@ -58,6 +62,101 @@
 **再新(09-02)**: WikiSkill 三层架构全局落地(`~/.claude/WIKI_INDEX.md` 5.1KB + 3 skill-impact 账本 + SessionStart 双模式拆分)+ Resolver Skeleton 共享基类 SDD 8 commits (`c437a6b`..`ca2c45b`) + 2 housekeeping (`6f79d50`/`4f59255`),4 个 yt-dlp resolver 净 -129 行,新增 `src/platform/base.rs` `YtdlpBacked` + `src/http_client.rs` `RESOLVER_UA` 等;242 tests / clippy clean。
 
 **更早**: 2026-09-01 WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021) + 京峰教育/SHANHU 珊瑚 v1 报告"已推翻"。2026-08-29 智学云 `zhixueyun-analyzer` skill 创建 + 3 模式 e2e + 同日 5 commit (`0011caa` 小鹅通 HLS 403 / `86e497e` 覆盖开关 / `9ab3813` 解析盲区 / `c7b0fe4` 暂存落库 / `deb54c3` bench 修复) + `63c9f53` home-v + `6cd927e` ego-lite SQLite 兜底。2026-08-28 全局 Claude Code 配置改造(5 hooks + 15 deny) · 08-25 tulingvip-m3u8-download skill v3.2 + douyin-mp4-download v1 · 08-22 darwin 优化 web-protocol-recovery · 08-21 opencode failover wrapper · 08-17 OpenCode 多 provider · 08-16 P1 重构 · 08-13 GUI 性能 · 08-09 小鹅通端到端 6 节 8.5GB。
+
+---
+
+## 最新 Session: 2026-09-30 — x-video-downloader：x.com 直链下载策略修复 + 单段跳过合并（Rust 下载器首次真上场）
+
+### 1. 触发
+
+用户给了一条 x.com 视频链接（`https://x.com/nadin_8oyih/status/2105047944844201993`）要求实测下载。真跑 `./target/release/x-video-downloader <url> -o <dir>` 后，日志自相矛盾：`strategy_ytdlp.rs:55` 打印「检测到直接视频URL，使用 **Rust** 下载器」，紧接着 `:74` 打印 `download_strategy = YtDlp`，`downloader/mod.rs:512` 真去调 yt-dlp 子进程。
+
+根因：FxTwitter 返回的是 `video.twimg.com` 直链（`resolver_chain.rs:115-118`），但 `DownloadRequest` 的策略字段是构造函数默认值 `DownloadStrategy::YtDlp`（`types.rs:296` / `:366`），无人改成 `Native` → `downloader/mod.rs:116` 把请求转给 yt-dlp，Rust 直连分支（`parallel_download` + `calculate_backoff` 退避）从未被执行过。
+
+### 2. 交付物
+
+| 交付物 | 路径 | 说明 |
+|---|---|---|
+| 直链策略修复 | `src/commands/download/strategy_ytdlp.rs:73` | `.with_strategy(DownloadStrategy::Native)`；`:74` 调试日志改打 `request.download_strategy` |
+| 单段跳过合并 | `src/downloader/parallel.rs:324-368` | `segments == 1` 时 `rename(part_0.tmp → 输出)`；尺寸不足 / 跨卷 EXDEV 退回 `merge_segments`；日志 `合并完成` → `最终文件` |
+| show-me skill（仓库外，不属本仓库） | `~/.hermes/skills/show-me/SKILL.md` | HumanLayer MIT skill，官方 `npx skills add humanlayer/skills --skill show-me -g -y --copy`；本地 2 处补丁（description 123→58 字符、`disable-model-invocation` 落成正文触发门控）；重放说明见 `~/.hermes/skills-staging/show-me/LOCAL-PATCHES.md` |
+
+### 3. 验证（真跑的）
+
+| 项 | 证据 |
+|---|---|
+| 同一 URL 三次 E2E | 改前 yt-dlp 8.07s（transfer 6.25s）/ Native+合并 10.19s（transfer 6.49s + HEAD 1.35s + 合并 50ms）/ Native 跳合并 6.26s（transfer 3.61s + HEAD 0.95s） |
+| 产物一致性 | 三次 sha256 全等 `bc70965a8bf7dc3d…`；`ffprobe` h264 1280x720 + aac、370.033197s、38,718,248 bytes |
+| 策略真生效 | 日志出现 `DEBUG: download_strategy = Native`、`开始分段并行下载 … (1 线程)`、`最终文件: 38718248 bytes (期望: 38718248 bytes)`；跳合并版**无** `开始合并` 行 |
+| 编译 | `cargo build --release` 6m11s（首次含拉依赖）/ 5m59s |
+| 未跑 | 单段跳过合并的两个回退分支（EXDEV、单段不完整）无单测；网络速度未受控，三次耗时不可横向比较 |
+
+### 4. 坑 / 更正
+
+- **我报错过一次并当场更正**：先说「`history.json` 仍是 6 条没变」，那是查了 app-support 下的陈旧副本；真正生效的是 `~/Movies/history.json`（`History::new(&config.output_dir)`，`commands/download/mod.rs:36`），已被三次测试写成 **6 → 9**，新条目插在头部、`file_path` 指向 scratch 目录。
+- **两处 config 打架**：`~/.config/x-video-downloader/config.toml` 写 `output_dir = "~/Videos"`，实际生效的是 app-support 那份 `/Users/hgxszhj/Movies`；`-o` 只改输出目录，历史目录不跟着走。
+- **进度字节翻倍（已修）**：`parallel.rs:272` 分段任务已通过 `td` 逐块累加（`core/segment.rs:75`），收尾又 `total_downloaded.fetch_add(size)` 一次 → 末行打印 73.8 MB 而文件只有 36.9MB。删掉那次重复累加，并让收尾的 `bytes_downloaded` 直接取 `total_size`（累加器在分段重试时会重复计入，不再用它汇报），超限时 warn。验收脚本实测进度末值 36.9 MB。
+- **单段也合并**（已修）：`parallel.rs:325` 原为无条件调 `merge_segments`，1 段 = 整文件再拷一遍；x.com 的网站特征是 `max_threads=1`，所以分段并行在 x.com 上恒等于「单线程 + 一次多余拷贝」。
+- Native 路径比 yt-dlp 多一次 HEAD（`get_content_length`）拿文件大小，两次实测 1.35s / 0.95s。
+- 网站特征参数（threads / threshold / segments）只有 Native 分支消费，yt-dlp 分支不读 → 日志「应用网站特征」对 yt-dlp 路径是装饰。
+- `npx skills add … -g` 一次写进**所有**被检测到的 agent 目录，实测 50 份副本（含 `~/.claude/skills/`），已按「sha256 与上游一致才删」清掉 49 份并 rmdir 空父目录。
+
+### 5. 决策
+
+- 装上游 skill 原样 + 两处最小本地补丁，不整份改写：description 压进 Hermes 的 60 字符上限（上游 123 会被索引截断）；`disable-model-invocation` / `allow_implicit_invocation` 两个字段 Hermes 都不读（grep 只在列举 Claude 侧字段的测试里出现），改用正文一段落表达「只在显式请求时用」。
+- 直链分支策略写死 `Native`，不再透传 resolver 默认值。
+- 单段跳过合并保留回退：EXDEV 或尺寸不足时走原 `merge_segments`，行为与改前一致。
+
+### 6. 已知 follow-up
+
+- **已提交**：`8829ab8`（`src/commands/download/strategy_ytdlp.rs`，+5/−2）、`6211667`（`src/downloader/parallel.rs`，+34/−10）；两条都用 pathspec 绑定单文件，HANDOFF.md 未随行。
+- 进度字节翻倍已修（见第 4 节），`scripts/check_download_artifact.sh` 断言通过。**本轮这两个文件未提交**：`src/downloader/parallel.rs`（进度修复）、`scripts/check_download_artifact.sh`（新增闸门）。
+- 单段跳过合并的两个回退分支无单测（要先抽一个可注入 path 的 helper）。
+- `~/Movies/history.json` 里 3 条测试记录（`Wataa`）。
+- x.com 全链仍硬依赖 yt-dlp 子进程存在（`commands/download/mod.rs:41` 无 yt-dlp 直接 bail）；website_profiles 的并行参数对 yt-dlp 分支无效。
+
+## 最新 Session: 2026-09-29 — orca-video EP8 教程片：方案 #1 并行 clip 渲染 (ProcessPoolExecutor) + EP8 v3 A/B 重渲（进行中）
+
+### 1. 触发
+EP8 v2 串行版 1313.07s / 84.7 MB / 30 场景 / workers=1（=21.9 min）是基线，肉眼痛：clip 渲染占绝大多数壁时且无共享状态可并行。
+方案 #1 = `ProcessPoolExecutor` 包 `build_video.py` 的 `for scene in scenes` 循环；烟测 `/tmp/bv_smoke.py` 4 clip × 2 档：`workers=1 wall=27.7s (6.93s/clip)` → `workers=4 wall=15.4s (3.86s/clip)`，**1.80×**。用户「重渲 EP8 作为 A/B (Recommended)」 → bg `b82ms2k3m` 起 `python3.10-intel64 -u build_video.py --scenes scenes_train_ep8.py --name "EP8_v3_设置·隐私·排错_1080p" --workers 6 --force-clips`。
+边界：只动 `build_video.py` 的并行骨架；不动 clip 内容、配音、配色、转场、混音（v3 期望产物时长 ~1313s = v2 同源场景）。
+
+### 2. 交付物（都在 `~/video-doc/orca-video/`，另一棵树、未提交 git）
+
+| 交付物 | 路径 | 说明 |
+|---|---|---|
+| 并行骨架（surgical） | `build_video.py` `_render_scene_in_worker` (line 49–58) | 入口首句 `S.SHOT_DIR = job["shot_dir"]` — macOS `spawn` 模式下 worker 全量 re-import，模块全局不传，必须显式带 |
+| Job dict（surgical） | `build_video.py` (line 397–409) | 增 `shot_dir=SHOTS` 一项 |
+| argparse | `build_video.py` (line 288 旁) | `--workers N`（默认 1，保持向后兼容） + `--force-clips` 复用既有 `--force` 语义 |
+| 烟测脚本 | `/tmp/bv_smoke.py` | 4 个非镜头场景 × 2 档 workers（1/4），输出 wall + per-clip wall |
+| 烟测日志 | `/tmp/smoke.log` | 记录 workers=1 vs workers=4 两轮 wall + 文件清单 |
+| EP8 v3（bg 进行中） | `out/train/EP8_v3_设置·隐私·排错_1080p.mp4` | 待 v3 落地，期望 ~1313s / 壁时 8–12 min |
+
+### 3. 验证（真跑的）
+- 烟测 wall：workers=1 → 27.7s（6.93/clip），workers=4 → 15.4s（3.86/clip），**1.80× speedup**，实测单进程 CPU 100% × 4 core 满。
+- BPv3 bg PID 93273 alive（11:22 下午起，TTS 30 条全部命中缓存，总 TTS 阶段仅 ~30s）。
+- v3 阶段进度：TTS 全 30 命中缓存 + `[plan] 30 场景, 成片 1313.1s (21.9 分钟)` + `[trans] circleclose×1 ... 硬切占比 55%` + clip 阶段 8/30（at +1m wall）→ 并行渲染进行中。
+- `python3.10-intel64 -c "import numpy, requests, PIL"` → numpy 1.23.3 / requests 2.28.1 / PIL 10.4.0 全在，确认 v3 解释器无 BGM step 崩溃前提。
+
+### 4. 真坑（都有实证）
+1. **`bgm_segmented → synth_bgm → import numpy` 在 pyenv 3.14 直接 `ModuleNotFoundError`**（`lib/pipeline.py:171`）。根因：numpy 1.23.3 只在 `/usr/local/bin/python3.10-intel64` 的 site-packages；`/usr/local/bin/python3` = pyenv 3.14，无 numpy。v2 用 3.10-intel64、v3 第一跑用了 3.14 → BGM step 崩。**修法**：脚本 shebang/wrapper 显式用 3.10-intel64，本机 zsh PATH 自动选 pyenv 3.14 是坑。
+2. **Python stdout 走 `> log 2>&1` 时块缓冲，进程消失无声**：bg task `b8cwpx2od` 死时 log 空、EXIT 空 → 完全看不出在哪步。**修法**：`python -u`（unbuffered） + `tee` 替代 `>`，实时可见。
+3. **僵尸 Python 持文件 → `rm -rf .work/ep8_v3` 「Directory not empty」**：zombie procs 87614 / 87615 仍持 `slides/*.png`。**修法**：`kill -9 PID PID` → 再 `rm -rf` 成功；**先 `--** 再 rm** 是死规矩**。
+4. **`spawn` 模式（macOS 默认）worker 全量 re-import，模块全局丢失**：第一次漏传 `lib.slides.SHOT_DIR` → 第二次工作路径正确但 `dist` 步 write png 到默认 cwd → 污染根目录。**修法**：必须显式把 `SHOT_DIR` 通过 job dict 传入 worker 入口首句重设（这是 `process.start_method == 'spawn'` 的硬要求）。
+5. **`clip_for(force=True)` 永远 re-render**：本项目 clip 阶段没有 per-clip skip，v3 = `--force-clips` 必走全量；好处 = A/B 干净，坏处 = 任何参数变化都吃全量重渲。
+
+### 5. 决策
+- **仅 clip 阶段并行**：TTS 全缓存命中 ~30s 单进程足以；concat+bgm+encode 顺序强（`xfade` `filter_complex` 必须按时序），无差别；`BgmSegmentedWorker` 串行更稳。
+- **不预编译/不缓存跨 worker 的 ImageFont**：每个 worker 各自打开 `Theme` 自带路径绑定，避免 fork 后字体对象失效。
+- **解释器约束**：wrapper 一律 `/usr/local/bin/python3.10-intel64`（pyenv 3.14 缺 numpy + 部分 C 扩展），加 `python -u` 防止缓冲黑洞。
+- **GPU 加速已在 concat 链路**（既有代码，本轮未改）：`lib/pipeline.py:434` 全片 concat 编码走 `hevc_videotoolbox` (macOS HW HEVC)，同函数注释 (line 351–352) 注明 **VideoToolbox 解码 + Metal/VideoComposition 做 dissolve + hevc_videotoolbox 编码**；`lib/pipeline.py:559` 成片烧字幕走 `h264_videotoolbox`（1080p 静态画面与 libx264 ultrafast 速度相当，选 HW 节能）。clip 渲染仍 CPU Pillow + libx264 软件编码；TTS/BGM 无关。净效果 = concat+bgm+encode 阶段 ~5–8× 加速 vs libx264，也解释了当前 bg 卡在 ffmpeg 是合理的（30 clip × xfade VideoToolbox 链路）。
+
+### 6. 已知 follow-up
+- **v3 实际壁时待定**：bg `b82ms2k3m` 仍在跑，clip 阶段 **30/30 完成**（最后 `e5-99_50.19s`，log mtime 23:28:45 = ~7 min 前最后一次写入），现进入 **concat+bgm+encode** 阶段（`filter_complex` 30 clip × 29 xfade，ffmpeg 静默跑是常态）；预计 +3–6 min 出 `[OK]` + `EP8_v3_*.mp4` → stat size + tail `[OK]` 拿真实 A/B → mark Task #13 completed。最新监控见 `/private/tmp/claude-501/-Users-hgxszhj-x-videos-dowloads/38daa949-19a3-462b-bde0-fe81725f6836/tasks/b82ms2k3m.output`。
+- **`b82ms2k3m` 输出**：实时 `/private/tmp/claude-501/-Users-hgxszhj-x-videos-dowloads/38daa949-19a3-462b-bde0-fe81725f6836/tasks/b82ms2k3m.output`。
+- **v3 完成后**：若 A/B 1.5×+ → 留作方案 #1 基线，进 `tasks/方案#1-EP8-并行.md`；若 < 1.2× → 看是否受 GIL/CPU 限频，反推是否方案 #2 (subprocess 拆分)。
+- **未提交 git**：HANDOFF + 全套改动（与上轮一致）。
 
 ---
 
@@ -1802,6 +1901,9 @@ decrypt_ego_lite_cookies_for_vip() (Keychain + PBKDF2 + AES-128-CBC v10)
 cargo run -- "URL"                              # CLI
 cargo run -- --gui                              # GUI (Dioxus 0.7.9)
 cargo test --quiet && cargo clippy --quiet --all-targets
+
+# 改下载/落盘路径后的验收：断言字节数 + 与对照版本 sha256 逐字节对拍
+bash scripts/check_download_artifact.sh "URL" --expect-bytes N --expect-sha256 HEX
 tail -f /tmp/x-video-downloader.log             # GUI 日志
 
 # 小鹅通端到端 (需 ego-lite 已登录)
@@ -1973,6 +2075,10 @@ cargo test --bin x-video-downloader -- --ignored \
 | D-072 | 2026-09-26 | 前端 | `ask.html`：`localStorage` 解析一律经 `lsArr()`（`try/catch`+`Array.isArray`）；模拟考中途 `start()` 在确认重开后 `clearInterval + S.mock=false + paintClock()`；`submit()` 错题按 `q.bankFile` 落库 | accepted | ①一条损坏的 `examwrong:*`/`examcards:*` 值会让 `JSON.parse` 抛错、整个刷题/背题页崩；②`startMock` 会清计时器但普通 `start()` 不会 → 中途重开继承 `S.mock`（藏答案）+ 旧倒计时到点打断新轮；③重做跨库模拟考错题时全部记进第一题所属库 | 新增 localStorage 键 / 新增「可中断长流程」时套用同一护栏 |
 | D-071 | 2026-09-26 | 题库 | `solve.ingest` 的 id 由 Python `hash()` 改为 `hashlib.sha1(norm(question))[:12]`；`merge_banks()` 去重键由 `r["id"]` 改为归一化题干 | accepted | `hash()` 每进程随机加盐 → 同题两次录入 id 不同（实测 `284071136938` vs `755604882297`）→ `merge/build` 去重全失效、`auto-learned.json` 出重复题 | 任何需要「跨进程可复现 id」的地方一律用加密散列，不用 `hash()` |
 | D-070 | 2026-09-26 | 工程 | `exam-lookup/` **源码入 git、数据/语料/索引/浏览器 profile 出 git**：新增 `exam-lookup/.gitignore` + 白名单 `git add`（提交 `6eca77a`，80 文件 / +10,568 行） | accepted | 该子项目此前 93 项全 untracked（`git ls-files exam-lookup/` 只有 `README.md`）；但 `jr/profile/` 是 424MB 浏览器 profile（可能含登录态）、`jr/out/` 有大量教材 MP4/PDF、`*.sqlite3`/`banks/`/`crawl/` 可重建/重抓 → 只入源码最安全 | `banks/*.json`（题库真源）与 `tools/`（第三方刷题端）是否也入 git —— 待用户定 |
+| D-077 | 2026-09-30 | 工程 | 改下载/落盘路径的验收固化为 `scripts/check_download_artifact.sh`：必须断言「字节数 = 期望」+「sha256 与对照版本逐字节相同」，并顺带校验日志自检行与进度末值 ≤ 文件大小 | accepted | 本轮两次改动都是靠这三条才敢说「没改坏」——日志看起来对 ≠ 产物对；对应 OpenAI playbook 的 `DEPTH ≠ VALUE`：计数类自评（做了多少检查）不是结果类证据 | 脚本本身失败、或有人只跑 `cargo test` 就声称下载链改好时复审 |
+| D-076 | 2026-09-30 | 下载器 | 进度字节翻倍修掉：删除 `parallel.rs:272` 的重复 `fetch_add`（`download_segment` 已按块累加），收尾一律按文件真实大小汇报、累加器超限时 warn | accepted | 100% 那行打印 73.8 MB 而文件 36.9MB；删重复计数后实测末值 36.9 MB。收尾取 `total_size` 可抵御将来在别处再引入的重复计数 | 进度回调需要被当作断点续传依据时（那时要的是精确中途字节，而非收尾值） |
+| D-075 | 2026-09-30 | 下载器 | `parallel_download` 单段（`segments == 1`）跳过 `merge_segments`，直接 `rename(part_0.tmp → 输出)`；EXDEV/尺寸不足退回原路径 | accepted | 段数=1 时合并只是把整文件读+写一遍（38MB 产物实测 50ms，长视频线性放大），而 x.com 的网站特征 `max_threads=1` 让这条路成为常态；sha256 与合并版逐字节相同 | 段数算法变化（不再可能为 1）或跨卷 EXDEV 告警频繁出现时 |
+| D-074 | 2026-09-30 | 下载器 | `strategy_ytdlp.rs` 的 `video.twimg.com` 直链分支写死 `DownloadStrategy::Native`，不再透传 `info.download_strategy` | accepted | 该分支已判定「交给 Rust 下载器」，但 `info.download_strategy` 是 resolver 默认值 `YtDlp`（`types.rs:296`/`:366`）→ `downloader/mod.rs:116` 转去 yt-dlp 子进程，Rust 直连分支（并行分段 + 退避重试）从未执行；同文件 HLS 分支本来就是写死 `Hls`，是正确对照 | 若将来有解析器也返回 `video.twimg.com` 直链却期望走 yt-dlp 时 |
 
 ### pending 项汇总(供新会话快速扫描)
 
@@ -1990,6 +2096,7 @@ cargo test --bin x-video-downloader -- --ignored \
 - D-067 out/ 里被两集版取代的旧产物（精简版 12min 160MB / 720p 试片 / 样片 srt / palette_preview / 11 个 build 日志）与 out/old/（92MB 修复前版本）是否清理 —— 用户定
 - D-068 截图页「深色 Orca 界面配浅底页」是否加浅色衬底 + 圆角卡片（一次全量重渲 ~25 分钟）—— 用户定
 - D-070 exam-lookup/ 的 banks/*.json（题库真源，不入 git 则 clone 后 `webui.py selftest` 因空库失败）与 tools/（第三方刷题端）是否也纳入 git —— 用户定
+
 ```
 
 ---
@@ -2008,4 +2115,4 @@ cargo test --bin x-video-downloader -- --ignored \
 
 ## commit 历史
 
-2026-09-26 exam-lookup 源码基线 `6eca77a`(纳入备考台源码 80 文件,排除数据/语料/424MB 浏览器 profile);2026-08-29 GUI 批次共 8 个 commit(`4a25dc9`~`12eca70`,skip-existing / 状态枚举 / 历史记录 / 聚合修复等);更早见 `git log --oneline -20`。全部 commit 含 `Intent:` 行,`.git/hooks/commit-msg` 强制。
+2026-09-30 x.com 直链策略修复 `8829ab8`（Rust 下载器首次真上场）+ 单段跳过合并 `6211667`；2026-09-26 exam-lookup 源码基线 `6eca77a`(纳入备考台源码 80 文件,排除数据/语料/424MB 浏览器 profile);2026-08-29 GUI 批次共 8 个 commit(`4a25dc9`~`12eca70`,skip-existing / 状态枚举 / 历史记录 / 聚合修复等);更早见 `git log --oneline -20`。全部 commit 含 `Intent:` 行,`.git/hooks/commit-msg` 强制。
