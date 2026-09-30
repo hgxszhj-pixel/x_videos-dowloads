@@ -269,7 +269,8 @@ impl VideoDownloader {
                 Ok(Ok(size)) => {
                     success_count += 1;
                     segment_sizes[i] = size;
-                    total_downloaded.fetch_add(size, Ordering::Relaxed);
+                    // 不再 fetch_add：download_segment 已按块累加进 td（core/segment.rs:75），
+                    // 这里再加一次会让已下载字节翻倍（实测 100% 那行打印 73.8MB / 文件 36.9MB）
                 }
                 Ok(Err(e)) => {
                     warn!("分段 {} 下载失败: {:?}", i, e);
@@ -378,6 +379,16 @@ impl VideoDownloader {
         let mut final_progress = progress.lock().await;
         final_progress.status = DownloadStatus::Completed;
         final_progress.percent = 1.0;
+        // 收尾一律按文件真实大小汇报：累加器在分段重试时会重复计入已下过的字节，
+        // 直接用它会让 100% 那行的字节数大于文件本身（历史 bug 即此）。
+        let accounted = total_downloaded.load(Ordering::Relaxed);
+        if accounted > total_size {
+            warn!(
+                "进度累加 {} bytes > 文件大小 {} bytes（含重试重复计数），收尾按文件大小汇报",
+                accounted, total_size
+            );
+        }
+        final_progress.bytes_downloaded = total_size;
 
         let callback_progress = final_progress.clone();
         drop(final_progress);
