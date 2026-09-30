@@ -321,21 +321,45 @@ impl VideoDownloader {
             }
         }
 
-        // 合并分段文件
-        self.merge_segments(
-            &output_path,
-            &temp_dir_path,
-            segments,
-            total_size,
-            chunk_size,
-        )
-        .await?;
+        // 单段没有可合并的东西：直接把 part_0.tmp rename 成输出文件，省掉一次整文件拷贝。
+        // x.com/video.twimg.com 的网站特征是 max_threads=1，所以这条快路径是常态。
+        // 分段尺寸不足或跨卷 rename(EXDEV) 时退回拷贝合并，行为与改动前一致。
+        let mut merged = false;
+        if segments == 1 {
+            let only_part = temp_dir_path.join("part_0.tmp");
+            let part_size = tokio::fs::metadata(&only_part)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
+            if part_size >= total_size * SEGMENT_VALIDATION_RATIO / 100 {
+                match tokio::fs::rename(&only_part, &output_path).await {
+                    Ok(()) => merged = true,
+                    Err(e) => warn!("单段 rename 失败（{:?}），退回拷贝合并", e),
+                }
+            } else {
+                warn!(
+                    "单段文件不完整 ({}/{} bytes)，退回拷贝合并",
+                    part_size, total_size
+                );
+            }
+        }
+
+        if !merged {
+            self.merge_segments(
+                &output_path,
+                &temp_dir_path,
+                segments,
+                total_size,
+                chunk_size,
+            )
+            .await?;
+        }
 
         // 验证最终文件大小
         if let Ok(final_metadata) = tokio::fs::metadata(&output_path).await {
             let final_size = final_metadata.len();
             info!(
-                "合并完成: {} bytes (期望: {} bytes)",
+                "最终文件: {} bytes (期望: {} bytes)",
                 final_size, total_size
             );
 
