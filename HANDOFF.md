@@ -7,7 +7,7 @@
 
 - **主分支**: `master`,最近 commit `1f6be17` (handoff_size_guard hook)
 - **Workspace**: `gitbutler/workspace`
-- **测试基线**: 298 tests (commit `0240320`)
+- **测试基线**: 320 tests (commit `de94151`,2026-10-03 审计刷新 — 之前 298 / commit `0240320` 漂移 +22)
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
 - **关键 hook**: commit-msg (Intent Lock + **handoff_size_guard** + Ref-trace + DID/VC),pre-commit (cargo fmt + clippy)
 
@@ -47,6 +47,7 @@
 ## 待办 / Open Items
 
 - **HANDOFF.md 拆分** (本轮完成): 2117 行 → ~70 行索引 + 22 个独立 session 文件,降低 96% 行数
+- **5 维度启发式审计** (本轮完成): docs/audit/2026-10-03-*.md — 4 critical + 3 high + 4 medium + 15 heuristic flags;🔴 C1 (theme.rs iced) 经 `cargo check` 验证为 dioxus re-export 假阳性,降 informational;🔴 C2 (6 处生产 panic) / 🔴 C4 (HANDOFF 基线漂移) 待修
 - **handoff_size_guard hook** (本轮完成): staged HANDOFF.md > 200 行 hard reject,> 100 行 soft warn;`docs/handoff/sessions/` 季度归档 (> 90 天 → `archive/YYYY-Qx/`) 协同防目录无界膨胀
 - **用户全局 13 Rules** (本轮完成): workflow-light-plan 自决策白名单 + 暂停条件,workflow-tdd-red-green 0.8→0.9,新增 workflow-agent-output-bounded
 - **planner agent tier 化** (deep/light): 下轮决策,需要单独规划
