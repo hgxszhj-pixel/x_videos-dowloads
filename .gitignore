@@ -40,3 +40,9 @@ SkillOpt/
 
 # JS reverse engineering cache (zhixueyun etc.)
 js_reverse_cache/
+
+# Runtime download output (toutiao/douyin etc. session artifacts)
+downloads/
+
+# Third-party extracted tooling (problem_killer, shiroha-quiz-web releases)
+exam-lookup/tools/
