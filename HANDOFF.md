@@ -3,18 +3,19 @@
 > 当前状态、最近 session 索引、待办。完整 session 日志在 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 > 本轮拆分 (2026-10-03): 从 2117 行单文件 → ~70 行索引 + 21 个独立 session 文件。
 
-## 当前状态 (2026-10-03)
+## 当前状态 (2026-10-04)
 
-- **主分支**: `master`,最近 commit `1f6be17` (handoff_size_guard hook)
-- **Workspace**: `gitbutler/workspace`
-- **测试基线**: 320 tests (commit `de94151`,2026-10-03 审计刷新 — 之前 298 / commit `0240320` 漂移 +22)
+- **主分支**: `master`,最近 commit `a0f72c0` (C2 false alarm 修订)
+- **Workspace**: `gitbutler/workspace`,3 文件 H3 partial 待 commit (xbogus/theme/strategy_native)
+- **测试基线**: 320+ tests (H3 green tier 4 文件 pure-fn 测试已绿,具体数待 cargo test 终轮)
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
 - **关键 hook**: commit-msg (Intent Lock + **handoff_size_guard** + Ref-trace + DID/VC),pre-commit (cargo fmt + clippy)
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。22 个文件,日期范围 2026-10-03 → 2026-09-02。
+每条链接到完整 session 文件。23 个文件,日期范围 2026-10-04 → 2026-09-02。
 
+- 2026-10-04 — [audit 4 处 false alarm 闭环 (C1/C2/C3/H1) + H3 green tier partial 4 文件 pure-fn 测试](docs/handoff/sessions/2026-10-04-audit-4-处-false-alarm-闭环-C1-C2-C3-H1-+-H3-green-tier-p.md)
 - 2026-10-03 — [HANDOFF.md 拆分 + size-guard hook + 13 Rules + TDD 升档 + agent 输出上限](docs/handoff/sessions/2026-10-03-handoff-md-split-+-handoff-size-guard-hook-+-instincts-13-rules-+-TDD-升档-+-agent-输出上限.md)
 - 2026-09-30 — [x.com 直链下载策略修复 + 单段跳过合并](docs/handoff/sessions/2026-09-30-x-video-downloader-x.com-直链下载策略修复-+-单段跳过合并-Rust-下载.md)
 - 2026-09-29 — [orca-video EP8 教程片方案 #1 并行 clip 渲染](docs/handoff/sessions/2026-09-29-orca-video-EP8-教程片-方案-#1-并行-clip-渲染-ProcessPoolExe.md)
@@ -47,7 +48,8 @@
 ## 待办 / Open Items
 
 - **HANDOFF.md 拆分** (本轮完成): 2117 行 → ~70 行索引 + 22 个独立 session 文件,降低 96% 行数
-- **5 维度启发式审计** (本轮完成): docs/audit/2026-10-03-*.md — 4 critical + 3 high + 4 medium + 15 heuristic flags;🔴 C1 (theme.rs iced) 经 `cargo check` 验证为 dioxus re-export 假阳性,降 informational;🔴 C2 (6 处生产 panic) / 🔴 C4 (HANDOFF 基线漂移) 待修
+- **5 维度启发式审计** (本轮完成): docs/audit/2026-10-03-*.md — 4 critical + 3 high + 4 medium + 15 heuristic flags;🔴 C1 (theme.rs iced) / 🔴 C2 (6 处生产 panic) / 🟠 C3 (http_client panic) / 🟠 H1 (collaboration 隔离) **4/4 经逐项源码验证为 false alarm**(panic 3 类上下文 / cfg gate / dioxus re-export);🔴 C4 (HANDOFF 测试基线 298→320 漂移) 已在 `b3d39d4` 修复;`audit-heuristic-blind-spots.md` 沉淀 4 类盲点 + panic 3-context 表格
+- **H3 green tier partial** (本轮完成 4/10): theme.rs (5) + xbogus.rs (5) + strategy_native.rs (2) + path.rs 测试已绿;剩 6 IO-bound 文件推迟 (mock 成本高,留待 integration test)
 - **handoff_size_guard hook** (本轮完成): staged HANDOFF.md > 200 行 hard reject,> 100 行 soft warn;`docs/handoff/sessions/` 季度归档 (> 90 天 → `archive/YYYY-Qx/`) 协同防目录无界膨胀
 - **用户全局 13 Rules** (本轮完成): workflow-light-plan 自决策白名单 + 暂停条件,workflow-tdd-red-green 0.8→0.9,新增 workflow-agent-output-bounded
 - **planner agent tier 化** (deep/light): 下轮决策,需要单独规划
