@@ -142,3 +142,57 @@ impl AppColors {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 默认深色模式 + 单次 toggle 反转
+    #[test]
+    fn toggle_flips_dark_mode() {
+        let initial = is_dark_mode();
+        toggle_theme();
+        assert_eq!(is_dark_mode(), !initial);
+        // 复位避免污染后续测试
+        toggle_theme();
+        assert_eq!(is_dark_mode(), initial);
+    }
+
+    /// 两次 toggle 回到原状态
+    #[test]
+    fn toggle_round_trip() {
+        let initial = is_dark_mode();
+        toggle_theme();
+        toggle_theme();
+        assert_eq!(is_dark_mode(), initial);
+    }
+
+    /// dark/light 必须产生不同的 AppColors(防止有人把两边设成同色)
+    #[test]
+    fn dark_and_light_palettes_differ() {
+        let d = AppColors::dark();
+        let l = AppColors::light();
+        assert_ne!(d.background, l.background);
+        assert_ne!(d.primary, l.primary);
+        assert_ne!(d.text, l.text);
+    }
+
+    /// CardStyle.dark / .light 也必须不同
+    #[test]
+    fn card_style_dark_and_light_differ() {
+        assert_ne!(CardStyle::dark().background, CardStyle::light().background);
+    }
+
+    /// current() 必须与 is_dark_mode() 同步(合约)
+    #[test]
+    fn current_matches_dark_mode_flag() {
+        // 起始假定 dark(全局静态默认 true)
+        assert_eq!(AppColors::current().background, AppColors::dark().background);
+        toggle_theme();
+        assert_eq!(
+            AppColors::current().background,
+            AppColors::light().background
+        );
+        toggle_theme(); // 复位
+    }
+}

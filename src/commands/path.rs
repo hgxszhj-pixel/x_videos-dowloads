@@ -76,3 +76,62 @@ pub fn extract_filename_from_url(url: &str) -> Option<String> {
 
     Some(cleaned)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// happy path: 末段非 index/play 提取 file_stem
+    #[test]
+    fn extract_filename_happy_path() {
+        assert_eq!(
+            extract_filename_from_url("https://cdn.example.com/abc123.mp4"),
+            Some("abc123".to_string())
+        );
+    }
+
+    /// URL 末段是占位词(index/play/video/index.html) → None
+    #[test]
+    fn extract_filename_filters_placeholders() {
+        assert_eq!(
+            extract_filename_from_url("https://example.com/index.html"),
+            None
+        );
+        assert_eq!(extract_filename_from_url("https://example.com/play"), None);
+        assert_eq!(extract_filename_from_url("https://example.com/video"), None);
+    }
+
+    /// 根路径 / 空路径 → None
+    #[test]
+    fn extract_filename_returns_none_for_root() {
+        assert_eq!(extract_filename_from_url("https://example.com/"), None);
+        assert_eq!(extract_filename_from_url("https://example.com"), None);
+    }
+
+    /// 特殊字符清理为下划线 + 长度 < 3 → None
+    #[test]
+    fn extract_filename_sanitizes_and_filters_short() {
+        // 末段 "ab!" 清理后 "ab_" 长度 3,保留
+        assert_eq!(
+            extract_filename_from_url("https://example.com/x/ab!.html"),
+            Some("ab_".to_string())
+        );
+        // "a!" 清理后 "a_" 长度 2,<3 → None
+        assert_eq!(extract_filename_from_url("https://example.com/a!.html"), None);
+    }
+
+    /// 非法 URL → None(不 panic)
+    #[test]
+    fn extract_filename_invalid_url_returns_none() {
+        assert_eq!(extract_filename_from_url("not a url"), None);
+        assert_eq!(extract_filename_from_url(""), None);
+    }
+
+    /// get_default_output_dir 返回 PathBuf(不测具体路径,因 platform 差异)
+    #[test]
+    fn get_default_output_dir_returns_pathbuf() {
+        let p = get_default_output_dir();
+        // 不会 panic + 返回有效 PathBuf(任何 PathBuf 都满足 IsValid,故只验 not panic)
+        let _ = p.to_string_lossy();
+    }
+}

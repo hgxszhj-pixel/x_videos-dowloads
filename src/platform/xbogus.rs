@@ -173,3 +173,55 @@ impl Default for XBogus {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 同一输入 → 同一输出(纯函数确定性)
+    #[test]
+    fn sign_is_deterministic() {
+        let xb = XBogus::new();
+        let s1 = xb.sign("aid=6383", "Mozilla/5.0", 1700000000000);
+        let s2 = xb.sign("aid=6383", "Mozilla/5.0", 1700000000000);
+        assert_eq!(s1, s2);
+    }
+
+    /// 输出非空 + 3 段下划线分隔(实测格式 `7Lmps8JbalYeViu_TL9UWsRcz/R_lf`)
+    #[test]
+    fn sign_output_shape() {
+        let xb = XBogus::new();
+        let s = xb.sign("aid=6383", "Mozilla/5.0", 1700000000000);
+        assert!(!s.is_empty(), "输出非空: {s}");
+        let parts: Vec<&str> = s.split('_').collect();
+        assert_eq!(parts.len(), 3, "输出应 3 段 `_` 分隔,实得: {s}");
+        for p in &parts {
+            assert!(!p.is_empty(), "每段非空: {s}");
+        }
+    }
+
+    /// 改变任一输入 → 输出必变(避免 sign 退化为常量)
+    #[test]
+    fn sign_input_sensitivity() {
+        let xb = XBogus::new();
+        let base = xb.sign("a=1", "ua", 100);
+        assert_ne!(base, xb.sign("a=2", "ua", 100), "改 url_params 应变");
+        assert_ne!(base, xb.sign("a=1", "ub", 100), "改 user_agent 应变");
+        assert_ne!(base, xb.sign("a=1", "ua", 101), "改 timestamp 应变");
+    }
+
+    /// custom_base64 空输入 → 空字符串
+    #[test]
+    fn custom_base64_encode_empty() {
+        let xb = XBogus::new();
+        assert_eq!(xb.custom_base64_encode(&[]), "");
+    }
+
+    /// custom_base64 单字节 → 2 字符 padding-free 编码
+    #[test]
+    fn custom_base64_encode_known_short() {
+        let xb = XBogus::new();
+        // 0x00 → chars[0] chars[0] (high 6 bits = 0, low 2 = 0)
+        assert_eq!(xb.custom_base64_encode(&[0x00]), "DD");
+    }
+}

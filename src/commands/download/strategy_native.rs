@@ -84,3 +84,24 @@ pub async fn download(info: &VideoInfo, cli: &Cli, _start_time: Instant) -> Resu
 pub(crate) fn format_auth_header(token: &str) -> String {
     format!("Authorization: Bearer__{token}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P0-2 合约:token 必须出现在 Authorization header 里(Bearer__ 前缀)
+    /// — 防退化:有人改格式导致 token 不走 header → 改去 argv(泄漏)
+    #[test]
+    fn auth_header_contains_token_with_bearer_prefix() {
+        let h = format_auth_header("tok_abc123");
+        assert!(h.starts_with("Authorization: Bearer__"), "实得: {h}");
+        assert!(h.ends_with("tok_abc123"), "实得: {h}");
+    }
+
+    /// 空 token 也必须按格式输出(让上层去判断 401,不静默丢)
+    #[test]
+    fn auth_header_empty_token_still_well_formed() {
+        let h = format_auth_header("");
+        assert_eq!(h, "Authorization: Bearer__");
+    }
+}
