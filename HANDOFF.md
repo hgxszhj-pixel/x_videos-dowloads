@@ -16,6 +16,7 @@
 每条链接到完整 session 文件。23 个文件,日期范围 2026-10-04 → 2026-09-02。
 
 - 2026-10-04 — [audit 4 处 false alarm 闭环 (C1/C2/C3/H1) + H3 green tier partial 4 文件 pure-fn 测试](docs/handoff/sessions/2026-10-04-audit-4-处-false-alarm-闭环-C1-C2-C3-H1-+-H3-green-tier-p.md)
+- 2026-10-04 — [CLI flag 完整清单落档 M4 closure (25 个 flag 按 6 类分组)](docs/handoff/sessions/2026-10-04-cli-flag-清单-落档-M4-closure.md)
 - 2026-10-03 — [HANDOFF.md 拆分 + size-guard hook + 13 Rules + TDD 升档 + agent 输出上限](docs/handoff/sessions/2026-10-03-handoff-md-split-+-handoff-size-guard-hook-+-instincts-13-rules-+-TDD-升档-+-agent-输出上限.md)
 - 2026-09-30 — [x.com 直链下载策略修复 + 单段跳过合并](docs/handoff/sessions/2026-09-30-x-video-downloader-x.com-直链下载策略修复-+-单段跳过合并-Rust-下载.md)
 - 2026-09-29 — [orca-video EP8 教程片方案 #1 并行 clip 渲染](docs/handoff/sessions/2026-09-29-orca-video-EP8-教程片-方案-#1-并行-clip-渲染-ProcessPoolExe.md)
