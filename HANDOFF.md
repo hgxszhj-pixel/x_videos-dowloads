@@ -5,16 +5,17 @@
 
 ## 当前状态 (2026-10-03)
 
-- **主分支**: `master`,最近 commit `2641eae` (产物验收闸门)
+- **主分支**: `master`,最近 commit `1f6be17` (handoff_size_guard hook)
 - **Workspace**: `gitbutler/workspace`
 - **测试基线**: 298 tests (commit `0240320`)
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
-- **关键 hook**: commit-msg (Intent Lock + Ref-trace),pre-commit (cargo fmt + clippy)
+- **关键 hook**: commit-msg (Intent Lock + **handoff_size_guard** + Ref-trace + DID/VC),pre-commit (cargo fmt + clippy)
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。21 个文件,日期范围 2026-09-30 → 2026-09-02。
+每条链接到完整 session 文件。22 个文件,日期范围 2026-10-03 → 2026-09-02。
 
+- 2026-10-03 — [HANDOFF.md 拆分 + size-guard hook + 13 Rules + TDD 升档 + agent 输出上限](docs/handoff/sessions/2026-10-03-handoff-md-split-+-handoff-size-guard-hook-+-instincts-13-rules-+-TDD-升档-+-agent-输出上限.md)
 - 2026-09-30 — [x.com 直链下载策略修复 + 单段跳过合并](docs/handoff/sessions/2026-09-30-x-video-downloader-x.com-直链下载策略修复-+-单段跳过合并-Rust-下载.md)
 - 2026-09-29 — [orca-video EP8 教程片方案 #1 并行 clip 渲染](docs/handoff/sessions/2026-09-29-orca-video-EP8-教程片-方案-#1-并行-clip-渲染-ProcessPoolExe.md)
 - 2026-09-26 — [orca-video 教程片 v3 字幕丢字修复](docs/handoff/sessions/2026-09-26-orca-video-教程片-字幕时间轴丢字修复-+-v3-全量重渲.md)
@@ -45,7 +46,9 @@
 
 ## 待办 / Open Items
 
-- **HANDOFF.md 拆分** (本轮完成): 2117 行 → ~70 行索引 + 21 个独立 session 文件,降低 96% 行数
+- **HANDOFF.md 拆分** (本轮完成): 2117 行 → ~70 行索引 + 22 个独立 session 文件,降低 96% 行数
+- **handoff_size_guard hook** (本轮完成): staged HANDOFF.md > 200 行 hard reject,> 100 行 soft warn;`docs/handoff/sessions/` 季度归档 (> 90 天 → `archive/YYYY-Qx/`) 协同防目录无界膨胀
+- **用户全局 13 Rules** (本轮完成): workflow-light-plan 自决策白名单 + 暂停条件,workflow-tdd-red-green 0.8→0.9,新增 workflow-agent-output-bounded
 - **planner agent tier 化** (deep/light): 下轮决策,需要单独规划
 - **更早 sessions 归档清理** (2026-09-01 之前): 现以聚合行保留;后续如需独立文件可批量处理
 
