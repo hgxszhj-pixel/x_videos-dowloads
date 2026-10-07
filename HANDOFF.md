@@ -15,6 +15,7 @@
 
 每条链接到完整 session 文件。25 个文件,日期范围 2026-10-04 → 2026-09-02。
 
+- 2026-10-07 — [SKILL.state open_loops schema validator A1+A2+A4+A5 完整落地 (L3 防御 + A5 工作流)](docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md)
 - 2026-10-04 — [moscan 模块 25/26/27：卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定](docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md)
 - 2026-10-04 — [audit 4 处 false alarm 闭环 (C1/C2/C3/H1) + H3 green tier partial 4 文件 pure-fn 测试](docs/handoff/sessions/2026-10-04-audit-4-处-false-alarm-闭环-C1-C2-C3-H1-+-H3-green-tier-p.md)
 - 2026-10-04 — [CLI flag 完整清单落档 M4 closure (25 个 flag 按 6 类分组)](docs/handoff/sessions/2026-10-04-cli-flag-清单-落档-M4-closure.md)
@@ -64,6 +65,7 @@
 
 > 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
 
+- **SKILL.state open_loops schema validator (A1+A2+A4+A5)** (2026-10-07) — reason: 论文 L3 防御 + 显式 schema + 机器校验兜底;5 条 Just Closed 重构为 reason/ref;4 hook 全绿 rep=100.0 · ref: `docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md`
 - **moli 1.1.14 安装** (2026-10-07) — reason: 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活 · ref: `moli-install-network-blocked-2026-10-07.md`
 - **Web fallback rule 12 升级** (2026-10-07) — reason: 7 级降级链 `WebFetch → moli → ego-lite → agent-browser → camoufox → chrome → miniapp`,moli Markdown 替代 camoufox + ego-lite 填补已登录 SaaS Keychain 解密 cookie 中间档 · ref: `web-fallback-rule-2026-10-07.md`
 - **moscan 模块 25/26/27 主线** (2026-10-04) — reason: 卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定;测试 55/59 全绿;root 3 + 真实点击验证抽到 Active · ref: `docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md`
