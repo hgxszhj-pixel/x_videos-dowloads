@@ -13,8 +13,9 @@
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。23 个文件,日期范围 2026-10-04 → 2026-09-02。
+每条链接到完整 session 文件。25 个文件,日期范围 2026-10-04 → 2026-09-02。
 
+- 2026-10-04 — [moscan 模块 25/26/27：卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定](docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md)
 - 2026-10-04 — [audit 4 处 false alarm 闭环 (C1/C2/C3/H1) + H3 green tier partial 4 文件 pure-fn 测试](docs/handoff/sessions/2026-10-04-audit-4-处-false-alarm-闭环-C1-C2-C3-H1-+-H3-green-tier-p.md)
 - 2026-10-04 — [CLI flag 完整清单落档 M4 closure (25 个 flag 按 6 类分组)](docs/handoff/sessions/2026-10-04-cli-flag-清单-落档-M4-closure.md)
 - 2026-10-03 — [HANDOFF.md 拆分 + size-guard hook + 13 Rules + TDD 升档 + agent 输出上限](docs/handoff/sessions/2026-10-03-handoff-md-split-+-handoff-size-guard-hook-+-instincts-13-rules-+-TDD-升档-+-agent-输出上限.md)
@@ -42,19 +43,30 @@
 
 ## Sessions Archive
 
-完整 21 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
+完整 25 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 
 **更早 (2026-09-01 之前)**: 历史 session 摘要见 git history (`git log --oneline -- HANDOFF.md`);WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021);京峰教育/SHANHU 珊瑚 v1 报告"已推翻";智学云 `zhixueyun-analyzer` skill (08-29);全局 Claude Code 配置改造 5 hooks + 15 deny (08-28);tulingvip-m3u8-download v3.2 + douyin-mp4-download v1 (08-25);darwin 优化 web-protocol-recovery (08-22);opencode failover wrapper (08-21);OpenCode 多 provider (08-17);P1 重构 (08-16);GUI 性能 (08-13);小鹅通端到端 6 节 8.5GB (08-09)。
 
-## 待办 / Open Items
+## Open Loops — Active (需要行动)
 
-- **HANDOFF.md 拆分** (本轮完成): 2117 行 → ~70 行索引 + 22 个独立 session 文件,降低 96% 行数
-- **5 维度启发式审计** (本轮完成): docs/audit/2026-10-03-*.md — 4 critical + 3 high + 4 medium + 15 heuristic flags;🔴 C1 (theme.rs iced) / 🔴 C2 (6 处生产 panic) / 🟠 C3 (http_client panic) / 🟠 H1 (collaboration 隔离) **4/4 经逐项源码验证为 false alarm**(panic 3 类上下文 / cfg gate / dioxus re-export);🔴 C4 (HANDOFF 测试基线 298→320 漂移) 已在 `b3d39d4` 修复;`audit-heuristic-blind-spots.md` 沉淀 4 类盲点 + panic 3-context 表格
-- **H3 green tier partial** (本轮完成 4/10): theme.rs (5) + xbogus.rs (5) + strategy_native.rs (2) + path.rs 测试已绿;剩 6 IO-bound 文件推迟 (mock 成本高,留待 integration test)
-- **handoff_size_guard hook** (本轮完成): staged HANDOFF.md > 200 行 hard reject,> 100 行 soft warn;`docs/handoff/sessions/` 季度归档 (> 90 天 → `archive/YYYY-Qx/`) 协同防目录无界膨胀
-- **用户全局 13 Rules** (本轮完成): workflow-light-plan 自决策白名单 + 暂停条件,workflow-tdd-red-green 0.8→0.9,新增 workflow-agent-output-bounded
-- **planner agent tier 化** (deep/light): 下轮决策,需要单独规划
-- **更早 sessions 归档清理** (2026-09-01 之前): 现以聚合行保留;后续如需独立文件可批量处理
+> SKILL.state 风格:每条 state slot 显式 owner/blocker/next/touched;history 见 `docs/handoff/sessions/`。新增条目用 `<verb-noun-action>` 标题,2 行内完成。
+
+- **moscan root 三条卸载** — owner: 用户 · blocker: 厂商脚本须 handoff · next: 跑 Paragon 卸载脚本 + OrbStack helper+plist + 搜狗 qlgenerator;备份包 `~/Desktop` · touched: 2026-10-04
+- **moscan 真实点击验证** — owner: 用户 · blocker: macOS 辅助功能权限未开 · next: 系统设置 → 隐私与安全 → 辅助功能 → 允许 moscan;开后跑端到端 · touched: 2026-10-04
+- **H3 green tier 剩 6 IO-bound 文件** — owner: 引擎 · blocker: mock 成本高 · next: 等集成测试框架或抽 pure-fn 分支 · touched: 2026-10-04
+- **planner agent tier 化 (deep/light)** — owner: 引擎 · blocker: 待规划 · next: 下轮开 `/plan` 命令给方案 · touched: 2026-10-03
+
+## Open Loops — Blocked / Waiting (被外部卡住)
+
+- **更早 sessions 归档清理 (≤ 2026-09-01)** — waiting-on: 不紧急,作为 free-text 聚合行保留可读性足够 · eta: 季度归档时一并处理 · touched: 2026-10-03
+
+## Just Closed (last 5 sessions) — 详情见 sessions/
+
+- **moli 1.1.14 安装** (2026-10-07) — 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活;`moli-install-network-blocked-2026-10-07.md`
+- **Web fallback rule 12 升级** (2026-10-07) — 7 级降级链 `WebFetch → moli → ego-lite → agent-browser → camoufox → chrome → miniapp`;`web-fallback-rule-2026-10-07.md`
+- **moscan 模块 25/26/27 主线** (2026-10-04) — 卸载面板 + guard 根因 + CLI `--only`;测试 55/59 全绿;root 3 + 真实点击验证抽到 Active
+- **5 维度审计 false alarm 闭环** (2026-10-04) — C1/C2/C3/H1 经源码验证均为 false alarm;`audit-heuristic-blind-spots.md`
+- **HANDOFF.md 拆分 + handoff_size_guard hook + 13 Rules** (2026-10-03) — 2117 行 → ~70 行索引 + 22 sessions;hook hard reject > 200 / soft warn > 100
 
 ## 决策索引
 

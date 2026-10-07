@@ -78,6 +78,25 @@ if _handoff_guard_path.exists():
     if not _handoff_ok:
         sys.exit(1)
 
+# === open_loops schema validator (handoff_size_guard 之后 / Ref-trace 之前) ===
+# SKILL.state 风格: Active 必填 4 字段 / Blocked 必填 3 字段 / Just Closed 必填日期
+# 字段缺失 → 拒绝 commit (state corruption 不可静默放过)
+# 详情见 scripts/openloops_schema.py 与 [[open-loops-skillstate-style-2026-10-07]]
+_openloops_schema_path = (
+    Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+    / "scripts"
+    / "openloops_schema.py"
+)
+if _openloops_schema_path.exists():
+    sys.path.insert(0, str(_openloops_schema_path.parent))
+    from openloops_schema import check_openloops_schema  # noqa: E402
+
+    _openloops_ok, _openloops_msg = check_openloops_schema()
+    if _openloops_msg:
+        print(_openloops_msg, file=sys.stderr)
+    if not _openloops_ok:
+        sys.exit(1)
+
 # === Ref-trace 自动注入 (Intent Lock 之后 / DID/VC 之前) ===
 # 若今天 ~/.local/share/x_videos-dowloads-trace/YYYY-MM-DD/ 下有 NDJSON,
 # 自动追加 "Ref-trace: <绝对路径>" 到 commit message。
