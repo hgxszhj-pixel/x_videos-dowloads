@@ -46,8 +46,14 @@ SECTION_CLOSED = "## Just Closed"
 ACTIVE_REQUIRED = ["owner", "blocker", "next", "touched"]
 # Blocked slot 必填字段 (3 个)
 BLOCKED_REQUIRED = ["waiting-on", "eta", "touched"]
-# Just Closed 必填日期 YYYY-MM-DD
+# Just Closed 必填日期 YYYY-MM-DD + 必填 reason (L3 防御) + 必填 ref (session/memory 引用)
+JUST_CLOSED_REQUIRED = ["reason", "ref"]
 CLOSED_DATE_RE = re.compile(r"\((\d{4}-\d{2}-\d{2})\)")
+# ref 字段接受: docs/handoff/sessions/<file>.md 路径 或 memory/<file>.md basename
+# (backtick 包裹可选,允许两种风格;文件名允许中文/连字符,因 sessions 文件名带 slug)
+CLOSED_REF_RE = re.compile(
+    r"ref\s*:\s*`?([^·\n`]+?\.md)`?"
+)
 
 # touched 日期不能超过 N 天 (软警告 — 不阻塞)
 STALENESS_WARN_DAYS = 14
@@ -158,7 +164,18 @@ def check_blocked_section(section_body: str) -> list[str]:
 
 
 def check_closed_section(section_body: str) -> list[str]:
-    """Validate Just Closed section. Return list of error messages (empty = OK)."""
+    """Validate Just Closed section. Return list of error messages (empty = OK).
+
+    Required per slot (L3 防御 — Section 7 Limitations):
+      - (YYYY-MM-DD) date in title
+      - reason: <一句话> field (L3 防御: 捕获"为什么 close" reasoning 摘要)
+      - ref: <memory-or-session-path> field (链接到完整 trajectory)
+
+    ref 接受格式:
+      - ref: memory-file-name.md (basename, 在 ~/.claude/projects/.../memory/ 查找)
+      - ref: docs/handoff/sessions/2026-10-04-xxx.md (完整 git 仓库内路径)
+      - backtick 包裹可选
+    """
     errors = []
     slots = parse_slots(section_body)
     if not slots:
@@ -169,6 +186,25 @@ def check_closed_section(section_body: str) -> list[str]:
             errors.append(
                 f"  - [Just Closed] '{title}': missing date in '(YYYY-MM-DD)' format"
             )
+
+        for field in JUST_CLOSED_REQUIRED:
+            value = extract_field(text, field)
+            if not value:
+                errors.append(
+                    f"  - [Just Closed] '{title}': missing field '{field}:' "
+                    f"(L3 防御 — 必填 reason + ref)"
+                )
+
+        # ref 格式校验: 必须看起来像 .md 路径 (basename 或带 docs/handoff/sessions/ 前缀)
+        ref_match = CLOSED_REF_RE.search(text)
+        if "ref" in JUST_CLOSED_REQUIRED and not ref_match:
+            # 如果 extract_field 拿到 ref 但不匹配路径格式,说明是格式错误而非缺失
+            ref_val = extract_field(text, "ref")
+            if ref_val:
+                errors.append(
+                    f"  - [Just Closed] '{title}': ref value '{ref_val}' "
+                    f"must look like '<name>.md' or 'docs/handoff/sessions/<name>.md'"
+                )
 
     return errors
 

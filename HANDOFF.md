@@ -62,11 +62,13 @@
 
 ## Just Closed (last 5 sessions) — 详情见 sessions/
 
-- **moli 1.1.14 安装** (2026-10-07) — 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活;`moli-install-network-blocked-2026-10-07.md`
-- **Web fallback rule 12 升级** (2026-10-07) — 7 级降级链 `WebFetch → moli → ego-lite → agent-browser → camoufox → chrome → miniapp`;`web-fallback-rule-2026-10-07.md`
-- **moscan 模块 25/26/27 主线** (2026-10-04) — 卸载面板 + guard 根因 + CLI `--only`;测试 55/59 全绿;root 3 + 真实点击验证抽到 Active
-- **5 维度审计 false alarm 闭环** (2026-10-04) — C1/C2/C3/H1 经源码验证均为 false alarm;`audit-heuristic-blind-spots.md`
-- **HANDOFF.md 拆分 + handoff_size_guard hook + 13 Rules** (2026-10-03) — 2117 行 → ~70 行索引 + 22 sessions;hook hard reject > 200 / soft warn > 100
+> 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
+
+- **moli 1.1.14 安装** (2026-10-07) — reason: 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活 · ref: `moli-install-network-blocked-2026-10-07.md`
+- **Web fallback rule 12 升级** (2026-10-07) — reason: 7 级降级链 `WebFetch → moli → ego-lite → agent-browser → camoufox → chrome → miniapp`,moli Markdown 替代 camoufox + ego-lite 填补已登录 SaaS Keychain 解密 cookie 中间档 · ref: `web-fallback-rule-2026-10-07.md`
+- **moscan 模块 25/26/27 主线** (2026-10-04) — reason: 卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定;测试 55/59 全绿;root 3 + 真实点击验证抽到 Active · ref: `docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md`
+- **5 维度审计 false alarm 闭环** (2026-10-04) — reason: C1/C2/C3/H1 经源码验证均为 false alarm (声明 ↔ 使用 4 路 + panic 上下文);启发式审计 4 类盲点模式落地 · ref: `audit-heuristic-blind-spots.md`
+- **HANDOFF.md 拆分 + handoff_size_guard hook + 13 Rules** (2026-10-03) — reason: 2117 行 → ~70 行索引 + 22 sessions;hook hard reject > 200 / soft warn > 100;同时落 13 Rules + handoff-md-streamline-rule · ref: `docs/handoff/sessions/2026-10-03-handoff-md-split-+-handoff-size-guard-hook-+-instincts-13-rules-+-TDD-升档-+-agent-输出上限.md`
 
 ## 决策索引
 
