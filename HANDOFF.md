@@ -3,18 +3,20 @@
 > 当前状态、最近 session 索引、待办。完整 session 日志在 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 > 本轮拆分 (2026-10-03): 从 2117 行单文件 → ~70 行索引 + 21 个独立 session 文件。
 
-## 当前状态 (2026-10-04)
+## 当前状态 (2026-10-08)
 
-- **主分支**: `master`,最近 commit `a0f72c0` (C2 false alarm 修订)
-- **Workspace**: `gitbutler/workspace`,3 文件 H3 partial 待 commit (xbogus/theme/strategy_native)
+- **主分支**: `master`,最近 commit `4a050fe` (docs(handoff): close SKILL.state schema validator)
+- **Workspace**: `gitbutler/workspace`,src/* 多文件 modified 累计待 commit (细节无源起讫,待下次 cargo check 跑前再 audit)
 - **测试基线**: 320+ tests (H3 green tier 4 文件 pure-fn 测试已绿,具体数待 cargo test 终轮)
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
+- **codegraph MCP**: v1.6.2 健康(2026-10-08 修复 + 重建);198 files / 4,067 nodes / 8,578 edges
 - **关键 hook**: commit-msg (Intent Lock + **handoff_size_guard** + Ref-trace + DID/VC),pre-commit (cargo fmt + clippy)
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。25 个文件,日期范围 2026-10-04 → 2026-09-02。
+每条链接到完整 session 文件。26 个文件,日期范围 2026-10-08 → 2026-09-02。
 
+- 2026-10-08 — [codegraph 启动失败修复 + v1.6.2 全量重建 + daemon.log 瘦身 (65.4 KB → 398 B)](docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md)
 - 2026-10-07 — [SKILL.state open_loops schema validator A1+A2+A4+A5 完整落地 (L3 防御 + A5 工作流)](docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md)
 - 2026-10-04 — [moscan 模块 25/26/27：卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定](docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md)
 - 2026-10-04 — [audit 4 处 false alarm 闭环 (C1/C2/C3/H1) + H3 green tier partial 4 文件 pure-fn 测试](docs/handoff/sessions/2026-10-04-audit-4-处-false-alarm-闭环-C1-C2-C3-H1-+-H3-green-tier-p.md)
@@ -44,7 +46,7 @@
 
 ## Sessions Archive
 
-完整 25 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
+完整 26 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 
 **更早 (2026-09-01 之前)**: 历史 session 摘要见 git history (`git log --oneline -- HANDOFF.md`);WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021);京峰教育/SHANHU 珊瑚 v1 报告"已推翻";智学云 `zhixueyun-analyzer` skill (08-29);全局 Claude Code 配置改造 5 hooks + 15 deny (08-28);tulingvip-m3u8-download v3.2 + douyin-mp4-download v1 (08-25);darwin 优化 web-protocol-recovery (08-22);opencode failover wrapper (08-21);OpenCode 多 provider (08-17);P1 重构 (08-16);GUI 性能 (08-13);小鹅通端到端 6 节 8.5GB (08-09)。
 
@@ -61,16 +63,16 @@
 
 - **更早 sessions 归档清理 (≤ 2026-09-01)** — waiting-on: 不紧急,作为 free-text 聚合行保留可读性足够 · eta: 季度归档时一并处理 · touched: 2026-10-03
 
-## Just Closed (last 5 sessions) — 详情见 sessions/
+## Just Closed (last 6 sessions) — 详情见 sessions/
 
 > 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
 
+- **codegraph 启动失败修复 + v1.6.2 重建 + daemon.log 瘦身** (2026-10-08) — reason: npx cache 半残 (`lib/dist/` 缺失,SIGKILL) → 清 3 类残骸 (主包+pack cache+rename) → npx repull → handshake ✓ → index 198 文件重建 → log 65.4 KB → 398 B · ref: `docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md`
 - **SKILL.state open_loops schema validator (A1+A2+A4+A5)** (2026-10-07) — reason: 论文 L3 防御 + 显式 schema + 机器校验兜底;5 条 Just Closed 重构为 reason/ref;4 hook 全绿 rep=100.0 · ref: `docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md`
 - **moli 1.1.14 安装** (2026-10-07) — reason: 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活 · ref: `moli-install-network-blocked-2026-10-07.md`
 - **Web fallback rule 12 升级** (2026-10-07) — reason: 7 级降级链 `WebFetch → moli → ego-lite → agent-browser → camoufox → chrome → miniapp`,moli Markdown 替代 camoufox + ego-lite 填补已登录 SaaS Keychain 解密 cookie 中间档 · ref: `web-fallback-rule-2026-10-07.md`
 - **moscan 模块 25/26/27 主线** (2026-10-04) — reason: 卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定;测试 55/59 全绿;root 3 + 真实点击验证抽到 Active · ref: `docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md`
 - **5 维度审计 false alarm 闭环** (2026-10-04) — reason: C1/C2/C3/H1 经源码验证均为 false alarm (声明 ↔ 使用 4 路 + panic 上下文);启发式审计 4 类盲点模式落地 · ref: `audit-heuristic-blind-spots.md`
-- **HANDOFF.md 拆分 + handoff_size_guard hook + 13 Rules** (2026-10-03) — reason: 2117 行 → ~70 行索引 + 22 sessions;hook hard reject > 200 / soft warn > 100;同时落 13 Rules + handoff-md-streamline-rule · ref: `docs/handoff/sessions/2026-10-03-handoff-md-split-+-handoff-size-guard-hook-+-instincts-13-rules-+-TDD-升档-+-agent-输出上限.md`
 
 ## 决策索引
 
