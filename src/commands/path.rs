@@ -117,7 +117,10 @@ mod tests {
             Some("ab_".to_string())
         );
         // "a!" 清理后 "a_" 长度 2,<3 → None
-        assert_eq!(extract_filename_from_url("https://example.com/a!.html"), None);
+        assert_eq!(
+            extract_filename_from_url("https://example.com/a!.html"),
+            None
+        );
     }
 
     /// 非法 URL → None(不 panic)

@@ -779,7 +779,12 @@ mod tests {
         for status in [502u16, 503, 504, 599] {
             let err: anyhow::Error = DownloadError::http(status).into();
             let delay = VideoDownloader::calculate_backoff(&Some(err), 1, 30);
-            assert_eq!(delay, Duration::from_secs(2), "status={} 应命中 5xx 分支", status);
+            assert_eq!(
+                delay,
+                Duration::from_secs(2),
+                "status={} 应命中 5xx 分支",
+                status
+            );
         }
     }
 

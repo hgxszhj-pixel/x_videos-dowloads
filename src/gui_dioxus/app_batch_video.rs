@@ -26,10 +26,7 @@ use super::types::{
 /// 全局 Coroutine,新入口必须显式 `poller.send(PollMsg::Batch { ... })`,否则
 /// poller 永远 idle,UI 进度条停在 0% (2026-09-14 BUG-A 修复,见 HANDOFF)。
 #[component]
-pub(super) fn BatchVideoPanel(
-    state: Store<AppState>,
-    poller: Coroutine<PollMsg>,
-) -> Element {
+pub(super) fn BatchVideoPanel(state: Store<AppState>, poller: Coroutine<PollMsg>) -> Element {
     // 列表只读 —— 此面板渲染期间 items 不再变化 —— 旧代码 `items().iter()` 也能用。
     // 仍提取 sub-store 让结构与 batch_progress/course_pool 一致,未来要加交互(checkbox/删除)
     // 时不会因裸引用而无订阅翻车。

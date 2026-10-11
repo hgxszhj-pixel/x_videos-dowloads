@@ -237,7 +237,12 @@ impl ShanhuResolver {
         }
         // 模式 2-4：单段路由（course_id 唯一候选，class_id 留给 query）
         let mut course_id = None;
-        for pat in [r"/yueke\d+/(\d+)", r"/course/(\d+)", r"/learn/(\d+)", r"/study/(\d+)"] {
+        for pat in [
+            r"/yueke\d+/(\d+)",
+            r"/course/(\d+)",
+            r"/learn/(\d+)",
+            r"/study/(\d+)",
+        ] {
             if let Ok(re) = regex::Regex::new(pat) {
                 if let Some(caps) = re.captures(url) {
                     if let Some(m) = caps.get(1) {
@@ -279,9 +284,8 @@ impl ShanhuResolver {
     /// 2026-10-11:Mutex<HashMap> → RwLock<HashMap>,GUI 多线程并发分析多门课时
     /// 读端可并行,写仅在 cache miss 后 1 次。
     fn class_id_cache() -> &'static std::sync::RwLock<std::collections::HashMap<u64, u64>> {
-        static CACHE: std::sync::OnceLock<
-            std::sync::RwLock<std::collections::HashMap<u64, u64>>,
-        > = std::sync::OnceLock::new();
+        static CACHE: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<u64, u64>>> =
+            std::sync::OnceLock::new();
         CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
     }
 
@@ -293,7 +297,11 @@ impl ShanhuResolver {
     pub(crate) fn parse_first_class_id(body: &Value) -> Result<u64, ResolverError> {
         // 路径 1: data 是数组
         if let Some(arr) = body.get("data").and_then(|d| d.as_array()) {
-            if let Some(id) = arr.first().and_then(|c| c.get("id")).and_then(|v| v.as_u64()) {
+            if let Some(id) = arr
+                .first()
+                .and_then(|c| c.get("id"))
+                .and_then(|v| v.as_u64())
+            {
                 return Ok(id);
             }
         }
@@ -303,7 +311,11 @@ impl ShanhuResolver {
             .and_then(|d| d.get("classes"))
             .and_then(|c| c.as_array())
         {
-            if let Some(id) = arr.first().and_then(|c| c.get("id")).and_then(|v| v.as_u64()) {
+            if let Some(id) = arr
+                .first()
+                .and_then(|c| c.get("id"))
+                .and_then(|v| v.as_u64())
+            {
                 return Ok(id);
             }
         }
@@ -326,7 +338,10 @@ impl ShanhuResolver {
             .ok()
             .and_then(|m| m.get(&course_id).copied())
         {
-            info!("SHANHU class_id 缓存命中: course_id={} → {}", course_id, cached);
+            info!(
+                "SHANHU class_id 缓存命中: course_id={} → {}",
+                course_id, cached
+            );
             return Ok(cached);
         }
         // 2. 需要登录 session (token 在 form body)
@@ -340,20 +355,18 @@ impl ShanhuResolver {
                     .into(),
             }
         })?;
-        let token = session.token.as_deref().ok_or_else(|| {
-            ResolverError::Detailed {
+        let token = session
+            .token
+            .as_deref()
+            .ok_or_else(|| ResolverError::Detailed {
                 platform: Platform::Shanhu,
                 url: String::new(),
                 message: "session 缺 token 字段".into(),
                 action: "用 `--shanhu-login-token` 重导".into(),
-            }
-        })?;
+            })?;
         // 3. POST form-urlencoded
         let org_id = Self::org_id();
-        let url = format!(
-            "{}/onlineapi/stu/course/listClass",
-            SHANHU_ONLINE_API
-        );
+        let url = format!("{}/onlineapi/stu/course/listClass", SHANHU_ONLINE_API);
         info!(
             "SHANHU listClass (auto-discover) → course_id={} org_id={}",
             course_id, org_id
@@ -379,9 +392,10 @@ impl ShanhuResolver {
                 resp.status()
             )));
         }
-        let body: Value = resp.json().await.map_err(|e| {
-            ResolverError::ParseFailed(format!("listClass JSON: {e}"))
-        })?;
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| ResolverError::ParseFailed(format!("listClass JSON: {e}")))?;
         let id = Self::parse_first_class_id(&body)?;
         // 4. 写缓存
         if let Ok(mut cache) = Self::class_id_cache().write() {
@@ -399,11 +413,7 @@ impl ShanhuResolver {
     ///
     /// 注意：URL 显式 class_id=0 等同"未指定"，触发自动发现。其它值视为用户覆盖，
     /// 即使服务端 500 也不回退到自动发现（尊重用户选择，错误信息透传）。
-    async fn resolve_class_id(
-        &self,
-        url: &str,
-        course_id: u64,
-    ) -> Result<u64, ResolverError> {
+    async fn resolve_class_id(&self, url: &str, course_id: u64) -> Result<u64, ResolverError> {
         if let Some(c) = Self::extract_class_id(url) {
             if c != DEFAULT_CLASS_ID {
                 info!(
@@ -442,20 +452,18 @@ impl ShanhuResolver {
                     .into(),
             }
         })?;
-        let token = session.token.as_deref().ok_or_else(|| {
-            ResolverError::Detailed {
+        let token = session
+            .token
+            .as_deref()
+            .ok_or_else(|| ResolverError::Detailed {
                 platform: Platform::Shanhu,
                 url: String::new(),
                 message: "session 缺 token 字段".into(),
                 action: "用 `--shanhu-login-token` 重导".into(),
-            }
-        })?;
+            })?;
 
         let org_id = Self::org_id();
-        let url = format!(
-            "{}/onlineapi/stu/course/listSections",
-            SHANHU_ONLINE_API
-        );
+        let url = format!("{}/onlineapi/stu/course/listSections", SHANHU_ONLINE_API);
         info!(
             "SHANHU listSections → course_id={} class_id={} org_id={}",
             course_id, class_id, org_id
@@ -505,7 +513,11 @@ impl ShanhuResolver {
             arr.first()
                 .and_then(|d0| d0.get("chapters"))
                 .and_then(|c| c.as_array())
-        } else if let Some(arr) = body.get("data").and_then(|d| d.get("chapters")).and_then(|c| c.as_array()) {
+        } else if let Some(arr) = body
+            .get("data")
+            .and_then(|d| d.get("chapters"))
+            .and_then(|c| c.as_array())
+        {
             Some(arr)
         } else {
             body.get("chapters").and_then(|c| c.as_array())
@@ -586,9 +598,7 @@ impl ShanhuResolver {
         let idx = url.find(key)?;
         let after = &url[idx + key.len()..];
         // 终止于 & / # 结束 / 字符串结束
-        let end = after
-            .find(['&', '#'])
-            .unwrap_or(after.len());
+        let end = after.find(['&', '#']).unwrap_or(after.len());
         after[..end].parse::<u64>().ok()
     }
 
@@ -626,9 +636,10 @@ impl ShanhuResolver {
             )));
         }
 
-        let body: Value = resp.json().await.map_err(|e| {
-            ResolverError::ParseFailed(format!("play_url JSON: {e}"))
-        })?;
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| ResolverError::ParseFailed(format!("play_url JSON: {e}")))?;
 
         // 响应路径:`data.play_urls[0].url` (数组取首元素,通常只有 1 路)
         let m3u8_url = body
@@ -667,17 +678,16 @@ impl ShanhuResolver {
         chapter_id: u64,
         video_id: u64,
     ) -> Result<String, ResolverError> {
-        let session = load_session().ok_or_else(|| {
-            ResolverError::Detailed {
-                platform: Platform::Shanhu,
-                url: String::new(),
-                message: format!(
-                    "file_id `{file_id}` (chapter={chapter_id}) hash 不在本地缓存,且无可用登录 session"
-                ),
-                action: "请运行 `x-video-downloader --shanhu-login <course-url>` 完成一次性浏览器登录\n\
+        let session = load_session().ok_or_else(|| ResolverError::Detailed {
+            platform: Platform::Shanhu,
+            url: String::new(),
+            message: format!(
+                "file_id `{file_id}` (chapter={chapter_id}) hash 不在本地缓存,且无可用登录 session"
+            ),
+            action:
+                "请运行 `x-video-downloader --shanhu-login <course-url>` 完成一次性浏览器登录\n\
                          (camoufox 自动导出 cookies 到 ~/.config/.../shanhu-session.json)"
                     .into(),
-            }
         })?;
 
         // P1 主动过期提示:saved_at 超过 7 天阈值时,videoAuth 大概率返 code=100067。
@@ -691,18 +701,16 @@ impl ShanhuResolver {
             );
         }
 
-        let token = session.token.as_deref().ok_or_else(|| {
-            ResolverError::Detailed {
+        let token = session
+            .token
+            .as_deref()
+            .ok_or_else(|| ResolverError::Detailed {
                 platform: Platform::Shanhu,
                 url: String::new(),
                 message: "session 缺 token 字段 (videoAuth 必须)".into(),
                 action: "用 `--shanhu-login-token` 重导".into(),
-            }
-        })?;
-        let url = format!(
-            "{}/onlineapi/stu/course/videoAuth",
-            SHANHU_ONLINE_API
-        );
+            })?;
+        let url = format!("{}/onlineapi/stu/course/videoAuth", SHANHU_ONLINE_API);
         let cookie_header = cookies_to_header(&session);
         info!(
             "SHANHU videoAuth → chapter={chapter_id} video_id={video_id} cookies={}",
@@ -897,18 +905,16 @@ impl PlatformResolver for ShanhuResolver {
         //    无 fragment → 默认取第一个有 hash 的章节（方便批量下载时复用 get_video_info）。
         let target_chapter_id = Self::extract_chapter_id(url);
         let chapter = if let Some(cid) = target_chapter_id {
+            sections.into_iter().find(|c| c.id == cid).ok_or_else(|| {
+                ResolverError::ParseFailed(format!(
+                    "URL 指定章节 {cid} 不在课程 {course_id} 章节列表中"
+                ))
+            })?
+        } else {
             sections
                 .into_iter()
-                .find(|c| c.id == cid)
-                .ok_or_else(|| {
-                    ResolverError::ParseFailed(format!(
-                        "URL 指定章节 {cid} 不在课程 {course_id} 章节列表中"
-                    ))
-                })?
-        } else {
-            sections.into_iter().find(|c| c.file_id.is_some()).ok_or_else(
-                || ResolverError::ContentUnavailable("课程无任何已录制章节".into()),
-            )?
+                .find(|c| c.file_id.is_some())
+                .ok_or_else(|| ResolverError::ContentUnavailable("课程无任何已录制章节".into()))?
         };
 
         // 3. 拿章节的 file_id
@@ -1025,10 +1031,7 @@ mod tests {
             ShanhuResolver::extract_course_id("https://example.com/foo"),
             None
         );
-        assert_eq!(
-            ShanhuResolver::extract_course_id("not a url"),
-            None
-        );
+        assert_eq!(ShanhuResolver::extract_course_id("not a url"), None);
     }
 
     #[test]
@@ -1138,7 +1141,10 @@ mod tests {
         assert_eq!(sections[0].file_id.as_deref(), Some("abc"));
         assert!(sections[1].file_id.is_none(), "empty file_id → None");
         assert!(sections[2].file_id.is_none(), "无 videos → None");
-        assert!(sections[3].file_id.is_none(), "videos[] 无 file_id key → None");
+        assert!(
+            sections[3].file_id.is_none(),
+            "videos[] 无 file_id key → None"
+        );
         assert_eq!(sections[4].name, "ok-2");
         assert_eq!(sections[4].duration, Some(600));
     }
@@ -1171,7 +1177,10 @@ mod tests {
         assert!(pats.contains(&"rexxi.cn"));
         assert!(pats.contains(&"wanzibook.com"));
         assert!(pats.contains(&"tenwiseacademy.cn"));
-        assert!(r.requires_auth(), "SHANHU 现在需要 session.token 鉴权 (2026-09-13 P0 推翻 v2 匿名)");
+        assert!(
+            r.requires_auth(),
+            "SHANHU 现在需要 session.token 鉴权 (2026-09-13 P0 推翻 v2 匿名)"
+        );
     }
 
     #[tokio::test]
@@ -1181,9 +1190,7 @@ mod tests {
         // (完整 end-to-end 测试需要 mock HTTP server,见 hls downloader 的 E2E 模式)
         let r = ShanhuResolver::new().unwrap();
         let result = r
-            .get_video_info(
-                "https://nonexistent-host-for-test.invalid/PC/#/yueke3/1#chapter=2",
-            )
+            .get_video_info("https://nonexistent-host-for-test.invalid/PC/#/yueke3/1#chapter=2")
             .await;
         let err = result.expect_err("应失败(无网络)");
         match err {
@@ -1222,16 +1229,12 @@ mod tests {
         );
         // 原 URL 已含 query (其他参数)→ 拼 `&chapter=<id>`
         assert_eq!(
-            ShanhuResolver::extract_chapter_id(
-                "https://rexxi.cn/x?class_id=1&chapter=123"
-            ),
+            ShanhuResolver::extract_chapter_id("https://rexxi.cn/x?class_id=1&chapter=123"),
             Some(123)
         );
         // 旧 hash 形式仍兼容 (防御性)
         assert_eq!(
-            ShanhuResolver::extract_chapter_id(
-                "https://rexxi.cn/x?class_id=1#chapter=123"
-            ),
+            ShanhuResolver::extract_chapter_id("https://rexxi.cn/x?class_id=1#chapter=123"),
             Some(123)
         );
     }
@@ -1311,9 +1314,8 @@ mod tests {
     #[test]
     fn extract_course_and_class_id_query_class_id_only() {
         // 单段路由 + ?class_id= query
-        let (c, cl) = ShanhuResolver::extract_course_and_class_id(
-            "https://rexxi.cn/x?class_id=3023639",
-        );
+        let (c, cl) =
+            ShanhuResolver::extract_course_and_class_id("https://rexxi.cn/x?class_id=3023639");
         assert_eq!(c, None, "未知 course 来源");
         assert_eq!(cl, Some(3023639));
     }
@@ -1339,9 +1341,7 @@ mod tests {
         );
         // 无 class_id → None
         assert_eq!(
-            ShanhuResolver::extract_class_id(
-                "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714"
-            ),
+            ShanhuResolver::extract_class_id("https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714"),
             None
         );
     }
@@ -1416,7 +1416,11 @@ mod tests {
         let url = "https://wx-bgfcbieh.rexxi.cn/PC/#/yueke3/3529714/3023639";
         let (_, cl) = ShanhuResolver::extract_course_and_class_id(url);
         assert_eq!(cl, Some(3023639));
-        assert_ne!(cl, Some(DEFAULT_CLASS_ID), "3023639 != 0,resolve_class_id 不触发自动发现");
+        assert_ne!(
+            cl,
+            Some(DEFAULT_CLASS_ID),
+            "3023639 != 0,resolve_class_id 不触发自动发现"
+        );
     }
 
     // ──────────────────── 2026-09-13 smoke: GUI smart dispatch 数据层 ────────────────────
@@ -1518,8 +1522,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "需本机 SHANHU session + 章节 3557155 已开回看;--shanhu-login-token 后跑 --ignored 启用"]
     async fn smoke_get_video_info_rexxi_3529714_chapter_3557155() {
-        use crate::types::DownloadStrategy;
         use crate::platform::session_summary;
+        use crate::types::DownloadStrategy;
 
         let summary = session_summary();
         assert!(

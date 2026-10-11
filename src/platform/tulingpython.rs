@@ -335,9 +335,7 @@ fn list_collection_impl<'a>(
         // Fast-path: macOS + column URL → 直接调 column.items.get 拿课节列表。
         // 成功则跳过 Drission,失败/非 macOS 走下方 Drission 兜底。
         #[cfg(target_os = "macos")]
-        if let Some(cid) = TulingPythonResolver::extract_id(url)
-            .filter(|id| id.starts_with("p_"))
-        {
+        if let Some(cid) = TulingPythonResolver::extract_id(url).filter(|id| id.starts_with("p_")) {
             if let Some(entries) = try_api_list_collection(url, &cid).await {
                 return Ok(entries);
             }
@@ -383,12 +381,12 @@ fn list_collection_impl<'a>(
 /// 且 `column_list` 经常捕获失败 → list_collection 返空 → 用户看到 "未识别到课程条目"。
 /// 仅 macOS + URL 含 column_id (`p_xxx`) 时尝试,失败返回 None 让调用方 fallback 到 Drission。
 #[cfg(target_os = "macos")]
-async fn try_api_list_collection(
-    url: &str,
-    column_id: &str,
-) -> Option<Vec<CollectionEntry>> {
-    let cookie_header =
-        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn", &["tulingpyton.cn", "xiaoeknow.com"]).ok()?;
+async fn try_api_list_collection(url: &str, column_id: &str) -> Option<Vec<CollectionEntry>> {
+    let cookie_header = crate::drission_client::decrypt_ego_lite_cookies_for_host(
+        "vip.tulingpyton.cn",
+        &["tulingpyton.cn", "xiaoeknow.com"],
+    )
+    .ok()?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -448,11 +446,13 @@ async fn try_api_list_collection(
 /// 仅 macOS + URL 含 live_id (`l_xxx`) 时尝试。
 #[cfg(target_os = "macos")]
 async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
-    let alive_id = TulingPythonResolver::extract_id(url)
-        .filter(|id| id.starts_with("l_"))?;
+    let alive_id = TulingPythonResolver::extract_id(url).filter(|id| id.starts_with("l_"))?;
 
-    let cookie_header =
-        crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn", &["tulingpyton.cn", "xiaoeknow.com"]).ok()?;
+    let cookie_header = crate::drission_client::decrypt_ego_lite_cookies_for_host(
+        "vip.tulingpyton.cn",
+        &["tulingpyton.cn", "xiaoeknow.com"],
+    )
+    .ok()?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -493,7 +493,10 @@ async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
             Some(a) => a,
             None => continue,
         };
-        let is_default_line = line.get("default").and_then(|v| v.as_bool()).unwrap_or(false)
+        let is_default_line = line
+            .get("default")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
             || line
                 .get("line_name")
                 .and_then(|v| v.as_str())
@@ -507,7 +510,10 @@ async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
             if first_url.is_none() {
                 first_url = Some(url_str.clone());
             }
-            let is_default_sharp = sharp.get("default").and_then(|v| v.as_bool()).unwrap_or(false)
+            let is_default_sharp = sharp
+                .get("default")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
                 || sharp
                     .get("name")
                     .and_then(|v| v.as_str())

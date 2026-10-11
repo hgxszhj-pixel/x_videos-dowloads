@@ -101,7 +101,12 @@ pub fn cleanup_stale_singleton_locks(dir: &std::path::Path) {
 
     let Some(target) = target else { return };
 
-    let pid: i32 = match target.trim().rsplit('-').next().and_then(|s| s.parse().ok()) {
+    let pid: i32 = match target
+        .trim()
+        .rsplit('-')
+        .next()
+        .and_then(|s| s.parse().ok())
+    {
         Some(p) => p,
         None => return, // 解析失败 → 保守不清,留给 is_profile_dir_in_use 拦截
     };
@@ -422,8 +427,7 @@ pub(crate) fn decrypt_ego_lite_cookies_for_host(
             let root_dotted = format!(".{root}");
             host == *root || host == root_dotted || host.ends_with(&root_dotted)
         });
-        if !host_matches_target
-            && !host_matches_root
+        if !host_matches_target && !host_matches_root
             || name.is_empty()
             || value.is_empty()
             || !seen.insert(name.clone())

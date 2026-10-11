@@ -174,9 +174,10 @@ impl HlsDownloader {
             }
             #[cfg(target_os = "macos")]
             if cfg.cookie_header.is_none() {
-                if let Ok(cookie) =
-                    crate::drission_client::decrypt_ego_lite_cookies_for_host("vip.tulingpyton.cn", &["tulingpyton.cn", "xiaoeknow.com"])
-                {
+                if let Ok(cookie) = crate::drission_client::decrypt_ego_lite_cookies_for_host(
+                    "vip.tulingpyton.cn",
+                    &["tulingpyton.cn", "xiaoeknow.com"],
+                ) {
                     cfg.cookie_header = Some(cookie);
                 }
             }
@@ -543,9 +544,7 @@ impl HlsDownloader {
         });
 
         // 下载分段（带 Referer + Cookie 防防盗链/鉴权 CDN）
-        let mut req = client
-            .get(&segment.url)
-            .header("Referer", &referer);
+        let mut req = client.get(&segment.url).header("Referer", &referer);
         if let Some(cookie) = custom_cookie {
             req = req.header("Cookie", cookie);
         }
@@ -652,9 +651,7 @@ impl HlsDownloader {
 /// 小鹅通 CDN（xet.tech / xed.plus / xiaoe-materials.com）必须带 Referer + 登录 Cookie，
 /// 否则返回 HTTP 403（2026-08-29 实测）。
 fn needs_xiaoe_cdn_headers(url: &str) -> bool {
-    url.contains("xet.tech")
-        || url.contains("xed.plus")
-        || url.contains("xiaoe-materials.com")
+    url.contains("xet.tech") || url.contains("xed.plus") || url.contains("xiaoe-materials.com")
 }
 
 #[cfg(test)]

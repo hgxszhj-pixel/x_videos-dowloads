@@ -172,22 +172,21 @@ pub(super) async fn start_download_impl(
         .await
         {
             // stall_check_loop 只在 stall 时返 Err,Ok 表示无穷循环 (tokio::select! 不应让 Ok 路径赢)
-            Ok(()) => unreachable!("stall_check_loop 只返 Err,Ok 表示无穷循环,select 不应让此路径胜出"),
+            Ok(()) => {
+                unreachable!("stall_check_loop 只返 Err,Ok 表示无穷循环,select 不应让此路径胜出")
+            }
             Err(e) => Err::<crate::types::DownloadResult, ErrorDisplay>(e),
         }
     };
     let download_fut = async move {
-        downloader
-            .download(&request, callback)
-            .await
-            .map_err(|e| {
-                // 尝试 downcast 到结构化 DownloadError，否则 fallback
-                if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
-                    ErrorDisplay::from(de.clone())
-                } else {
-                    ErrorDisplay::new("download", e.to_string(), "")
-                }
-            })
+        downloader.download(&request, callback).await.map_err(|e| {
+            // 尝试 downcast 到结构化 DownloadError，否则 fallback
+            if let Some(de) = e.downcast_ref::<crate::types::DownloadError>() {
+                ErrorDisplay::from(de.clone())
+            } else {
+                ErrorDisplay::new("download", e.to_string(), "")
+            }
+        })
     };
     let download_with_timeout = async {
         tokio::time::timeout(Duration::from_secs(120), download_fut)
@@ -220,7 +219,9 @@ pub(super) async fn start_download_impl(
                 .unwrap_or_else(|| "下载失败 (未知错误)".to_string()),
             "检查视频 URL 是否过期,或重新 Analyze Course 刷新 m3u8 后再下载",
         );
-        session.close(serde_json::json!({"status": "err", "msg": err.message})).await;
+        session
+            .close(serde_json::json!({"status": "err", "msg": err.message}))
+            .await;
         Err(err)
     }
 }
@@ -986,12 +987,9 @@ async fn resolve_items_serially(
         // 填充 slot.total_bytes/progress 让 UI 直接显示 "✓ 已下载" + 100% + 文件大小
         // P-3 (2026-08-29): `overwrite_existing=true` 时跳过本检查,允许覆盖重下
         if !overwrite_existing {
-            if let Some(file_size) = file_is_already_downloaded_with_index(
-                &output_dir,
-                &item.title,
-                Some(item.index),
-            )
-            .await
+            if let Some(file_size) =
+                file_is_already_downloaded_with_index(&output_dir, &item.title, Some(item.index))
+                    .await
             {
                 if let Some(s) = slot.as_ref() {
                     s.total_bytes.store(file_size, Ordering::Relaxed);
@@ -1004,12 +1002,7 @@ async fn resolve_items_serially(
         } else {
             // 覆盖模式:先删旧文件,避免 HLS `File::create` 截断失败
             // (实测 m3u8 17GB 文件覆盖时,旧 .tmp 目录残留会导致空间浪费)
-            delete_existing_with_index(
-                &output_dir,
-                &item.title,
-                Some(item.index),
-            )
-            .await;
+            delete_existing_with_index(&output_dir, &item.title, Some(item.index)).await;
         }
         if let Some(s) = slot.as_ref() {
             s.set_status(CourseItemStatus::Resolving);
@@ -1284,11 +1277,7 @@ async fn metadata_size(path: std::path::PathBuf) -> Option<u64> {
 /// P-3 (2026-08-29): 覆盖模式预清理 — 删除已存在的同名 mp4(三种命名都查)。
 /// HLS `File::create` 会截断旧文件,但 17GB 大文件覆盖时旧 .tmp 目录残留
 /// 会浪费磁盘空间。先删旧主文件,再让 HLS 完整重写。
-async fn delete_existing_with_index(
-    output_dir: &std::path::Path,
-    title: &str,
-    index: Option<u32>,
-) {
+async fn delete_existing_with_index(output_dir: &std::path::Path, title: &str, index: Option<u32>) {
     // 1. Rust 原生命名
     let p1 = output_dir.join(format!("{}.mp4", sanitize_filename(title)));
     let _ = tokio::fs::remove_file(&p1).await;
@@ -1418,7 +1407,9 @@ mod skip_existing_tests {
         // 三种命名都建文件
         let p1 = dir.path().join(format!("{}.mp4", sanitize_filename(title))); // Rust 原生
         let p2 = dir.path().join(format!("01_{}.mp4", title)); // Python 原始
-        let p3 = dir.path().join(format!("01_{}.mp4", sanitize_filename(title))); // Rust 加 index
+        let p3 = dir
+            .path()
+            .join(format!("01_{}.mp4", sanitize_filename(title))); // Rust 加 index
         std::fs::write(&p1, vec![0u8; 100]).expect("write p1");
         std::fs::write(&p2, vec![0u8; 200]).expect("write p2");
         std::fs::write(&p3, vec![0u8; 300]).expect("write p3");
@@ -1478,12 +1469,9 @@ mod bug_d_isolation_tests {
             "http://127.0.0.1:1/bug-d-2".to_string(),
             "http://127.0.0.1:1/bug-d-3".to_string(),
         ];
-        let progress_arcs: Vec<Option<Arc<AtomicU32>>> =
-            (0..urls.len()).map(|_| None).collect();
-        let speed_arcs: Vec<Option<Arc<AtomicU64>>> =
-            (0..urls.len()).map(|_| None).collect();
-        let cancel_flags: Vec<Option<Arc<AtomicBool>>> =
-            (0..urls.len()).map(|_| None).collect();
+        let progress_arcs: Vec<Option<Arc<AtomicU32>>> = (0..urls.len()).map(|_| None).collect();
+        let speed_arcs: Vec<Option<Arc<AtomicU64>>> = (0..urls.len()).map(|_| None).collect();
+        let cancel_flags: Vec<Option<Arc<AtomicBool>>> = (0..urls.len()).map(|_| None).collect();
 
         let start = std::time::Instant::now();
         let result = tokio::time::timeout(
@@ -1625,11 +1613,7 @@ mod stall_check_loop_tests {
         )
         .await;
 
-        assert!(
-            res.is_err(),
-            "tokio::time::timeout 应超时,实际 {:?}",
-            res
-        );
+        assert!(res.is_err(), "tokio::time::timeout 应超时,实际 {:?}", res);
         // res.err() 是 Elapsed — 说明 stall_check_loop 未自行返 Err("stall")
     }
 

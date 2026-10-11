@@ -169,7 +169,10 @@ pub fn session_summary() -> SessionSummary {
         cookie_count: session.as_ref().map(|s| s.cookies.len()).unwrap_or(0),
         has_token: session.as_ref().and_then(|s| s.token.as_ref()).is_some(),
         saved_at: session.as_ref().map(|s| s.saved_at.clone()),
-        age_days: session.as_ref().and_then(|s| s.age_seconds()).map(|s| s / 86400),
+        age_days: session
+            .as_ref()
+            .and_then(|s| s.age_seconds())
+            .map(|s| s / 86400),
         is_stale: session.as_ref().is_some_and(|s| s.is_stale()),
     }
 }
@@ -404,7 +407,10 @@ mod tests {
                 "localStorage": [{"name": "token", "value": "wx_fallback"}]
             }]
         });
-        assert_eq!(extract_token_from_state(&state).as_deref(), Some("wx_fallback"));
+        assert_eq!(
+            extract_token_from_state(&state).as_deref(),
+            Some("wx_fallback")
+        );
     }
 
     #[test]
@@ -425,7 +431,9 @@ mod tests {
         assert!(is_shanhu_cookie_domain("wx-bgfcbieh.rexxi.cn"));
         assert!(is_shanhu_cookie_domain("rexxi.cn"));
         // CDN 域
-        assert!(is_shanhu_cookie_domain("111453136245362688.tenwiseacademy.cn"));
+        assert!(is_shanhu_cookie_domain(
+            "111453136245362688.tenwiseacademy.cn"
+        ));
         assert!(is_shanhu_cookie_domain(".tenwiseacademy.cn"));
     }
 
@@ -487,7 +495,10 @@ mod tests {
         let s = make_session_with_saved_at("2026-09-06T20:00:00Z");
         assert_eq!(s.saved_at_epoch(), None);
         assert_eq!(s.age_seconds(), None);
-        assert!(!s.is_expired(SESSION_MAX_AGE_SECS), "无法解析时保守不报过期");
+        assert!(
+            !s.is_expired(SESSION_MAX_AGE_SECS),
+            "无法解析时保守不报过期"
+        );
     }
 
     #[test]
@@ -501,6 +512,9 @@ mod tests {
         let s = make_session_with_saved_at(&format!("epoch:{three_days_ago}"));
         assert!(!s.is_expired(7 * 86400), "7 天阈值下 3 天前不老化");
         assert!(s.is_expired(86400), "1 天阈值下 3 天前老化");
-        assert!(s.is_expired(0), "0 阈值下任何 age > 0 即过期 (这里 age ≈ 3 天)");
+        assert!(
+            s.is_expired(0),
+            "0 阈值下任何 age > 0 即过期 (这里 age ≈ 3 天)"
+        );
     }
 }

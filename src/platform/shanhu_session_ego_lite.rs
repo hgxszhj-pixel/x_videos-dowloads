@@ -25,11 +25,11 @@
 //! - MEMORY.md:bug-d-isolation-and-cookies-zero — 本次 BUG-D 调查触发
 
 #[cfg(target_os = "macos")]
-use crate::drission_client::decrypt_ego_lite_cookies_for_host;
-#[cfg(target_os = "macos")]
 use super::shanhu_session::{
     is_shanhu_cookie_domain, save_session, session_from_export, session_summary,
 };
+#[cfg(target_os = "macos")]
+use crate::drission_client::decrypt_ego_lite_cookies_for_host;
 
 /// 从 macOS ego-lite 浏览器导入 SHANHU session cookies。
 ///
@@ -122,10 +122,7 @@ pub fn import_from_ego_lite() -> anyhow::Result<()> {
     // 5. 输出摘要 (与 handle_shanhu_login_cookie 风格对齐)
     println!("✓ SHANHU session 已从 ego-lite 导入");
     println!("  源:   ~/Library/Application Support/Citro Labs/ego lite/Default/Cookies");
-    println!(
-        "  cookie 数: {} (跳过 {} 个非 SHANHU 域)",
-        kept, skipped
-    );
+    println!("  cookie 数: {} (跳过 {} 个非 SHANHU 域)", kept, skipped);
     let s = session_summary();
     if let Some(p) = s.path {
         println!("  保存到: {}", p);
@@ -138,10 +135,7 @@ pub fn import_from_ego_lite() -> anyhow::Result<()> {
             "否 (Phase 2 follow-up: 需 LevelDB 解码)"
         }
     );
-    println!(
-        "  保存时间:  {}",
-        s.saved_at.as_deref().unwrap_or("<未知>")
-    );
+    println!("  保存时间:  {}", s.saved_at.as_deref().unwrap_or("<未知>"));
     println!();
     println!("  ⚠️  localStorage token 未自动导入 (Chrome Cookies SQLite 不含 localStorage)");
     println!("     请单独跑: --shanhu-login-token <TOKEN> 喂 token");

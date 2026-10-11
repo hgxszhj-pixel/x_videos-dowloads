@@ -187,6 +187,59 @@ pub struct Cli {
     /// 显式覆盖环境变量 `SHANHU_ORG_ID` 和内置默认值 27632958。
     #[arg(long = "shanhu-login-org-id", value_name = "ORG_ID")]
     pub shanhu_login_org_id: Option<u64>,
+
+    /// 触发 clean 子命令 (受 mole `clean` 启发):扫描下载目录,清理 stale/orphan/empty/duplicate 文件。
+    /// 必须配合 `--clean-target` 指定清理目标(默认 all)。
+    #[arg(long = "clean", value_name = "DIR")]
+    pub clean: Option<PathBuf>,
+
+    /// clean 子命令: 仅打印候选,不实际删除 (受 mole `clean --dry-run` 启发)
+    #[arg(long = "clean-dry-run")]
+    pub clean_dry_run: bool,
+
+    /// clean 子命令: 清理目标类别。`empty` | `temp` | `duplicate` | `all`(默认 all)
+    #[arg(long = "clean-target", value_name = "KIND", default_value = "all")]
+    pub clean_target: String,
+
+    /// clean 子命令: 白名单文件(可多次使用),命中文件即使匹配也跳过删除
+    #[arg(long = "clean-whitelist", value_name = "PATH")]
+    pub clean_whitelist: Vec<PathBuf>,
+
+    /// 触发 status 子命令 (受 mole `mo status` 启发): 检查 yt-dlp/ffmpeg/python/磁盘/目录可写/历史文件健康度。
+    #[arg(long = "status")]
+    pub status: bool,
+
+    /// status 子命令: 输出 JSON 格式(便于 CI/监控集成)
+    #[arg(long = "status-json")]
+    pub status_json: bool,
+
+    /// 触发 analyze 子命令 (受 mole `mo analyze` 启发): 分析下载目录,输出总大小/扩展名分布/年龄分桶/Top-10 大文件。
+    #[arg(long = "analyze", value_name = "DIR")]
+    pub analyze: Option<PathBuf>,
+
+    /// analyze 子命令: 输出 JSON 格式
+    #[arg(long = "analyze-json")]
+    pub analyze_json: bool,
+
+    /// 触发 history-stats 子命令 (受 mole `mo history` 启发): 扫描历史文件,输出成功率/累计字节/平台分布/Top-10/最近 7d。
+    #[arg(long = "history-stats")]
+    pub history_stats: bool,
+
+    /// history-stats 子命令: 输出 JSON 格式
+    #[arg(long = "history-stats-json")]
+    pub history_stats_json: bool,
+
+    /// history-stats 子命令: 历史文件路径(默认 ~/.x-video-downloader/history.json)
+    #[arg(long = "history-stats-path", value_name = "PATH")]
+    pub history_stats_path: Option<std::path::PathBuf>,
+
+    /// 触发 installer 子命令 (受 mole `mo installer` 启发): 检查 yt-dlp/ffmpeg/python3 版本对齐,给出升级建议。
+    #[arg(long = "installer")]
+    pub installer: bool,
+
+    /// installer 子命令: 输出 JSON 格式
+    #[arg(long = "installer-json")]
+    pub installer_json: bool,
 }
 
 /// 下载模式

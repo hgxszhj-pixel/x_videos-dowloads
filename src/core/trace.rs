@@ -18,11 +18,13 @@ use chrono::Utc;
 use serde_json::{json, Value};
 
 /// 全局 session_id(由 `trace_session_open` 设置一次,所有 trace_event 共用)
-static SESSION_ID: LazyLock<std::sync::Mutex<Option<String>>> = LazyLock::new(|| std::sync::Mutex::new(None));
+static SESSION_ID: LazyLock<std::sync::Mutex<Option<String>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// 全局 trace 文件句柄(由 `trace_session_open` 打开,`trace_session_close` 关闭)
 /// 用 std::sync::Mutex + std::fs::File 同步写,确保 RAII Drop 可直接落盘,事件顺序严格匹配代码顺序。
-static TRACE_FILE: LazyLock<std::sync::Mutex<Option<std::fs::File>>> = LazyLock::new(|| std::sync::Mutex::new(None));
+static TRACE_FILE: LazyLock<std::sync::Mutex<Option<std::fs::File>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// trace 根目录(可被环境变量覆盖,便于测试用 tmpdir)
 fn trace_root() -> std::path::PathBuf {
@@ -87,12 +89,8 @@ pub async fn trace_session_open(prefix: &str) -> String {
         .open(&file_path)
     {
         Ok(f) => {
-            *TRACE_FILE
-                .lock()
-                .expect("TRACE_FILE mutex poisoned") = Some(f);
-            *SESSION_ID
-                .lock()
-                .expect("SESSION_ID mutex poisoned") = Some(session_id.clone());
+            *TRACE_FILE.lock().expect("TRACE_FILE mutex poisoned") = Some(f);
+            *SESSION_ID.lock().expect("SESSION_ID mutex poisoned") = Some(session_id.clone());
 
             // 写入 session meta 作为 NDJSON 第一行(special step="session_open")
             let meta = json!({
@@ -274,7 +272,9 @@ fn write_event(event: &Value) -> std::io::Result<()> {
 fn append_no_session_event(event: &Value) -> std::io::Result<()> {
     use std::io::Write;
     let date = Utc::now().format("%Y-%m-%d").to_string();
-    let path = trace_root().join("no-session").join(format!("{date}.ndjson"));
+    let path = trace_root()
+        .join("no-session")
+        .join(format!("{date}.ndjson"));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -388,7 +388,10 @@ mod test_helpers {
             "{tmp:?} 下 {session_id_prefix}*.ndjson 应恰好 1 个,实际 {} (文件列表: {:?})",
             entries.len(),
             std::fs::read_dir(tmp)
-                .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect::<Vec<_>>())
+                .map(|d| d
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect::<Vec<_>>())
                 .unwrap_or_default()
         );
         entries.into_iter().next().unwrap().path()
@@ -416,7 +419,10 @@ mod tests {
     async fn test_trace_event_roundtrip() {
         reset_globals().await;
         // 用 tmpdir 隔离
-        let tmp = std::env::temp_dir().join(format!("trace-test-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-test-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
         std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
 
         let _session = trace_session_open("test").await;
@@ -436,7 +442,11 @@ mod tests {
         let path = find_session_file(&tmp, "test");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
-        assert_eq!(lines.len(), 3, "应 3 行: open / event / close, 实得 {lines:?}");
+        assert_eq!(
+            lines.len(),
+            3,
+            "应 3 行: open / event / close, 实得 {lines:?}"
+        );
 
         // 中间行必须是合法 JSON + 5 元组齐全
         let mid: Value = serde_json::from_str(lines[1]).expect("中间行必须合法 JSON");
@@ -458,7 +468,10 @@ mod tests {
     #[tokio::test]
     async fn test_trace_step_raii() {
         reset_globals().await;
-        let tmp = std::env::temp_dir().join(format!("trace-raii-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-raii-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
         std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
 
         let _session = trace_session_open("raii").await;
@@ -481,7 +494,10 @@ mod tests {
         let lines: Vec<&str> = content.trim().split('\n').collect();
         let mid: Value = serde_json::from_str(lines[1]).expect("中间行合法");
         assert_eq!(mid["step"], "sleep_step");
-        assert!(mid["duration_ms"].as_u64().unwrap() >= 50, "duration 应 ≥ 50ms");
+        assert!(
+            mid["duration_ms"].as_u64().unwrap() >= 50,
+            "duration 应 ≥ 50ms"
+        );
         assert_eq!(mid["output"]["status"], "done");
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -537,8 +553,8 @@ mod tests {
 
         // === 故障点 4: download_one — TraceStep RAII ===
         {
-            let _t = TraceStep::new("download_one")
-                .input(json!({"title": "章节3", "m3u8_len": 256}));
+            let _t =
+                TraceStep::new("download_one").input(json!({"title": "章节3", "m3u8_len": 256}));
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
 
@@ -556,7 +572,12 @@ mod tests {
 
         // 期望事件数: open + fetch_video_info + fetch_video_info_ok + resolver_try×3 + download_one(RAAI input) + close = 8
         // 注:TraceStep::drop 也会 spawn 一个 trace_event,所以 download_one 块产 2 行(input 行 + drop 触发行)
-        assert_eq!(lines.len(), 8, "应 8 行事件(TraceStep RAII 产 2 行),实得 {} 行:\n{content}", lines.len());
+        assert_eq!(
+            lines.len(),
+            8,
+            "应 8 行事件(TraceStep RAII 产 2 行),实得 {} 行:\n{content}",
+            lines.len()
+        );
 
         // 解析所有事件,提取 session_id
         let events: Vec<Value> = lines
@@ -648,12 +669,12 @@ mod tests {
             // 完全复刻 handlers.rs L459-463 的写法
             {
                 let _ = TraceStep::new("fetch_video_info")
-                        .input(json!({"url": "https://x.com/test"}))
-                        .on_exit(|out| {
-                            out["status"] = json!("entered");
-                        });
-                    // 模拟业务执行得 50ms 后 drop(scope 结束)
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    .input(json!({"url": "https://x.com/test"}))
+                    .on_exit(|out| {
+                        out["status"] = json!("entered");
+                    });
+                // 模拟业务执行得 50ms 后 drop(scope 结束)
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             trace_session_close(json!({})).await;
@@ -689,12 +710,12 @@ mod tests {
             steps,
             vec![
                 "session_open",
-                "fetch_video_info_ok",   // 显式 await 同步写
-                "fetch_video_info",      // RAII drop 在 _t 块结束时
+                "fetch_video_info_ok", // 显式 await 同步写
+                "fetch_video_info",    // RAII drop 在 _t 块结束时
                 "resolver_try",
                 "resolver_try",
                 "resolver_try",
-                "download_one",          // RAII drop 在 _t 块结束时
+                "download_one", // RAII drop 在 _t 块结束时
                 "session_close",
             ],
             "事件顺序应匹配代码真实控制流"
@@ -820,12 +841,12 @@ mod tests {
         // 完全复刻 handlers.rs L459-463 的写法
         {
             let _ = TraceStep::new("fetch_video_info")
-                    .input(json!({"url": "https://x.com/test"}))
-                    .on_exit(|out| {
-                        out["status"] = json!("entered");
-                    });
-                // 模拟业务执行得 50ms 后 drop(scope 结束)
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                .input(json!({"url": "https://x.com/test"}))
+                .on_exit(|out| {
+                    out["status"] = json!("entered");
+                });
+            // 模拟业务执行得 50ms 后 drop(scope 结束)
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         trace_session_close(json!({})).await;
@@ -855,7 +876,6 @@ mod tests {
         reset_globals().await;
     }
 
-
     /// 覆盖 handlers.rs 里 `?` 早退导致「半截 trace」的场景。
     #[serial]
     #[tokio::test]
@@ -876,7 +896,11 @@ mod tests {
         let path = find_session_file(&tmp, "early-return");
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
-        assert_eq!(lines.len(), 2, "应 open + 兜底 close 共 2 行,实得 {lines:?}");
+        assert_eq!(
+            lines.len(),
+            2,
+            "应 open + 兜底 close 共 2 行,实得 {lines:?}"
+        );
 
         let last: Value = serde_json::from_str(lines[1]).expect("末行合法 JSON");
         assert_eq!(last["step"], "session_close");
@@ -988,7 +1012,8 @@ mod tests {
                     }
                 });
 
-            let body_result: Result<(), String> = Err("VideoDownloader 初始化失败：missing yt-dlp".into());
+            let body_result: Result<(), String> =
+                Err("VideoDownloader 初始化失败：missing yt-dlp".into());
             if let Ok(mut slot) = outcome.lock() {
                 *slot = Some(body_result);
             }

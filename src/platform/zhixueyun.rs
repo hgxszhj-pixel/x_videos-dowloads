@@ -758,8 +758,8 @@ impl ZhiXueYunResolver {
     }
 
     pub fn fetch_video_info(&self, url: &str, token: &str) -> anyhow::Result<VideoInfo> {
-        let course_id = Self::extract_course_id(url)
-            .ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 ID"))?;
+        let course_id =
+            Self::extract_course_id(url).ok_or_else(|| anyhow::anyhow!("无法从 URL 中提取 ID"))?;
 
         // 1) 单课节预览:`home-v?id=` 走这里(更精准,直接拿到文件标题)
         let title = match self.get_file_preview_with_retry(&course_id, token, 3) {
@@ -849,10 +849,7 @@ fn parse_business_home_response(
         .unwrap_or_else(|| fallback_short_code.to_string());
     let short_code = pick_first_str(json, &["shortCode", "code", "short_code"])
         .unwrap_or_else(|| fallback_short_code.to_string());
-    let home_type = json
-        .get("type")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(1) as i32;
+    let home_type = json.get("type").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
 
     BusinessHomeInfo {
         home_type,
@@ -923,9 +920,7 @@ mod tests {
     #[test]
     fn test_extract_course_id_course_id_query() {
         assert_eq!(
-            ZhiXueYunResolver::extract_course_id(
-                "https://kc.zhixueyun.com/?courseId=128558"
-            ),
+            ZhiXueYunResolver::extract_course_id("https://kc.zhixueyun.com/?courseId=128558"),
             Some("128558".to_string())
         );
     }
@@ -935,9 +930,7 @@ mod tests {
     #[test]
     fn test_extract_course_id_home_v_with_query() {
         assert_eq!(
-            ZhiXueYunResolver::extract_course_id(
-                "https://kc.zhixueyun.com/#/home-v?id=128558"
-            ),
+            ZhiXueYunResolver::extract_course_id("https://kc.zhixueyun.com/#/home-v?id=128558"),
             Some("128558".to_string())
         );
     }
@@ -957,9 +950,7 @@ mod tests {
     #[test]
     fn test_extract_course_id_course_id_wins_over_id() {
         assert_eq!(
-            ZhiXueYunResolver::extract_course_id(
-                "https://kc.zhixueyun.com/?courseId=42&id=128558"
-            ),
+            ZhiXueYunResolver::extract_course_id("https://kc.zhixueyun.com/?courseId=42&id=128558"),
             Some("42".to_string())
         );
     }
@@ -1000,10 +991,8 @@ mod tests {
     /// 字段名漂移到 `businessId` + `code`(兼容旧版本)
     #[test]
     fn test_parse_business_home_response_business_id_alias() {
-        let json: serde_json::Value = serde_json::from_str(
-            r#"{"type":2,"businessId":"uuid-aaa","code":"42"}"#,
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(r#"{"type":2,"businessId":"uuid-aaa","code":"42"}"#).unwrap();
         let info = parse_business_home_response(&json, "42");
         assert_eq!(info.business_id, "uuid-aaa");
         assert_eq!(info.short_code, "42");
@@ -1012,10 +1001,8 @@ mod tests {
     /// 字段名漂移到 `uuid` + `short_code`(下划线风格)
     #[test]
     fn test_parse_business_home_response_uuid_alias() {
-        let json: serde_json::Value = serde_json::from_str(
-            r#"{"type":2,"uuid":"uuid-bbb","short_code":"9999"}"#,
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(r#"{"type":2,"uuid":"uuid-bbb","short_code":"9999"}"#).unwrap();
         let info = parse_business_home_response(&json, "9999");
         assert_eq!(info.business_id, "uuid-bbb");
         assert_eq!(info.short_code, "9999");
@@ -1054,10 +1041,8 @@ mod tests {
     /// 空字符串字段被跳过(防止空值污染)
     #[test]
     fn test_parse_business_home_response_empty_string_skipped() {
-        let json: serde_json::Value = serde_json::from_str(
-            r#"{"type":2,"id":"","businessId":"real-uuid"}"#,
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(r#"{"type":2,"id":"","businessId":"real-uuid"}"#).unwrap();
         let info = parse_business_home_response(&json, "1");
         // 空字符串应被跳过,落到 `businessId`
         assert_eq!(info.business_id, "real-uuid");
@@ -1066,10 +1051,8 @@ mod tests {
     /// `pick_first_str` 直接测试:多键 OR + 空值跳过
     #[test]
     fn test_pick_first_str_multi_key() {
-        let json: serde_json::Value = serde_json::from_str(
-            r#"{"a":null,"b":"","c":"winner","d":"ignored"}"#,
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(r#"{"a":null,"b":"","c":"winner","d":"ignored"}"#).unwrap();
         assert_eq!(
             pick_first_str(&json, &["a", "b", "c", "d"]),
             Some("winner".to_string())

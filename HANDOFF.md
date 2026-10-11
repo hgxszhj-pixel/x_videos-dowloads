@@ -14,8 +14,9 @@
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。26 个文件,日期范围 2026-10-08 → 2026-09-02。
+每条链接到完整 session 文件。27 个文件,日期范围 2026-10-08 → 2026-09-02。
 
+- 2026-10-08 — [the-scribble-thing skill 接入 + 2 demo 验证 + Toutiao 转录 + cron 排队等额](docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md)
 - 2026-10-08 — [codegraph 启动失败修复 + v1.6.2 全量重建 + daemon.log 瘦身 (65.4 KB → 398 B)](docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md)
 - 2026-10-07 — [SKILL.state open_loops schema validator A1+A2+A4+A5 完整落地 (L3 防御 + A5 工作流)](docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md)
 - 2026-10-04 — [moscan 模块 25/26/27：卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定](docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md)
@@ -61,12 +62,14 @@
 
 ## Open Loops — Blocked / Waiting (被外部卡住)
 
+- **scribble demo3 提交（4 工具对比图）** — waiting-on: the-scribble-thing daily free quota (UTC reset @ 00:00 = Beijing 08:00);session-only cron `b30767c8` 需 Claude 进程在 08:00 前不退出 · eta: 2026-10-09 08:00 cron 跑 `run_tools_compare.sh` → 产出 `preview3.mp4` + `sprite_tools_compare.png`;失败则人工 `$5` 买 unlock code 重试 · touched: 2026-10-08
 - **更早 sessions 归档清理 (≤ 2026-09-01)** — waiting-on: 不紧急,作为 free-text 聚合行保留可读性足够 · eta: 季度归档时一并处理 · touched: 2026-10-03
 
 ## Just Closed (last 6 sessions) — 详情见 sessions/
 
 > 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
 
+- **the-scribble-thing 接入 + 2 demo + Toutiao 转录 + cron 排队** (2026-10-08) — reason: 月亮IT 视频 4 工具对比 → 装 skill（sha256 验证）→ 2 demo 验证（house+feedback loop 40s）→ 第 3 次撞 daily quota 429 → 排 cron `b30767c8` 08:00 Beijing 续做;transcript 落 `$CLAUDE_JOB_DIR/tmp/toutiao_transcript.txt` · ref: `docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md`
 - **codegraph 启动失败修复 + v1.6.2 重建 + daemon.log 瘦身** (2026-10-08) — reason: npx cache 半残 (`lib/dist/` 缺失,SIGKILL) → 清 3 类残骸 (主包+pack cache+rename) → npx repull → handshake ✓ → index 198 文件重建 → log 65.4 KB → 398 B · ref: `docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md`
 - **SKILL.state open_loops schema validator (A1+A2+A4+A5)** (2026-10-07) — reason: 论文 L3 防御 + 显式 schema + 机器校验兜底;5 条 Just Closed 重构为 reason/ref;4 hook 全绿 rep=100.0 · ref: `docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md`
 - **moli 1.1.14 安装** (2026-10-07) — reason: 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活 · ref: `moli-install-network-blocked-2026-10-07.md`

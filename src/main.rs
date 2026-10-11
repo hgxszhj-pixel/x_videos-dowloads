@@ -103,6 +103,85 @@ fn main() {
         return;
     }
 
+    // clean 子命令 (受 mole `clean --dry-run` 启发)
+    if let Some(ref scan_dir) = cli.clean {
+        let target = match crate::commands::clean::CleanTarget::parse(&cli.clean_target) {
+            Some(t) => t,
+            None => {
+                eprintln!(
+                    "错误: 无效的 --clean-target 值 '{}' (期望 empty|temp|duplicate|all)",
+                    cli.clean_target
+                );
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = crate::commands::clean::run_clean_commands(
+            target,
+            cli.clean_dry_run,
+            &cli.clean_whitelist,
+            scan_dir,
+        ) {
+            eprintln!("clean 命令执行失败: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // status 子命令 (受 mole `mo status` 启发)
+    if cli.status {
+        // history.json 路径参考 history 模块约定: <output_dir>/x_video_history.json
+        let history_path = config.output_dir.join("x_video_history.json");
+        let cookie_path = cli.cookies.clone();
+        if let Err(e) = crate::commands::status::run_status_commands(
+            &config.output_dir,
+            Some(&history_path),
+            cookie_path.as_deref(),
+            cli.status_json,
+        ) {
+            eprintln!("status 命令执行失败: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // analyze 子命令 (受 mole `mo analyze` 启发)
+    if let Some(ref analyze_dir) = cli.analyze {
+        if let Err(e) =
+            crate::commands::analyze::run_analyze_commands(analyze_dir, cli.analyze_json)
+        {
+            eprintln!("analyze 命令执行失败: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // history-stats 子命令 (受 mole `mo history` 启发)
+    if cli.history_stats {
+        let default_path = dirs::data_dir()
+            .map(|d| d.join("x-video-downloader").join("history.json"))
+            .or_else(|| {
+                dirs::home_dir().map(|h| h.join(".x-video-downloader").join("history.json"))
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("history.json"));
+        let path = cli.history_stats_path.clone().unwrap_or(default_path);
+        if let Err(e) =
+            crate::commands::history_stats::run_history_stats(&path, cli.history_stats_json)
+        {
+            eprintln!("history-stats 命令执行失败: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // installer 子命令 (受 mole `mo installer` 启发)
+    if cli.installer {
+        if let Err(e) = crate::commands::installer::run_installer(cli.installer_json) {
+            eprintln!("installer 命令执行失败: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // 协作命令（feature = "collaboration"，默认不编译）
     #[cfg(feature = "collaboration")]
     {
@@ -266,7 +345,9 @@ fn handle_shanhu_cache_commands(cli: &crate::cli::Cli) {
             std::process::exit(1);
         }
         // m3u8 URL 简单合法性校验:必须以 http(s):// 开头,以 .m3u8 结尾
-        if !(hash.starts_with("http://") || hash.starts_with("https://")) || !hash.ends_with(".m3u8") {
+        if !(hash.starts_with("http://") || hash.starts_with("https://"))
+            || !hash.ends_with(".m3u8")
+        {
             eprintln!(
                 "警告: mp4_url 格式异常 (期望 http(s)://.../*.m3u8): {}\n  仍然写入(用户可能知道自己在做什么)",
                 hash
@@ -408,19 +489,13 @@ fn handle_shanhu_login(state_path: &std::path::PathBuf) {
     // 6. 输出摘要
     println!("✓ SHANHU session 已导入");
     println!("  源:   {}", state_path.display());
-    println!(
-        "  cookie 数: {} (跳过 {} 个非 SHANHU 域)",
-        kept, skipped
-    );
+    println!("  cookie 数: {} (跳过 {} 个非 SHANHU 域)", kept, skipped);
     let s = session_summary();
     if let Some(p) = s.path {
         println!("  保存到: {}", p);
     }
     println!("  含 token:  {}", if s.has_token { "是" } else { "否" });
-    println!(
-        "  保存时间:  {}",
-        s.saved_at.as_deref().unwrap_or("<未知>")
-    );
+    println!("  保存时间:  {}", s.saved_at.as_deref().unwrap_or("<未知>"));
     println!();
     println!("  videoAuth 自动发现已可用 — 缺失章节会通过 session cookie 自动获取 cfileid");
     println!("  更新:重新 export_state 后再跑本命令 (覆盖保存)");
@@ -437,7 +512,9 @@ fn handle_shanhu_login(state_path: &std::path::PathBuf) {
 /// 卡住。本入口让用户 1 分钟从 Chrome DevTools Network → Cookie header 复制后直接
 /// 喂命令行,省去中间脚本与文件。
 fn handle_shanhu_login_cookie(cookie_str: &str) {
-    use crate::platform::{is_shanhu_cookie_domain, save_session, session_from_export, session_summary};
+    use crate::platform::{
+        is_shanhu_cookie_domain, save_session, session_from_export, session_summary,
+    };
 
     // 1. 解析 cookie 字符串 → JSON cookies 数组(统一 .wanzibook.com)
     let cookies: Vec<serde_json::Value> = cookie_str
@@ -509,10 +586,7 @@ fn handle_shanhu_login_cookie(cookie_str: &str) {
         println!("  保存到: {}", p);
     }
     println!("  含 token:  {}", if s.has_token { "是" } else { "否" });
-    println!(
-        "  保存时间:  {}",
-        s.saved_at.as_deref().unwrap_or("<未知>")
-    );
+    println!("  保存时间:  {}", s.saved_at.as_deref().unwrap_or("<未知>"));
     println!();
     println!("  videoAuth 自动发现已可用 — 缺失章节会通过 session cookie 自动获取 cfileid");
     println!("  更新:Chrome DevTools 重新复制 Cookie 后再跑本命令 (覆盖保存)");
@@ -533,7 +607,9 @@ fn handle_shanhu_login_token(token: &str, org_id_override: Option<u64>) {
     // 1. 验证 token 格式 — 必须是 `wx_<hash>_<org_id>_<fans_id>` 或类似非空字符串
     let token = token.trim();
     if token.is_empty() {
-        eprintln!("错误: token 字符串为空\n  提示: DevTools → Application → Local Storage → token 字段");
+        eprintln!(
+            "错误: token 字符串为空\n  提示: DevTools → Application → Local Storage → token 字段"
+        );
         std::process::exit(1);
     }
     if token.len() < 8 {
@@ -581,17 +657,24 @@ fn handle_shanhu_login_token(token: &str, org_id_override: Option<u64>) {
     println!("✓ SHANHU session 已导入(从浏览器 localStorage token)");
     println!("  源:   DevTools → Application → Local Storage → token 字段");
     println!("  token 长度: {} 字符", token.len());
-    println!("  token 前缀: {}...", token.chars().take(12).collect::<String>());
-    println!("  org_id: {}", if org_id != 0 { org_id.to_string() } else { "<无法从 token 解析,使用默认值 27632958>".into() });
+    println!(
+        "  token 前缀: {}...",
+        token.chars().take(12).collect::<String>()
+    );
+    println!(
+        "  org_id: {}",
+        if org_id != 0 {
+            org_id.to_string()
+        } else {
+            "<无法从 token 解析,使用默认值 27632958>".into()
+        }
+    );
     let s = session_summary();
     if let Some(p) = s.path {
         println!("  保存到: {}", p);
     }
     println!("  含 token:  是 (cookies: 0)");
-    println!(
-        "  保存时间:  {}",
-        s.saved_at.as_deref().unwrap_or("<未知>")
-    );
+    println!("  保存时间:  {}", s.saved_at.as_deref().unwrap_or("<未知>"));
     println!();
     println!("  listClass/listSections/videoAuth 已可用 — token 在 form body,无需 cookie");
     println!("  更新:token 过期后从 DevTools 重新复制 token 再跑本命令 (覆盖保存)");
