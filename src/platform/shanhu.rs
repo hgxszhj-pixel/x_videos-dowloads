@@ -276,11 +276,13 @@ impl ShanhuResolver {
 
     /// 进程内 course_id → class_id 缓存（避免同一 session 重复调 listClass）。
     /// listClass 匿名可用但仍是网络往返，缓存可加速 GUI 双击"分析"按钮。
-    fn class_id_cache() -> &'static std::sync::Mutex<std::collections::HashMap<u64, u64>> {
+    /// 2026-10-11:Mutex<HashMap> → RwLock<HashMap>,GUI 多线程并发分析多门课时
+    /// 读端可并行,写仅在 cache miss 后 1 次。
+    fn class_id_cache() -> &'static std::sync::RwLock<std::collections::HashMap<u64, u64>> {
         static CACHE: std::sync::OnceLock<
-            std::sync::Mutex<std::collections::HashMap<u64, u64>>,
+            std::sync::RwLock<std::collections::HashMap<u64, u64>>,
         > = std::sync::OnceLock::new();
-        CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
     }
 
     /// 解析 listClass 响应提取首个 class_id。
@@ -320,7 +322,7 @@ impl ShanhuResolver {
     async fn fetch_default_class_id(&self, course_id: u64) -> Result<u64, ResolverError> {
         // 1. 进程缓存命中 → 直返
         if let Some(cached) = Self::class_id_cache()
-            .lock()
+            .read()
             .ok()
             .and_then(|m| m.get(&course_id).copied())
         {
@@ -382,7 +384,7 @@ impl ShanhuResolver {
         })?;
         let id = Self::parse_first_class_id(&body)?;
         // 4. 写缓存
-        if let Ok(mut cache) = Self::class_id_cache().lock() {
+        if let Ok(mut cache) = Self::class_id_cache().write() {
             cache.insert(course_id, id);
         }
         info!(
@@ -1399,7 +1401,7 @@ mod tests {
     fn class_id_cache_initializes_empty() {
         // 进程启动后首次访问 → 初始化为空 HashMap
         let cache = ShanhuResolver::class_id_cache();
-        let map = cache.lock().unwrap();
+        let map = cache.read().unwrap();
         assert!(map.is_empty(), "首次访问应返回空 cache");
     }
 
