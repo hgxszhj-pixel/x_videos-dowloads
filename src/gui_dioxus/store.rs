@@ -12,24 +12,20 @@ use super::types::HistoryItem;
 /// 配置热重载状态
 static CONFIG_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// 全局 History 实例（使用 Mutex 支持内部可变）
+/// 全局 History 实例（使用 RwLock 区分读写,UI 热路径不再互斥）
 ///
-/// **P0-3 audit (2026-07-19)**：原始代码用 `std::sync::Mutex` 而非 `tokio::sync::Mutex`，
-/// 表面上违反了"async 上下文禁用 std::sync::Mutex"的最佳实践。
+/// **2026-10-11 audit**：原 `std::sync::Mutex` 在读多写少场景下让 UI 重渲染
+/// 与后台下载写入互相排队。读 (`get_history_items` 每次 UI frame 都调用,
+/// 锁持有期间含 `clone`/`format!`/`chrono::format`) 远远多于写 (初始化 1 次 +
+/// 下载完成时 `add_completed_download`)。改 `RwLock` 后多 UI 帧可并发读,
+/// 写线程仅在下载完成时短暂 wait,与 Mutex 相比代价更低。
 ///
-/// 经 audit 后确认**当前 invariant 安全**：
-/// - `add_completed_download` / `get_history_items` / `clear_global_history` 三个函数
-///   虽然声明为 async 函数，但锁的持有区间内**无任何 `.await` 调用**
-///   （仅同步 mutate → drop guard），不构成"持锁跨 await"。
+/// **invariant 维持**：所有访问函数仍是同步调用,锁持有区间内**无任何 `.await`**,
+/// 不构成"持锁跨 await"。`RwLock::read()` 在当前调度下也不会长时间等待写锁,
+/// 因为下载完成事件频率 << UI 渲染频率。
 ///
-/// - 如果未来添加者在锁持有区间内插入 `.await`，**必须立即**改用 `tokio::sync::Mutex`，
-///   否则会阻塞整个 executor 并可能死锁。
-///
-/// 改用 `tokio::sync::Mutex` 引入运行时依赖（当前 `main.rs` 用 `current_thread` runtime，
-/// 改 async 后 init 路径需要 `Handle::block_on` 或重构为 lazy init），权衡收益不明显。
-///
-/// 当前保留 `std::sync::Mutex` + SAFETY 注释，行为等价且零运行时影响。
-static GLOBAL_HISTORY: std::sync::Mutex<Option<History>> = std::sync::Mutex::new(None);
+/// 若未来改 async,需重新评估是否换 `tokio::sync::RwLock`(同 §Mutex 推理)。
+static GLOBAL_HISTORY: std::sync::RwLock<Option<History>> = std::sync::RwLock::new(None);
 
 /// 添加下载完成记录到历史（自动清理超过 100 条的旧记录）
 const MAX_HISTORY_ENTRIES: usize = 100;
@@ -37,7 +33,7 @@ const MAX_HISTORY_ENTRIES: usize = 100;
 /// 初始化全局 History
 pub(super) fn init_global_history(history: History) {
     let mut h = GLOBAL_HISTORY
-        .lock()
+        .write()
         .expect("init_global_history: failed to lock GLOBAL_HISTORY");
     *h = Some(history);
 }
@@ -45,7 +41,7 @@ pub(super) fn init_global_history(history: History) {
 pub(super) fn add_completed_download(title: String, url: String, path: Option<PathBuf>) {
     // SAFETY: 锁持有区间内无 `.await` 调用，不阻塞 executor
     let mut h = GLOBAL_HISTORY
-        .lock()
+        .write()
         .expect("add_completed_download: failed to lock GLOBAL_HISTORY");
     if let Some(history) = h.as_mut() {
         let entry = HistoryEntry {
@@ -67,7 +63,7 @@ pub(super) fn add_completed_download(title: String, url: String, path: Option<Pa
 /// 获取全局历史的 UI 项目（用于显示）
 pub(super) fn get_history_items() -> Vec<HistoryItem> {
     // SAFETY: 锁持有区间内无 `.await` 调用，不阻塞 executor
-    if let Ok(h) = GLOBAL_HISTORY.lock() {
+    if let Ok(h) = GLOBAL_HISTORY.read() {
         if let Some(history) = h.as_ref() {
             let entries = history.get_entries();
             return entries
@@ -97,7 +93,7 @@ pub(super) fn get_history_items() -> Vec<HistoryItem> {
 /// 清空历史
 pub(super) fn clear_global_history() {
     // SAFETY: 锁持有区间内无 `.await` 调用，不阻塞 executor
-    if let Ok(mut h) = GLOBAL_HISTORY.lock() {
+    if let Ok(mut h) = GLOBAL_HISTORY.write() {
         if let Some(history) = h.as_mut() {
             let _ = history.clear();
         }
@@ -163,7 +159,7 @@ mod tests {
         // 这是一个 AST-level 的契约，通过 lint 风格人工审计维护。
         //
         // 这里用单元测试覆盖核心 add/get/clear 流程：
-        let mut guard = GLOBAL_HISTORY.lock().expect("test lock");
+        let mut guard = GLOBAL_HISTORY.write().expect("test lock");
         *guard = None;
         drop(guard);
 
