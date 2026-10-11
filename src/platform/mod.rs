@@ -46,7 +46,6 @@ pub use shanhu_session::{
 #[cfg(target_os = "macos")]
 pub use shanhu_session_ego_lite::import_from_ego_lite;
 pub use tiktok::TikTokResolver;
-pub use token_manager::TokenManager;
 pub use tulingpython::TulingPythonResolver;
 pub use youtube::YouTubeResolver;
 #[cfg(feature = "zhixueyun")]
@@ -518,7 +517,9 @@ impl ResolverRegistry {
                     return Ok(info);
                 }
                 Ok(Err(e)) => tracing::warn!("YtDlp fallback 失败: {}", e),
-                Err(_elapsed) => tracing::warn!("YtDlp fallback 超时 ({}s)", PER_RESOLVER_TIMEOUT_SECS),
+                Err(_elapsed) => {
+                    tracing::warn!("YtDlp fallback 超时 ({}s)", PER_RESOLVER_TIMEOUT_SECS)
+                }
             }
         }
 

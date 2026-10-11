@@ -5,18 +5,15 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 use crate::history::Platform;
-use crate::platform::{CookieFileManager, ResolverError, TokenManager};
+use crate::platform::{CookieFileManager, ResolverError};
 use crate::types::VideoInfo;
 
 pub struct YtdlpBacked {
     tokens: HashMap<String, String>,
     cookie_manager: CookieFileManager,
     platform_tag: Platform,
-    #[expect(dead_code)] // 字段仅由 with_token_manager 写入,无 reader (Task 7 后仍未使用)
-    token_manager: Option<Arc<Mutex<TokenManager>>>,
 }
 
 impl YtdlpBacked {
@@ -25,17 +22,11 @@ impl YtdlpBacked {
             tokens: HashMap::new(),
             cookie_manager: CookieFileManager::new(),
             platform_tag: platform,
-            token_manager: None,
         }
     }
 
     pub fn with_tokens(mut self, tokens: HashMap<String, String>) -> Self {
         self.tokens = tokens;
-        self
-    }
-
-    pub fn with_token_manager(mut self, tm: Arc<Mutex<TokenManager>>) -> Self {
-        self.token_manager = Some(tm);
         self
     }
 
@@ -64,18 +55,22 @@ impl YtdlpBacked {
     }
 
     /// 核心:build ytdlp → 注入 cookie → 调 yt-dlp → log + wrap 错误
-    pub async fn fetch_via_ytdlp(
-        &self,
-        url: &str,
-    ) -> Result<VideoInfo, ResolverError> {
+    pub async fn fetch_via_ytdlp(&self, url: &str) -> Result<VideoInfo, ResolverError> {
         let mut ytdlp = crate::yt_dlp::YtDlp::new();
         if let Some(cookie_file) = self.cookie_file() {
-            tracing::debug!("{} using cookie file for authentication", self.platform_tag.display_name());
+            tracing::debug!(
+                "{} using cookie file for authentication",
+                self.platform_tag.display_name()
+            );
             ytdlp = ytdlp.with_cookie_file(cookie_file);
         }
         match ytdlp.get_video_info(url).await {
             Ok(info) => {
-                tracing::info!("{} video info via yt-dlp: {}", self.platform_tag.display_name(), info.title);
+                tracing::info!(
+                    "{} video info via yt-dlp: {}",
+                    self.platform_tag.display_name(),
+                    info.title
+                );
                 Ok(info)
             }
             Err(e) => {
@@ -121,7 +116,10 @@ mod tests {
         let tiktok = YtdlpBacked::new(Platform::TikTok)
             .with_tokens(HashMap::from([("msToken".to_string(), "x".to_string())]));
         let path = tiktok.cookie_file();
-        assert!(path.is_some(), "TikTok with msToken must produce cookie file");
+        assert!(
+            path.is_some(),
+            "TikTok with msToken must produce cookie file"
+        );
         let path_str = path.unwrap().to_string_lossy().into_owned();
         assert!(
             path_str.contains("tiktok"),

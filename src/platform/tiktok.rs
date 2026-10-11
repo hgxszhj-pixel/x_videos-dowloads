@@ -1,16 +1,17 @@
 //! TikTok 解析器
 //!
 //! 使用 yt-dlp 作为主要方式,msToken/ttwid 用于认证
-//! 支持 TokenManager 自动 token 生成和注入
+//!
+//! 2026-10-11:TokenManager 自动注入链路 (YtdlpBacked.field + TikTokResolver.with_token_manager)
+//! 自 Task 7 后无 reader,本次清理。后续若需重新接 token 自动生成,直接从
+//! `crate::platform::TokenManager` 在 `get_video_info` 调用前手动 `.lock()`,无需
+//! 再走 resolver 字段注入链。
 
 use crate::history::Platform;
-use crate::platform::{
-    url_matcher, PlatformResolver, ResolverError, TokenManager, YtdlpBacked,
-};
+use crate::platform::{url_matcher, PlatformResolver, ResolverError, YtdlpBacked};
 use crate::types::VideoInfo;
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 /// TikTok 解析器
 pub struct TikTokResolver {
@@ -26,12 +27,6 @@ impl TikTokResolver {
 
     pub fn with_tokens(mut self, tokens: HashMap<String, String>) -> Self {
         self.base = self.base.with_tokens(tokens);
-        self
-    }
-
-    #[expect(dead_code)]
-    pub fn with_token_manager(mut self, tm: Arc<Mutex<TokenManager>>) -> Self {
-        self.base = self.base.with_token_manager(tm);
         self
     }
 }
