@@ -46,3 +46,7 @@ downloads/
 
 # Third-party extracted tooling (problem_killer, shiroha-quiz-web releases)
 exam-lookup/tools/
+
+# Local runtime state (SQLite cache + scratch dir, never tracked)
+questions.db
+tmp/
