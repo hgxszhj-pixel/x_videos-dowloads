@@ -67,7 +67,11 @@ pub(super) fn WhiteCard(
 /// 通过 `use_context::<Signal<AppTheme>>()` 读当前主题，
 /// 当前主题等于 prop 时加 box-shadow ring 标记选中状态（Dioxus 0.7 lens 细粒度 reactivity）
 #[component]
-pub(super) fn ThemeSwatch(theme: AppTheme, onclick: EventHandler<MouseEvent>) -> Element {
+pub(super) fn ThemeSwatch(
+    theme: AppTheme,
+    onclick: EventHandler<MouseEvent>,
+    #[props(default)] title: Option<String>,
+) -> Element {
     let current = use_context::<Signal<AppTheme>>();
     let is_selected = current.cloned() == theme;
     let ring = if is_selected {
@@ -78,6 +82,7 @@ pub(super) fn ThemeSwatch(theme: AppTheme, onclick: EventHandler<MouseEvent>) ->
     rsx! {
         button {
             onclick: move |e| onclick.call(e),
+            title: title.unwrap_or_default(),
             style: "width: 28px; height: 28px; border-radius: 50%; border: 2px solid {theme.border_color()}; background: {theme.gradient()}; cursor: pointer; {ring}",
         }
     }

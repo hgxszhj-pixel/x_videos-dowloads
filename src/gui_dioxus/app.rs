@@ -213,6 +213,7 @@ pub(super) fn AppComponent() -> Element {
                         style: "display: flex; gap: 4px;",
                         ThemeSwatch {
                             theme: AppTheme::Purple,
+                            title: Some("紫色主题".to_string()),
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Purple;
                                 theme_signal.set(AppTheme::Purple);
@@ -221,6 +222,7 @@ pub(super) fn AppComponent() -> Element {
                         }
                         ThemeSwatch {
                             theme: AppTheme::Ocean,
+                            title: Some("海洋主题".to_string()),
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Ocean;
                                 theme_signal.set(AppTheme::Ocean);
@@ -229,6 +231,7 @@ pub(super) fn AppComponent() -> Element {
                         }
                         ThemeSwatch {
                             theme: AppTheme::Sunset,
+                            title: Some("日落主题".to_string()),
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Sunset;
                                 theme_signal.set(AppTheme::Sunset);
@@ -237,6 +240,7 @@ pub(super) fn AppComponent() -> Element {
                         }
                         ThemeSwatch {
                             theme: AppTheme::Forest,
+                            title: Some("森林主题".to_string()),
                             onclick: move |_| {
                                 state.write().theme = AppTheme::Forest;
                                 theme_signal.set(AppTheme::Forest);
@@ -261,7 +265,7 @@ pub(super) fn AppComponent() -> Element {
                                 }
                             }
                         },
-                        style: "padding: 6px 10px; background: transparent; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; cursor: pointer;",
+                        style: "padding: 4px 8px; background: transparent; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; cursor: pointer;",
                         "⚙️"
                     }
                     // 历史记录按钮
@@ -270,12 +274,12 @@ pub(super) fn AppComponent() -> Element {
                             let current = state.read().show_history;
                             state.write().show_history = !current;
                         },
-                        style: "padding: 8px 14px; background: #f5f5f5; color: #666; border: none; border-radius: 20px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.3s ease;",
+                        style: "padding: 6px 10px; background: #f5f5f5; color: #666; border: none; border-radius: 16px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.3s ease;",
                         "📜 历史"
                     }
                     div {
-                        style: "font-size: 12px; color: {TEXT_MUTED}; padding: 6px 12px; background: {BG_SUBTLE}; border-radius: 20px;",
-                        "Status: {state.read().status_message}"
+                        style: "font-size: 11px; color: {TEXT_MUTED}; padding: 4px 10px; background: {BG_SUBTLE}; border-radius: 16px;",
+                        "{state.read().status_message}"
                     }
                 }
             }
@@ -296,20 +300,6 @@ pub(super) fn AppComponent() -> Element {
                 div {
                     style: "font-size: 12px; color: #999; margin-top: 8px;",
                     "💡 支持 X.com, Twitter, TikTok, 抖音, Bilibili 等平台"
-                }
-                div {
-                    style: "display: flex; align-items: center; height: 40px; border: 1px solid #ccc; border-radius: 6px; padding-left: 12px;",
-                    UrlInput {
-                        placeholder: "Enter X.com/Twitter video URL".to_string(),
-                        value: state.read().url.clone(),
-                        on_input: move |e: dioxus::events::FormEvent| { state.write().url = e.value().to_string(); },
-                        on_submit: move |_: dioxus::events::KeyboardEvent| { trigger_fetch(); },
-                        font_size: "14px".to_string(),
-                    }
-                }
-                div {
-                    style: "font-size: 11px; color: {TEXT_MUTED}; margin-top: 4px;",
-                    "Enter URL(s), separate multiple URLs with spaces or commas"
                 }
                 div {
                     style: "display: flex; gap: 16px; height: 44px; margin-top: 12px;",
@@ -364,6 +354,137 @@ pub(super) fn AppComponent() -> Element {
                         else if course_action.pending() { "🔒 分析中..." }
                         else { "🔑 打开登录窗口" }
                     }
+                    // 智能下载:单 URL → start_download_impl,多 URL → batch_download_impl 自动分流
+                    // 与课程池"开始下载选中"互补 — 不同数据源(URL 输入 vs 已分析课节)
+                    button {
+                        onclick: move |_| {
+                            let url_list: Vec<String> = state.read().url.split([' ', ','])
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+
+                            if url_list.is_empty() {
+                                state.write().error_display = Some(ErrorDisplay::new("parse", "请输入有效的 URL", "请输入视频链接后重试"));
+                                return;
+                            }
+
+                            if url_list.len() == 1 {
+                                let url = url_list[0].clone();
+                                let title = video_info.read().title.clone();
+                                state.write().is_downloading = true;
+                                state.write().status_message = "Downloading...".to_string();
+                                progress_signal.set(0.0);
+                                speed_signal.set(String::new());
+                                size_signal.set(String::new());
+                                eta_signal.set(String::new());
+
+                                let progress_arc = Arc::new(AtomicU32::new(0));
+                                let speed_arc = Arc::new(AtomicU64::new(0));
+                                let total_bytes_arc = Arc::new(AtomicU64::new(0));
+                                let cancel_flag = Arc::new(AtomicBool::new(false));
+                                state.write().cancel_flag = Some(cancel_flag.clone());
+                                let progress_arc_clone = progress_arc.clone();
+                                let speed_arc_clone = speed_arc.clone();
+                                let total_bytes_arc_clone = total_bytes_arc.clone();
+                                let cancel_flag_clone = cancel_flag.clone();
+
+                                let format_id = state.read().selected_format_id.clone();
+                                let mut state = state;
+                                let mut progress_signal_for_task = progress_signal;
+                                spawn(async move {
+                                    match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), Some(total_bytes_arc_clone), Some(cancel_flag_clone), format_id, crate::types::DownloadStrategy::Native).await {
+                                        Ok(_) => {
+                                            state.write().is_downloading = false;
+                                            state.write().cancel_flag = None;
+                                            state.write().status_message = "🔄 合并中...".to_string();
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                                            state.write().status_message = "Download completed".to_string();
+                                            progress_signal_for_task.set(1.0);
+                                            add_completed_download(title.clone(), url.clone(), None);
+                                            send_notification("Download Complete", &format!("{} has been downloaded successfully", title));
+                                        }
+                                        Err(e) => {
+                                            state.write().is_downloading = false;
+                                            state.write().cancel_flag = None;
+                                            state.write().error_display = Some(e);
+                                            state.write().status_message = "Download failed".to_string();
+                                            send_notification("Download Failed", &title.to_string());
+                                        }
+                                    }
+                                });
+
+                                poller.send(PollMsg::Single {
+                                    progress_arc: progress_arc.clone(),
+                                    speed_arc: speed_arc.clone(),
+                                    total_bytes_arc: total_bytes_arc.clone(),
+                                    progress_signal,
+                                    speed_signal,
+                                    size_signal,
+                                    eta_signal,
+                                });
+                            } else {
+                                let progress_arcs: Vec<Option<Arc<AtomicU32>>> = url_list.iter().map(|_| Some(Arc::new(AtomicU32::new(0)))).collect();
+                                let speed_arcs: Vec<Option<Arc<AtomicU64>>> = url_list.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
+                                let cancel_flags: Vec<Option<Arc<AtomicBool>>> = url_list.iter().map(|_| Some(Arc::new(AtomicBool::new(false)))).collect();
+
+                                let batch_items: Vec<BatchItemState> = url_list.iter().enumerate().map(|(idx, _url)| {
+                                    BatchItemState {
+                                        status: "pending".to_string(),
+                                        progress: 0.0,
+                                        speed: String::new(),
+                                        visible: true,
+                                        speed_arc: speed_arcs[idx].clone(),
+                                        cancel_flag: cancel_flags[idx].clone(),
+                                    }
+                                }).collect();
+
+                                state.write().batch_state = BatchState {
+                                    visible: true,
+                                    progress: 0.0,
+                                    status: format!("准备下载 {} 个视频", url_list.len()),
+                                    items: batch_items,
+                                    aggregate_speed: String::new(),
+                                };
+                                state.write().is_downloading = true;
+
+                                let progress_arcs_for_poll: Vec<Arc<AtomicU32>> = progress_arcs.iter().filter_map(|a| a.clone()).collect();
+                                let total_count = url_list.len();
+
+                                poller.send(PollMsg::Batch {
+                                    progress_arcs: progress_arcs_for_poll,
+                                    total_count,
+                                });
+
+                                let mut state = state;
+                                spawn(async move {
+                                    let results = batch_download_impl(
+                                        url_list,
+                                        progress_arcs,
+                                        speed_arcs,
+                                        cancel_flags,
+                                    )
+                                    .await;
+                                    {
+                                        let mut s = state.write();
+                                        for (idx, _url, _success, status, progress) in results {
+                                            if let Some(item) = s.batch_state.items.get_mut(idx) {
+                                                item.status = status;
+                                                item.progress = progress;
+                                            }
+                                        }
+                                        s.batch_state.visible = false;
+                                        s.is_downloading = false;
+                                    }
+                                });
+                            }
+                        },
+                        style: "width: 110px; {state.read().theme.btn_success(\"0 18px\", \"10px\", \"14px\")}",
+                        "⬇️ 下载"
+                    }
+                }
+                // 次要动作:清空单独一行右对齐(ghost destructive 视觉,避免与主按钮混淆)
+                div {
+                    style: "display: flex; justify-content: flex-end; margin-top: 8px;",
                     button {
                         onclick: move |_| {
                             // 单事务写:5 个字段一次性提交,避免多次 state.write() micro-tx
@@ -375,7 +496,7 @@ pub(super) fn AppComponent() -> Element {
                             s.has_video_info = false;
                             s.course_collection_state = CourseCollectionState::default();
                         },
-                        style: "padding: 0 20px; background: #f5f5f5; border: none; border-radius: 10px; font-size: 14px; color: #666; transition: all 0.3s ease;",
+                        style: "{state.read().theme.btn_ghost_destructive(\"8px 14px\", \"13px\")}",
                         "🗑️ 清空"
                     }
                 }
@@ -404,173 +525,16 @@ pub(super) fn AppComponent() -> Element {
                 CoursePoolPanel { state, progress_signal }
             }
 
-            // 操作按钮
-                div {
-                    style: "display: flex; gap: 16px; margin-top: 12px;",
-                    button {
-                        onclick: move |_| {
-                            let url = video_info.read().url.clone();
-                            let title = video_info.read().title.clone();
-                            if url.is_empty() {
-                                return;
-                            }
-                            state.write().is_downloading = true;
-                            state.write().status_message = "Downloading...".to_string();
-                            // P0-2: 清空进度 Signal 而非 store 字段(保持兼容)
-                            progress_signal.set(0.0);
-                            speed_signal.set(String::new());
-                            size_signal.set(String::new());
-                            eta_signal.set(String::new());
-
-                            // 创建进度追踪原子变量
-                            let progress_arc = Arc::new(AtomicU32::new(0));
-                            let speed_arc = Arc::new(AtomicU64::new(0));
-                            let total_bytes_arc = Arc::new(AtomicU64::new(0));
-                            let cancel_flag = Arc::new(AtomicBool::new(false));
-                            // 把 cancel_flag 存到 state 让 progress UI 能访问
-                            state.write().cancel_flag = Some(cancel_flag.clone());
-                            let progress_arc_clone = progress_arc.clone();
-                            let speed_arc_clone = speed_arc.clone();
-                            let total_bytes_arc_clone = total_bytes_arc.clone();
-                            let cancel_flag_clone = cancel_flag.clone();
-
-                            // 提前获取 format_id，避免 borrow 问题
-                            let format_id = state.read().selected_format_id.clone();
-
-                            // 使用 spawn 在后台异步执行下载
-                            let mut state = state;
-                            // P0-2:克隆进度 Signal 句柄供 spawn 内 + poller 使用
-                            let mut progress_signal_for_task = progress_signal;
-                            spawn(async move {
-                                match start_download_impl(&url, None, &title, Some(progress_arc_clone), Some(speed_arc_clone), Some(total_bytes_arc_clone), Some(cancel_flag_clone), format_id, crate::types::DownloadStrategy::Native).await {
-                                    Ok(_) => {
-                                        state.write().is_downloading = false;
-                                        state.write().cancel_flag = None;
-                                        // Stream copy 合并很快，短暂显示合并状态
-                                        state.write().status_message = "🔄 合并中...".to_string();
-                                        // 等待 1.5 秒让 ffmpeg 完成 stream copy 合并
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-                                        state.write().status_message = "Download completed".to_string();
-                                        progress_signal_for_task.set(1.0);
-                                        // 添加到历史记录
-                                        add_completed_download(title.clone(), url.clone(), None);
-                                        send_notification("Download Complete", &format!("{} has been downloaded successfully", title));
-                                    }
-                                    Err(e) => {
-                                        state.write().is_downloading = false;
-                                        state.write().cancel_flag = None;
-                                        state.write().error_display = Some(e);
-                                        state.write().status_message = "Download failed".to_string();
-                                        send_notification("Download Failed", &title.to_string());
-                                    }
-                                }
-                            });
-
-                            // 启动单下载进度轮询（use_coroutine 调度，500ms 间隔，1% 阈值过滤）
-                            poller.send(PollMsg::Single {
-                                progress_arc: progress_arc.clone(),
-                                speed_arc: speed_arc.clone(),
-                                total_bytes_arc: total_bytes_arc.clone(),
-                                progress_signal,
-                                speed_signal,
-                                size_signal,
-                                eta_signal,
-                            });
-                        },
-                        style: "{state.read().theme.btn_success(\"14px\", \"10px\", \"15px\")} flex: 1;",
-                        "⬇️ 开始下载"
-                    }
-                    button {
-                        onclick: move |_| {
-                            let urls = state.read().url.clone();
-                            // 解析多个 URL（空格/逗号分隔）
-                            let url_list: Vec<String> = urls.split([' ', ','])
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect();
-
-                            if url_list.is_empty() {
-                                state.write().error_display = Some(ErrorDisplay::new("parse", "请输入有效的 URL", "请输入视频链接后重试"));
-                                return;
-                            }
-
-                            // 创建进度追踪原子变量 + 取消标志
-                            let progress_arcs: Vec<Option<Arc<AtomicU32>>> = url_list.iter().map(|_| Some(Arc::new(AtomicU32::new(0)))).collect();
-                            let speed_arcs: Vec<Option<Arc<AtomicU64>>> = url_list.iter().map(|_| Some(Arc::new(AtomicU64::new(0)))).collect();
-                            let cancel_flags: Vec<Option<Arc<AtomicBool>>> = url_list.iter().map(|_| Some(Arc::new(AtomicBool::new(false)))).collect();
-
-                            // 初始化批量状态（关联 progress_arc + cancel_flag）
-                            let batch_items: Vec<BatchItemState> = url_list.iter().enumerate().map(|(idx, _url)| {
-                                BatchItemState {
-                                    status: "pending".to_string(),
-                                    progress: 0.0,
-                                    speed: String::new(),
-                                    visible: true,
-                                    speed_arc: speed_arcs[idx].clone(),
-                                    cancel_flag: cancel_flags[idx].clone(),
-                                }
-                            }).collect();
-
-                            state.write().batch_state = BatchState {
-                                visible: true,
-                                progress: 0.0,
-                                status: format!("准备下载 {} 个视频", url_list.len()),
-                                items: batch_items,
-                                aggregate_speed: String::new(),
-                            };
-                            // 同步 canonical flag,poller.rs:66 gate 才能正常轮询
-                            state.write().is_downloading = true;
-
-                            // 克隆 arc 供轮询使用
-                            let progress_arcs_for_poll: Vec<Arc<AtomicU32>> = progress_arcs.iter().filter_map(|a| a.clone()).collect();
-                            let total_count = url_list.len();
-
-                            // 启动批量下载进度轮询（use_coroutine 调度）
-                            poller.send(PollMsg::Batch {
-                                progress_arcs: progress_arcs_for_poll,
-                                total_count,
-                            });
-
-                            // 使用 spawn 在后台异步执行批量下载
-                            let mut state = state;
-                            spawn(async move {
-                                // BUG-B 修复 (2026-09-14): 消费 batch_download_impl 返回的
-                                // (idx, url, success, status, progress) 结果,把每个 item
-                                // 的最终状态写回 store。否则 fetch/start 失败时
-                                // batch_state.items[i].status 永远 "pending",UI 不更新。
-                                //
-                                // Reviewer Suggestion #1 (2026-09-14): items 写回与
-                                // is_downloading = false 合并到同一事务,避免 poller tick
-                                // 落在两次写之间回写 progress = 0 (虽然 visible 效果"benign",
-                                // 但与 poller.rs:144-155 单事务写回风格对齐)。
-                                let results = batch_download_impl(
-                                    url_list,
-                                    progress_arcs,
-                                    speed_arcs,
-                                    cancel_flags,
-                                )
-                                .await;
-                                {
-                                    let mut s = state.write();
-                                    for (idx, _url, _success, status, progress) in results {
-                                        if let Some(item) = s.batch_state.items.get_mut(idx) {
-                                            item.status = status;
-                                            item.progress = progress;
-                                        }
-                                    }
-                                    s.batch_state.visible = false;
-                                    s.is_downloading = false;
-                                }
-                            });
-                        },
-                        style: "{state.read().theme.btn_solid(state.read().theme.color_primary(), \"12px\", \"6px\", \"14px\")} flex: 1; font-weight: 500;",
-                        "Batch Download"
-                    }
-                }
+            // 智能下载按钮已挪到 URL 操作行(与 获取信息/分析课程/打开登录窗口 同行),
+            // 不再单独占一行 — 课程模式下避免巨型绿色条占位。
 
             // 进度显示 — P0-2: 进度条读 Signal 而非 store 字段,
             // 重渲染范围从整个 AppComponent 缩到仅本区域
-            if state.read().is_downloading && !state.read().batch_state.visible {
+            // A+C 互斥:course pool 显示时单下载进度让位(避免双进度条视觉冲突)
+            if state.read().is_downloading
+                && !state.read().batch_state.visible
+                && !state.read().course_collection_state.visible
+            {
                 WhiteCard {
                     shadow: CardShadow::Elevated,
                     div {

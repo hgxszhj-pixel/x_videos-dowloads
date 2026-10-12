@@ -269,7 +269,7 @@ pub(super) fn CoursePoolPanel(
             // 注:`Store::index(self, idx)` 消费 self,每次调用都需要 .clone()。
             // rsx! 不允许 for body 内 `let` 绑定(语法解析限制),所以每个属性位置直接构造 sub-store。
             div {
-                style: "max-height: 360px; overflow-y: auto; border: 1px solid {BORDER_DEFAULT}; border-radius: 10px;",
+                style: "min-height: 360px; max-height: calc(100vh - 480px); overflow-y: auto; border: 1px solid {BORDER_DEFAULT}; border-radius: 10px;",
                 for idx in 0..items_store.len() {
                     // 字段访问器返回 sub-store,if 条件 / 算术需要 ()() 双括号。
                     // 仅在 active 状态显示进度条 — terminal (completed/failed/skipped/cancelled) 隐藏。
@@ -295,7 +295,7 @@ pub(super) fn CoursePoolPanel(
                             "{items_store.index(idx).title()}"
                         }
                         span {
-                            style: "font-size: 11px; color: {TEXT_MUTED}; min-width: 80px; text-align: right;",
+                            style: "font-size: 11px; color: {TEXT_MUTED}; width: 100px; text-align: right; flex-shrink: 0;",
                             "{status_display(&items_store.index(idx).status()())}"
                         }
                         // P3-1:per-item 进度条 + 速度/大小/ETA — 仅 active 状态显示

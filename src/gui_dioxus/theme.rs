@@ -124,6 +124,10 @@ impl AppTheme {
     ) -> String {
         format!("{STYLE_BTN_BASE} background: {bg}; padding: {padding}; border-radius: {radius}; font-size: {font_size}; font-weight: 600;")
     }
+    /// 危险 ghost 按钮（透明背景 + 红文字 + 红边框，用于清空等次要危险动作）
+    pub(super) fn btn_ghost_destructive(&self, padding: &str, font_size: &str) -> String {
+        format!("{STYLE_BTN_BASE} background: transparent; color: {}; border: 1px solid {}; padding: {padding}; border-radius: 10px; font-size: {font_size}; font-weight: 500;", self.color_danger(), self.color_danger())
+    }
 
     // ------------------------------------------------------------------------
     // 背景渐变 — 跨主题一致（不依赖 AppTheme）
