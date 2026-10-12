@@ -97,6 +97,24 @@ if _openloops_schema_path.exists():
     if not _openloops_ok:
         sys.exit(1)
 
+# === Memory-prompt soft reminder (Intent Lock + size_guard + openloops 之后 / Ref-trace 之前) ===
+# 若 memory/ 今日无新增/修改 + commit 含学习/修复/重构类信号 → stderr 软提示,人 review 后决定
+# 详见 [[agent-4-layer-boundary-vs-cc-2026-10-12]] + CLAUDE.md 记忆系统「自动化模式」
+_memory_prompt_path = (
+    Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+    / "scripts"
+    / "memory_prompt.py"
+)
+if _memory_prompt_path.exists():
+    sys.path.insert(0, str(_memory_prompt_path.parent))
+    try:
+        from memory_prompt import check_memory_prompt  # noqa: E402
+        _mem_msg = check_memory_prompt(original)
+        if _mem_msg:
+            print(_mem_msg, file=sys.stderr)
+    except Exception as _e:  # never block commit on memory check failure
+        print(f"[commit-msg] memory-prompt check skipped: {_e}", file=sys.stderr)
+
 # === Ref-trace 自动注入 (Intent Lock 之后 / DID/VC 之前) ===
 # 若今天 ~/.local/share/x_videos-dowloads-trace/YYYY-MM-DD/ 下有 NDJSON,
 # 自动追加 "Ref-trace: <绝对路径>" 到 commit message。

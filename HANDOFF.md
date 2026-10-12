@@ -11,12 +11,13 @@
 - **perf baseline 锁定**: x-video-downloader `docs/perf-baseline.md` 4 open issue 全部闭环,regression 阈值建立
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
 - **codegraph MCP**: v1.6.2 健康(2026-10-08 修复 + 重建);198 files / 4,067 nodes / 8,578 edges
-- **关键 hook**: commit-msg (Intent Lock + **handoff_size_guard** + Ref-trace + DID/VC),pre-commit (cargo fmt + clippy)
+- **关键 hook**: commit-msg (Intent Lock + **handoff_size_guard** + openloops_schema + Ref-trace + **memory_prompt** + DID/VC),pre-commit (cargo fmt + clippy),Stop (fmt-gate + anti-slop + **subagent-rate**),PreCompact (HANDOFF persister + **mini-handoff**)
 
 ## Sessions 索引 (最近 → 更早)
 
 每条链接到完整 session 文件。28 个文件,日期范围 2026-10-12 → 2026-09-02。
 
+- 2026-10-12 — [5 CLAUDE.md 规则升级 + 3 hook 落地 (PreCompact/Stop/commit-msg memory-prompt)](docs/handoff/sessions/2026-10-12-5-rules-upgrade-+-3-hooks-落地-precompact-stop-commitmsg.md)
 - 2026-10-12 — [x-video-downloader perf baseline 锁定 + 4 open issue 解决 + commit pending](docs/handoff/sessions/2026-10-12-x-video-downloader-perf-baseline-locked-+-4-open-issues-resolved-+-commit-pending.md)
 - 2026-10-08 — [the-scribble-thing skill 接入 + 2 demo 验证 + Toutiao 转录 + cron 排队等额](docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md)
 - 2026-10-08 — [codegraph 启动失败修复 + v1.6.2 全量重建 + daemon.log 瘦身 (65.4 KB → 398 B)](docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md)
@@ -62,6 +63,7 @@
 - **moscan 真实点击验证** — owner: 用户 · blocker: macOS 辅助功能权限未开 · next: 系统设置 → 隐私与安全 → 辅助功能 → 允许 moscan;开后跑端到端 · touched: 2026-10-04
 - **H3 green tier 剩 6 IO-bound 文件** — owner: 引擎 · blocker: mock 成本高 · next: 等集成测试框架或抽 pure-fn 分支 · touched: 2026-10-04
 - **planner agent tier 化 (deep/light)** — owner: 引擎 · blocker: 待规划 · next: 下轮开 `/plan` 命令给方案 · touched: 2026-10-03
+- **3 hooks 观察期 (PreCompact mini-handoff / Stop subagent-rate / commit-msg memory-prompt)** — owner: 主对话 · blocker: 需 1-2 周 session 数据判误报率 · next: 监控 SUBAGENT_MIN_THRESHOLD=10 误报/漏报;memory_prompt INSIGHT_SIGNALS 触发率;PreCompact 在 HANDOFF.md 不存在时退化行为 · touched: 2026-10-12
 
 ## Open Loops — Blocked / Waiting (被外部卡住)
 
@@ -72,6 +74,7 @@
 
 > 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
 
+- **5 CLAUDE.md 规则升级 + 3 hook 落地** (2026-10-12) — reason: 5 项规则自觉不可靠 → 落到 hook 强制;PreCompact mini-handoff 3 段结构化摘要 + Stop subagent-rate stderr WARN + commit-msg memory-prompt 软提示;3 hook 全验证 (synthetic transcript + force-mtime);2 已知坑 (zsh heredoc 嵌套 / memory 当日已 touched skip);需 1-2 周观察期调阈值 · ref: `docs/handoff/sessions/2026-10-12-5-rules-upgrade-+-3-hooks-落地-precompact-stop-commitmsg.md`
 - **x-video-downloader perf baseline 锁定 + 4 open issue 闭环** (2026-10-12) — reason: max_concurrent 4→8 (bench sweet spot 280ms);bumpalo/长 URL/AES 三个假设全验证完;375 tests + 3 bench 数字锁定 + 2 clippy 修复;用户 commit pending · ref: `docs/handoff/sessions/2026-10-12-x-video-downloader-perf-baseline-locked-+-4-open-issues-resolved-+-commit-pending.md`
 - **the-scribble-thing 接入 + 2 demo + Toutiao 转录 + cron 排队** (2026-10-08) — reason: 月亮IT 视频 4 工具对比 → 装 skill（sha256 验证）→ 2 demo 验证（house+feedback loop 40s）→ 第 3 次撞 daily quota 429 → 排 cron `b30767c8` 08:00 Beijing 续做;transcript 落 `$CLAUDE_JOB_DIR/tmp/toutiao_transcript.txt` · ref: `docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md`
 - **codegraph 启动失败修复 + v1.6.2 重建 + daemon.log 瘦身** (2026-10-08) — reason: npx cache 半残 (`lib/dist/` 缺失,SIGKILL) → 清 3 类残骸 (主包+pack cache+rename) → npx repull → handshake ✓ → index 198 文件重建 → log 65.4 KB → 398 B · ref: `docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md`

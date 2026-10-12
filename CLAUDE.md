@@ -2,6 +2,19 @@
 
 @andrej-karpathy-skills:karpathy-guidelines
 
+## 启动命令（任何会话开始前先确认）
+
+```bash
+cargo build                       # Debug 构建
+cargo test --lib                  # 单测（先跑这个）
+cargo clippy --all-targets -- -D warnings   # lint 必过
+cargo run -- --gui                # GUI 模式
+cargo run -- "<url>"              # CLI 单 URL
+bash scripts/mutation_smoke.sh smoke        # 变异测试（防 AI 假测试）
+```
+
+> 来源: Matt Pocock `/retro` 实测 — 启动指令不清，agent 三次试才跑起来。**已验证的命令写在这里，新会话第一眼必看。**
+
 ## Commit 规则（Intent Lock）
 
 每次 commit message 必须包含一行 `Intent: <一句话>`，否则被 `.git/hooks/commit-msg` 拒绝。
