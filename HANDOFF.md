@@ -5,9 +5,9 @@
 
 ## 当前状态 (2026-10-12)
 
-- **主分支**: `master`,最近 commit `563a3fd` (docs(handoff): 2026-10-12 x-video-downloader perf baseline 锁定 + 4 open issue 闭环)
-- **Workspace**: `gitbutler/workspace`,x-video-downloader 5 文件 modified 累计待 commit (perf session 代码,等用户本地 commit)
-- **测试基线**: 375 passed, 12 ignored (perf session 2026-10-12 终轮验证)
+- **主分支**: `master`,最近 commit `5466580` (chore(meta): 5-rule DNA 落地 — startup commands + memory_prompt hook + edit-preflight + 3 handoff sessions)
+- **Workspace**: `gitbutler/workspace`,本轮 4 commit 落档:873cbab(5 new commands)→ f75f80f(GUI re-wire)→ 5868fd7(README + M1-M5 design docs)→ 5466580(meta)
+- **测试基线**: 374 passed, 12 ignored (perf session 2026-10-12 终轮验证;1 pre-existing flake `core::trace::tests::test_integration_4_fault_points` 单独跑 pass,非本轮引入)
 - **perf baseline 锁定**: x-video-downloader `docs/perf-baseline.md` 4 open issue 全部闭环,regression 阈值建立
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
 - **codegraph MCP**: v1.6.2 健康(2026-10-08 修复 + 重建);198 files / 4,067 nodes / 8,578 edges
