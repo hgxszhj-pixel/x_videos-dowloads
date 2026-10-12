@@ -3,19 +3,21 @@
 > 当前状态、最近 session 索引、待办。完整 session 日志在 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 > 本轮拆分 (2026-10-03): 从 2117 行单文件 → ~70 行索引 + 21 个独立 session 文件。
 
-## 当前状态 (2026-10-08)
+## 当前状态 (2026-10-12)
 
 - **主分支**: `master`,最近 commit `4a050fe` (docs(handoff): close SKILL.state schema validator)
-- **Workspace**: `gitbutler/workspace`,src/* 多文件 modified 累计待 commit (细节无源起讫,待下次 cargo check 跑前再 audit)
-- **测试基线**: 320+ tests (H3 green tier 4 文件 pure-fn 测试已绿,具体数待 cargo test 终轮)
+- **Workspace**: `gitbutler/workspace`,src/* modified 累计待 commit (perf session 完成,等用户本地 commit)
+- **测试基线**: 375 passed, 12 ignored (perf session 2026-10-12 终轮验证)
+- **perf baseline 锁定**: x-video-downloader `docs/perf-baseline.md` 4 open issue 全部闭环,regression 阈值建立
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
 - **codegraph MCP**: v1.6.2 健康(2026-10-08 修复 + 重建);198 files / 4,067 nodes / 8,578 edges
 - **关键 hook**: commit-msg (Intent Lock + **handoff_size_guard** + Ref-trace + DID/VC),pre-commit (cargo fmt + clippy)
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。27 个文件,日期范围 2026-10-08 → 2026-09-02。
+每条链接到完整 session 文件。28 个文件,日期范围 2026-10-12 → 2026-09-02。
 
+- 2026-10-12 — [x-video-downloader perf baseline 锁定 + 4 open issue 解决 + commit pending](docs/handoff/sessions/2026-10-12-x-video-downloader-perf-baseline-locked-+-4-open-issues-resolved-+-commit-pending.md)
 - 2026-10-08 — [the-scribble-thing skill 接入 + 2 demo 验证 + Toutiao 转录 + cron 排队等额](docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md)
 - 2026-10-08 — [codegraph 启动失败修复 + v1.6.2 全量重建 + daemon.log 瘦身 (65.4 KB → 398 B)](docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md)
 - 2026-10-07 — [SKILL.state open_loops schema validator A1+A2+A4+A5 完整落地 (L3 防御 + A5 工作流)](docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md)
@@ -55,6 +57,7 @@
 
 > SKILL.state 风格:每条 state slot 显式 owner/blocker/next/touched;history 见 `docs/handoff/sessions/`。新增条目用 `<verb-noun-action>` 标题,2 行内完成。
 
+- **x-video-downloader perf commit** — owner: 用户 · blocker: 本 session 视角无 `.git` (x-video-downloader 目录) · next: 跑 session 文件中 commit 模板,需 `Intent:` 行;落地后 source 改 `gitbutler/workspace` 同步 · touched: 2026-10-12
 - **moscan root 三条卸载** — owner: 用户 · blocker: 厂商脚本须 handoff · next: 跑 Paragon 卸载脚本 + OrbStack helper+plist + 搜狗 qlgenerator;备份包 `~/Desktop` · touched: 2026-10-04
 - **moscan 真实点击验证** — owner: 用户 · blocker: macOS 辅助功能权限未开 · next: 系统设置 → 隐私与安全 → 辅助功能 → 允许 moscan;开后跑端到端 · touched: 2026-10-04
 - **H3 green tier 剩 6 IO-bound 文件** — owner: 引擎 · blocker: mock 成本高 · next: 等集成测试框架或抽 pure-fn 分支 · touched: 2026-10-04
@@ -69,13 +72,12 @@
 
 > 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
 
+- **x-video-downloader perf baseline 锁定 + 4 open issue 闭环** (2026-10-12) — reason: max_concurrent 4→8 (bench sweet spot 280ms);bumpalo/长 URL/AES 三个假设全验证完;375 tests + 3 bench 数字锁定 + 2 clippy 修复;用户 commit pending · ref: `docs/handoff/sessions/2026-10-12-x-video-downloader-perf-baseline-locked-+-4-open-issues-resolved-+-commit-pending.md`
 - **the-scribble-thing 接入 + 2 demo + Toutiao 转录 + cron 排队** (2026-10-08) — reason: 月亮IT 视频 4 工具对比 → 装 skill（sha256 验证）→ 2 demo 验证（house+feedback loop 40s）→ 第 3 次撞 daily quota 429 → 排 cron `b30767c8` 08:00 Beijing 续做;transcript 落 `$CLAUDE_JOB_DIR/tmp/toutiao_transcript.txt` · ref: `docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md`
 - **codegraph 启动失败修复 + v1.6.2 重建 + daemon.log 瘦身** (2026-10-08) — reason: npx cache 半残 (`lib/dist/` 缺失,SIGKILL) → 清 3 类残骸 (主包+pack cache+rename) → npx repull → handshake ✓ → index 198 文件重建 → log 65.4 KB → 398 B · ref: `docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md`
 - **SKILL.state open_loops schema validator (A1+A2+A4+A5)** (2026-10-07) — reason: 论文 L3 防御 + 显式 schema + 机器校验兜底;5 条 Just Closed 重构为 reason/ref;4 hook 全绿 rep=100.0 · ref: `docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md`
 - **moli 1.1.14 安装** (2026-10-07) — reason: 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活 · ref: `moli-install-network-blocked-2026-10-07.md`
 - **Web fallback rule 12 升级** (2026-10-07) — reason: 7 级降级链 `WebFetch → moli → ego-lite → agent-browser → camoufox → chrome → miniapp`,moli Markdown 替代 camoufox + ego-lite 填补已登录 SaaS Keychain 解密 cookie 中间档 · ref: `web-fallback-rule-2026-10-07.md`
-- **moscan 模块 25/26/27 主线** (2026-10-04) — reason: 卸载面板 + guard 根因(两个 HOME 来源) + 复制卸载命令 + Paragon/OrbStack 残留判定;测试 55/59 全绿;root 3 + 真实点击验证抽到 Active · ref: `docs/handoff/sessions/2026-10-04-moscan-模块-25-26-27-卸载面板-+-guard-根因-+-复制卸载命令-+-Paragon-残留判定.md`
-- **5 维度审计 false alarm 闭环** (2026-10-04) — reason: C1/C2/C3/H1 经源码验证均为 false alarm (声明 ↔ 使用 4 路 + panic 上下文);启发式审计 4 类盲点模式落地 · ref: `audit-heuristic-blind-spots.md`
 
 ## 决策索引
 
