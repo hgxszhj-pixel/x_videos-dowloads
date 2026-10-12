@@ -19,6 +19,20 @@ use tokio::net::TcpListener;
 #[allow(dead_code)]
 mod hls;
 
+// Stub: bench 无法访问 main.rs 的 `drission_client` mod(单 crate root 限制)。
+// 真实 `decrypt_ego_lite_cookies_for_host` 依赖 macOS Keychain,bench 路径不调用。
+// 这里仅补签名让 bench 编译过;`if let Ok(...)` 走 Err 分支。
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+mod drission_client {
+    pub fn decrypt_ego_lite_cookies_for_host(
+        _target_host: &str,
+        _allowed_roots: &[&str],
+    ) -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("bench stub: cookie decryption not available"))
+    }
+}
+
 // Copy of `crate::types::{DownloadProgress, DownloadStatus}` current definitions
 // (crate is binary-only; the inline `mod hls` resolves `crate::types` to this stub).
 // Keep in sync with src/types.rs when hls-facing surface changes.
