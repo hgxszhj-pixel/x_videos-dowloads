@@ -6,7 +6,7 @@
 
 ```bash
 cargo build                       # Debug 构建
-cargo test --lib                  # 单测（先跑这个）
+cargo test --bins                 # 单测（先跑这个；项目 bin-only,无 [lib]）
 cargo clippy --all-targets -- -D warnings   # lint 必过
 cargo run -- --gui                # GUI 模式
 cargo run -- "<url>"              # CLI 单 URL
