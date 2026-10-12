@@ -5,8 +5,8 @@
 
 ## 当前状态 (2026-10-12)
 
-- **主分支**: `master`,最近 commit `4a050fe` (docs(handoff): close SKILL.state schema validator)
-- **Workspace**: `gitbutler/workspace`,src/* modified 累计待 commit (perf session 完成,等用户本地 commit)
+- **主分支**: `master`,最近 commit `563a3fd` (docs(handoff): 2026-10-12 x-video-downloader perf baseline 锁定 + 4 open issue 闭环)
+- **Workspace**: `gitbutler/workspace`,x-video-downloader 5 文件 modified 累计待 commit (perf session 代码,等用户本地 commit)
 - **测试基线**: 375 passed, 12 ignored (perf session 2026-10-12 终轮验证)
 - **perf baseline 锁定**: x-video-downloader `docs/perf-baseline.md` 4 open issue 全部闭环,regression 阈值建立
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
@@ -49,7 +49,7 @@
 
 ## Sessions Archive
 
-完整 26 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
+完整 28 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 
 **更早 (2026-09-01 之前)**: 历史 session 摘要见 git history (`git log --oneline -- HANDOFF.md`);WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021);京峰教育/SHANHU 珊瑚 v1 报告"已推翻";智学云 `zhixueyun-analyzer` skill (08-29);全局 Claude Code 配置改造 5 hooks + 15 deny (08-28);tulingvip-m3u8-download v3.2 + douyin-mp4-download v1 (08-25);darwin 优化 web-protocol-recovery (08-22);opencode failover wrapper (08-21);OpenCode 多 provider (08-17);P1 重构 (08-16);GUI 性能 (08-13);小鹅通端到端 6 节 8.5GB (08-09)。
 
