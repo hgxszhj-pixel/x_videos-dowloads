@@ -29,7 +29,9 @@ mod drission_client {
         _target_host: &str,
         _allowed_roots: &[&str],
     ) -> anyhow::Result<String> {
-        Err(anyhow::anyhow!("bench stub: cookie decryption not available"))
+        Err(anyhow::anyhow!(
+            "bench stub: cookie decryption not available"
+        ))
     }
 }
 
