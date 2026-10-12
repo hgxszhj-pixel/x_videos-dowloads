@@ -17,6 +17,8 @@
 
 每条链接到完整 session 文件。28 个文件,日期范围 2026-10-12 → 2026-09-02。
 
+- 2026-10-12 — [x-video-downloader 2 carry-over fix (E0433 bench stub + CLAUDE.md `cargo test --lib` → `--bins`)](docs/handoff/sessions/2026-10-12-x-video-downloader-2-carry-over-fix-(E0433-bench-+-CLAUDE.md-cargo-test).md)
+- 2026-10-12 — [PhAI Labs 论文真伪审查 (Toutiao 抓文 + RSI-Anything/EvoIWM §5 对照) + 媒体转译偏差模式落档](memory/phai-labs-paper-vs-media-discipline.md)
 - 2026-10-12 — [5 CLAUDE.md 规则升级 + 3 hook 落地 (PreCompact/Stop/commit-msg memory-prompt)](docs/handoff/sessions/2026-10-12-5-rules-upgrade-+-3-hooks-落地-precompact-stop-commitmsg.md)
 - 2026-10-12 — [x-video-downloader perf baseline 锁定 + 4 open issue 解决 + commit pending](docs/handoff/sessions/2026-10-12-x-video-downloader-perf-baseline-locked-+-4-open-issues-resolved-+-commit-pending.md)
 - 2026-10-08 — [the-scribble-thing skill 接入 + 2 demo 验证 + Toutiao 转录 + cron 排队等额](docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md)
@@ -74,14 +76,14 @@
 
 > 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
 
+- **x-video-downloader 2 carry-over fix (E0433 bench + CLAUDE.md cargo test)** (2026-10-12) — reason: pre-existing E0433 根因在 `src/hls/downloader.rs:177` 而非 bench 文件(bench 通过 `#[path]` 拉 src 代码,`#[cfg(macos)]` 调 `crate::drission_client`);14 行 stub mod 修复,runtime 行为不变;CLAUDE.md `cargo test --lib` → `--bins` 因项目 0 `[lib]` + 3 `[[bin]]`;2 commit (205ccf0 + 42fe3ad) 一次性 push 通过,无需 force · ref: `docs/handoff/sessions/2026-10-12-x-video-downloader-2-carry-over-fix-(E0433-bench-+-CLAUDE.md-cargo-test).md`
+- **PhAI Labs 论文真伪审查 (无 commit, memory only)** (2026-10-12) — reason: Toutiao 文章 `7695660887541154354` → camoufox `<article>` 选中文避评论 · Rule 12 tier 5 fallback 命中;逐项核对 arXiv 2610.13912 / 2609.14709 / GitHub / LabHorizon / ReasonFlux-Coder-7B 全部独立验证 ✓;产出 5 必查项判读模板 (论文 §5 limitations / negative baseline / 小差距表述 / scope 范围声明 / failed episodes) + PhAI Labs「严谨论文 + 营销转译」分层画像 · ref: `memory/phai-labs-paper-vs-media-discipline.md`
 - **5 CLAUDE.md 规则升级 + 3 hook 落地** (2026-10-12) — reason: 5 项规则自觉不可靠 → 落到 hook 强制;PreCompact mini-handoff 3 段结构化摘要 + Stop subagent-rate stderr WARN + commit-msg memory-prompt 软提示;3 hook 全验证 (synthetic transcript + force-mtime);2 已知坑 (zsh heredoc 嵌套 / memory 当日已 touched skip);需 1-2 周观察期调阈值 · ref: `docs/handoff/sessions/2026-10-12-5-rules-upgrade-+-3-hooks-落地-precompact-stop-commitmsg.md`
 - **x-video-downloader perf baseline 锁定 + 4 open issue 闭环** (2026-10-12) — reason: max_concurrent 4→8 (bench sweet spot 280ms);bumpalo/长 URL/AES 三个假设全验证完;375 tests + 3 bench 数字锁定 + 2 clippy 修复;用户 commit pending · ref: `docs/handoff/sessions/2026-10-12-x-video-downloader-perf-baseline-locked-+-4-open-issues-resolved-+-commit-pending.md`
 - **the-scribble-thing 接入 + 2 demo + Toutiao 转录 + cron 排队** (2026-10-08) — reason: 月亮IT 视频 4 工具对比 → 装 skill（sha256 验证）→ 2 demo 验证（house+feedback loop 40s）→ 第 3 次撞 daily quota 429 → 排 cron `b30767c8` 08:00 Beijing 续做;transcript 落 `$CLAUDE_JOB_DIR/tmp/toutiao_transcript.txt` · ref: `docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md`
 - **codegraph 启动失败修复 + v1.6.2 重建 + daemon.log 瘦身** (2026-10-08) — reason: npx cache 半残 (`lib/dist/` 缺失,SIGKILL) → 清 3 类残骸 (主包+pack cache+rename) → npx repull → handshake ✓ → index 198 文件重建 → log 65.4 KB → 398 B · ref: `docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md`
 - **SKILL.state open_loops schema validator (A1+A2+A4+A5)** (2026-10-07) — reason: 论文 L3 防御 + 显式 schema + 机器校验兜底;5 条 Just Closed 重构为 reason/ref;4 hook 全绿 rep=100.0 · ref: `docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md`
 - **moli 1.1.14 安装** (2026-10-07) — reason: 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活 · ref: `moli-install-network-blocked-2026-10-07.md`
-- **Web fallback rule 12 升级** (2026-10-07) — reason: 7 级降级链 `WebFetch → moli → ego-lite → agent-browser → camoufox → chrome → miniapp`,moli Markdown 替代 camoufox + ego-lite 填补已登录 SaaS Keychain 解密 cookie 中间档 · ref: `web-fallback-rule-2026-10-07.md`
-
 ## 决策索引
 
 - 跨项目决策: [`~/.claude/memory/decisions.md`](file:///Users/hgxszhj/.claude/memory/decisions.md)
