@@ -245,6 +245,7 @@ impl From<anyhow::Error> for ResolverError {
 /// 平台解析器 trait
 /// 所有平台解析器必须实现此接口
 #[async_trait]
+#[allow(clippy::double_must_use)] // #[async_trait] macro adds redundant #[must_use] on each method
 #[expect(dead_code)]
 pub trait PlatformResolver: Send + Sync {
     /// 获取解析器对应的平台

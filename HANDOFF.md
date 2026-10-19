@@ -3,10 +3,10 @@
 > 当前状态、最近 session 索引、待办。完整 session 日志在 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 > 本轮拆分 (2026-10-03): 从 2117 行单文件 → ~70 行索引 + 21 个独立 session 文件。
 
-## 当前状态 (2026-10-12)
+## 当前状态 (2026-10-15)
 
-- **主分支**: `master`,最近 commit `5466580` (chore(meta): 5-rule DNA 落地 — startup commands + memory_prompt hook + edit-preflight + 3 handoff sessions)
-- **Workspace**: `gitbutler/workspace`,本轮 4 commit 落档:873cbab(5 new commands)→ f75f80f(GUI re-wire)→ 5868fd7(README + M1-M5 design docs)→ 5466580(meta)
+- **HEAD**: `3c53554` docs(handoff): 2 carry-over fix session closure (L3 reason+ref) · **当前分支**: `gitbutler/workspace` (默认 PR 目标: `main`)
+- **Workspace 最近 7 commit**(全部 carry-over fix 类): `3c53554` 2 carry-over fix → `e5023d4` rustfmt rewrap → `42fe3ad` cargo test --bins → `205ccf0` bench E0433 stub → `978492c` gitignore questions.db+tmp → `2dae444` SHA sync → `9047597` 5-rule DNA 落档
 - **测试基线**: 374 passed, 12 ignored (perf session 2026-10-12 终轮验证;1 pre-existing flake `core::trace::tests::test_integration_4_fault_points` 单独跑 pass,非本轮引入)
 - **perf baseline 锁定**: x-video-downloader `docs/perf-baseline.md` 4 open issue 全部闭环,regression 阈值建立
 - **活跃产品线**: x-video-downloader / shanhu SaaS / exam-lookup
@@ -15,8 +15,10 @@
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。28 个文件,日期范围 2026-10-12 → 2026-09-02。
+每条链接到完整 session 文件。34 条记录(33 个 session 文件 + 1 个 memory note),日期范围 2026-10-15 → 2026-09-02。
 
+- 2026-10-15 — [rea 逆向 + Macs Fan Control 一比一复刻 (Qt rcc 资源 / AppleSMC / 温控反编译 / 7 键模板直读 / 原生控件全自绘)](docs/handoff/sessions/2026-10-15-rea-mfc-clone-Macs-Fan-Control-一比一复刻.md)
+- 2026-10-15 — [OMC HUD 安装 + mattpocock-skills marketplace SHA pin 滞后诊断 (等 Anthropic bump,无 commit)](docs/handoff/sessions/2026-10-15-OMC-HUD-安装-+-marketplace-SHA-pin-滞后诊断.md)
 - 2026-10-12 — [x-video-downloader 2 carry-over fix (E0433 bench stub + CLAUDE.md `cargo test --lib` → `--bins`)](docs/handoff/sessions/2026-10-12-x-video-downloader-2-carry-over-fix-(E0433-bench-+-CLAUDE.md-cargo-test).md)
 - 2026-10-12 — [PhAI Labs 论文真伪审查 (Toutiao 抓文 + RSI-Anything/EvoIWM §5 对照) + 媒体转译偏差模式落档](memory/phai-labs-paper-vs-media-discipline.md)
 - 2026-10-12 — [5 CLAUDE.md 规则升级 + 3 hook 落地 (PreCompact/Stop/commit-msg memory-prompt)](docs/handoff/sessions/2026-10-12-5-rules-upgrade-+-3-hooks-落地-precompact-stop-commitmsg.md)
@@ -52,7 +54,7 @@
 
 ## Sessions Archive
 
-完整 28 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
+完整 33 个文件,按日期排序,详见 [`docs/handoff/sessions/`](docs/handoff/sessions/)。
 
 **更早 (2026-09-01 之前)**: 历史 session 摘要见 git history (`git log --oneline -- HANDOFF.md`);WikiSkill 决策日志 + skill 健康度盘点 (`756d49d` D-001~D-021);京峰教育/SHANHU 珊瑚 v1 报告"已推翻";智学云 `zhixueyun-analyzer` skill (08-29);全局 Claude Code 配置改造 5 hooks + 15 deny (08-28);tulingvip-m3u8-download v3.2 + douyin-mp4-download v1 (08-25);darwin 优化 web-protocol-recovery (08-22);opencode failover wrapper (08-21);OpenCode 多 provider (08-17);P1 重构 (08-16);GUI 性能 (08-13);小鹅通端到端 6 节 8.5GB (08-09)。
 
@@ -72,18 +74,18 @@
 - **scribble demo3 提交（4 工具对比图）** — waiting-on: the-scribble-thing daily free quota (UTC reset @ 00:00 = Beijing 08:00);session-only cron `b30767c8` 需 Claude 进程在 08:00 前不退出 · eta: 2026-10-09 08:00 cron 跑 `run_tools_compare.sh` → 产出 `preview3.mp4` + `sprite_tools_compare.png`;失败则人工 `$5` 买 unlock code 重试 · touched: 2026-10-08
 - **更早 sessions 归档清理 (≤ 2026-09-01)** — waiting-on: 不紧急,作为 free-text 聚合行保留可读性足够 · eta: 季度归档时一并处理 · touched: 2026-10-03
 
-## Just Closed (last 6 sessions) — 详情见 sessions/
+## Just Closed (last 7 sessions) — 详情见 sessions/
 
 > 关闭动作 (A5 工作流):把"为什么 close"一段写进 `docs/handoff/sessions/YYYY-MM-DD-<topic>.md`,此处只引用 path。reason 字段给一行摘要,ref 给完整 trajectory 链接。L3 防御:无 reason 不可审计决策;无 ref 不可追溯上下文。
 
+- **MCP/Agent 启动成本审计 (档 1+2, settings flip, 0 commit)** (2026-10-15) — reason: `/context` 显示 MCP+agents 占 32.5% context window → 30-day grep 95 文件 (63 memory + 32 sessions) 砍 19+11 = 30 niche agent (Tier 1 niche / Tier 2 兜底);settings.json 翻 3 plugin false (context7 / skill-creator / skill-doctor);估算省 ~5.7-5.9k t session 启动成本 (200k 窗口的 2.85-2.95%);删优于禁 (rm vs disable),全 backup 到 `.bak-20261015/` 兜底 ≥ 90 天;9 兜底留档 3 评估 (≥ 2026-12) · ref: `docs/notes/mcp-agent-audit-2026-10-15.md` + `memory/mcp-agent-trim-2026-10-15.md`
+- **rea 逆向 + Macs Fan Control 一比一复刻 (0 commit)** (2026-10-15) — reason: 用户贴截图要求「利用 rea 一比一复刻」→REA 真跑(analyze 8989 过程 / 322 符号 / 2-of-3 反编译) 后转 otool 补 `setFanRPM` 写入编码(键长 4→`flt ` 浮点、2→`rpm*4`);7 个风扇键模板由**重签副本 + main 断点**运行期直读(`F{}ID/Mn/Mx/Ac/Tg/Sf/Md`,len=5)并与本机 1164 键空间交叉定案;主窗口原生控件(风扇胶囊/预设胶囊/刷新盘/底部按钮+?)全部按量值自绘,去标题栏整体像素差 10.12→**9.73**;自检 22/22;调速仍需用户装 root 特权助手 · ref: `docs/handoff/sessions/2026-10-15-rea-mfc-clone-Macs-Fan-Control-一比一复刻.md`
+- **OMC HUD 安装 + mattpocock-skills marketplace SHA pin 滞后诊断 (无 commit)** (2026-10-15) — reason: 系统提示 `[OMC] HUD not configured` → 装 `omc-hud.mjs` + 切 settings.json statusLine(用户授权覆盖自定 shell);同 session 撞 `mattpocock-skills` 升级 1.2.3 → 1.3.x 失败,根因 = `claude-plugins-official/marketplace.json` SHA pin 落后 upstream,决策 D-2026-10-15-2 选择"等 marketplace bump"而非手动 pin(避免下次 update 回滚);project 0 commit,仅 settings.json + 1 memory 改动 · ref: `docs/handoff/sessions/2026-10-15-OMC-HUD-安装-+-marketplace-SHA-pin-滞后诊断.md` + `memory/claude-plugins-official-marketplace-lag-2026-10-15.md`
 - **x-video-downloader 2 carry-over fix (E0433 bench + CLAUDE.md cargo test)** (2026-10-12) — reason: pre-existing E0433 根因在 `src/hls/downloader.rs:177` 而非 bench 文件(bench 通过 `#[path]` 拉 src 代码,`#[cfg(macos)]` 调 `crate::drission_client`);14 行 stub mod 修复,runtime 行为不变;CLAUDE.md `cargo test --lib` → `--bins` 因项目 0 `[lib]` + 3 `[[bin]]`;2 commit (205ccf0 + 42fe3ad) 一次性 push 通过,无需 force · ref: `docs/handoff/sessions/2026-10-12-x-video-downloader-2-carry-over-fix-(E0433-bench-+-CLAUDE.md-cargo-test).md`
 - **PhAI Labs 论文真伪审查 (无 commit, memory only)** (2026-10-12) — reason: Toutiao 文章 `7695660887541154354` → camoufox `<article>` 选中文避评论 · Rule 12 tier 5 fallback 命中;逐项核对 arXiv 2610.13912 / 2609.14709 / GitHub / LabHorizon / ReasonFlux-Coder-7B 全部独立验证 ✓;产出 5 必查项判读模板 (论文 §5 limitations / negative baseline / 小差距表述 / scope 范围声明 / failed episodes) + PhAI Labs「严谨论文 + 营销转译」分层画像 · ref: `memory/phai-labs-paper-vs-media-discipline.md`
 - **5 CLAUDE.md 规则升级 + 3 hook 落地** (2026-10-12) — reason: 5 项规则自觉不可靠 → 落到 hook 强制;PreCompact mini-handoff 3 段结构化摘要 + Stop subagent-rate stderr WARN + commit-msg memory-prompt 软提示;3 hook 全验证 (synthetic transcript + force-mtime);2 已知坑 (zsh heredoc 嵌套 / memory 当日已 touched skip);需 1-2 周观察期调阈值 · ref: `docs/handoff/sessions/2026-10-12-5-rules-upgrade-+-3-hooks-落地-precompact-stop-commitmsg.md`
 - **x-video-downloader perf baseline 锁定 + 4 open issue 闭环** (2026-10-12) — reason: max_concurrent 4→8 (bench sweet spot 280ms);bumpalo/长 URL/AES 三个假设全验证完;375 tests + 3 bench 数字锁定 + 2 clippy 修复;用户 commit pending · ref: `docs/handoff/sessions/2026-10-12-x-video-downloader-perf-baseline-locked-+-4-open-issues-resolved-+-commit-pending.md`
-- **the-scribble-thing 接入 + 2 demo + Toutiao 转录 + cron 排队** (2026-10-08) — reason: 月亮IT 视频 4 工具对比 → 装 skill（sha256 验证）→ 2 demo 验证（house+feedback loop 40s）→ 第 3 次撞 daily quota 429 → 排 cron `b30767c8` 08:00 Beijing 续做;transcript 落 `$CLAUDE_JOB_DIR/tmp/toutiao_transcript.txt` · ref: `docs/handoff/sessions/2026-10-08-the-scribble-thing-skill-接入-+-2-个-demo-验证-+-Toutiao-转录-+-cron-排队等额.md`
-- **codegraph 启动失败修复 + v1.6.2 重建 + daemon.log 瘦身** (2026-10-08) — reason: npx cache 半残 (`lib/dist/` 缺失,SIGKILL) → 清 3 类残骸 (主包+pack cache+rename) → npx repull → handshake ✓ → index 198 文件重建 → log 65.4 KB → 398 B · ref: `docs/handoff/sessions/2026-10-08-codegraph-启动失败修复-+-v1.6.2-重建-+-daemon-log-瘦身.md`
-- **SKILL.state open_loops schema validator (A1+A2+A4+A5)** (2026-10-07) — reason: 论文 L3 防御 + 显式 schema + 机器校验兜底;5 条 Just Closed 重构为 reason/ref;4 hook 全绿 rep=100.0 · ref: `docs/handoff/sessions/2026-10-07-skillstate-open-loops-schema-validator.md`
-- **moli 1.1.14 安装** (2026-10-07) — reason: 7 次 GitHub 自取失败 → 用户直传 tarball → 本地 staged install;Rule 12 第 2 级激活 · ref: `moli-install-network-blocked-2026-10-07.md`
+
 ## 决策索引
 
 - 跨项目决策: [`~/.claude/memory/decisions.md`](file:///Users/hgxszhj/.claude/memory/decisions.md)

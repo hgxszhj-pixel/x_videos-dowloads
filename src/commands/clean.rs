@@ -385,7 +385,7 @@ mod tests {
     fn scan_respects_whitelist() {
         let dir = tmp_dir("wl");
         let protected = write_file(&dir, "blank.mp4", b"");
-        let report = scan(&dir, CleanTarget::Empty, &[protected.clone()]).unwrap();
+        let report = scan(&dir, CleanTarget::Empty, std::slice::from_ref(&protected)).unwrap();
         assert!(report.entries.is_empty(), "白名单文件应被跳过");
         let _ = fs::remove_dir_all(&dir);
     }

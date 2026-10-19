@@ -115,6 +115,28 @@ if _memory_prompt_path.exists():
     except Exception as _e:  # never block commit on memory check failure
         print(f"[commit-msg] memory-prompt check skipped: {_e}", file=sys.stderr)
 
+# === eval_gate (Harness² "完成 = 检查全过 + 证据") ===
+# commit msg 含完成声明 + staged 含 Rust 源 → 强制 cargo fmt + clippy 通过
+# 拒 commit 时把 stderr 尾段打回,提交者可直接定位
+# 绕过: msg 含 [skip-eval] 或 [DID: / [VC: evidence trailer
+# 详见 scripts/eval_gate.py 与 http://arxiv.org/abs/2610.14224 思想本地化
+_eval_gate_path = (
+    Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+    / "scripts"
+    / "eval_gate.py"
+)
+if _eval_gate_path.exists():
+    sys.path.insert(0, str(_eval_gate_path.parent))
+    try:
+        from eval_gate import check_eval_gate  # noqa: E402
+        _eval_ok, _eval_msg = check_eval_gate(original)
+        if _eval_msg:
+            print(_eval_msg, file=sys.stderr)
+        if not _eval_ok:
+            sys.exit(1)
+    except Exception as _e:  # never block commit on eval_gate failure
+        print(f"[commit-msg] eval-gate check skipped: {_e}", file=sys.stderr)
+
 # === Ref-trace 自动注入 (Intent Lock 之后 / DID/VC 之前) ===
 # 若今天 ~/.local/share/x_videos-dowloads-trace/YYYY-MM-DD/ 下有 NDJSON,
 # 自动追加 "Ref-trace: <绝对路径>" 到 commit message。

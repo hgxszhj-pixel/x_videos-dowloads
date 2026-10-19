@@ -48,7 +48,7 @@ pub struct AgeBuckets {
 }
 
 impl AgeBuckets {
-    #[expect(dead_code)] // 预留 utility: 总文件数=4 个 bucket 求和,format_report 时调用
+    #[allow(dead_code)] // 预留 utility: 总文件数=4 个 bucket 求和,format_report 时调用
     pub fn total(&self) -> usize {
         self.recent + self.week + self.month + self.older
     }
@@ -327,9 +327,9 @@ mod tests {
     #[test]
     fn analyze_top_files_sorted_by_size_desc() {
         let dir = tmp_dir("top");
-        write_file(&dir, "small.mp4", &vec![0u8; 10]);
-        write_file(&dir, "big.mp4", &vec![0u8; 100]);
-        write_file(&dir, "mid.mp4", &vec![0u8; 50]);
+        write_file(&dir, "small.mp4", &[0u8; 10]);
+        write_file(&dir, "big.mp4", &[0u8; 100]);
+        write_file(&dir, "mid.mp4", &[0u8; 50]);
         let report = analyze(&dir).unwrap();
         assert!(report.top_files.len() >= 3);
         assert_eq!(report.top_files[0].size, 100);
@@ -361,8 +361,8 @@ mod tests {
     #[test]
     fn ext_sorted_by_bytes_desc() {
         let dir = tmp_dir("sort");
-        write_file(&dir, "x.mp4", &vec![0u8; 100]);
-        write_file(&dir, "y.m4a", &vec![0u8; 200]);
+        write_file(&dir, "x.mp4", &[0u8; 100]);
+        write_file(&dir, "y.m4a", &[0u8; 200]);
         let report = analyze(&dir).unwrap();
         let sorted = report.ext_sorted_by_bytes();
         assert_eq!(sorted[0].0, "m4a");
