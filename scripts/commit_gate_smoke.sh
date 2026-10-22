@@ -260,6 +260,102 @@ done <<< "$HO_OUT"
 [ "$VERBOSE" = 1 ] && printf '        %s\n' "$HO_OUT"
 
 # ---------------------------------------------------------------------------
+# 门 5: eval_gate —— 7 个门里最复杂的一个，**4 条不触发的路径**（[skip-eval] /
+# DID/VC 证据 / 无 cargo / 无 staged *.rs / 无完成声明），任何一条判宽了，
+# 门就静默退化成装饰品，而且没人会发现。
+#
+# 隔离方式: os.chdir 到临时 git 仓库 + 把 `_run` 换掉。`_run` 是唯一会碰
+# cargo 的入口，替换后**整棵判定树都能测，cargo 一次都不会跑**
+# （真跑一次 fmt + clippy 要 30~180s，冒烟测试不该付这个钱）。
+# 顺带断言它真的走到第 4 步并调了 2 条 cargo 命令 —— 只断言「没报错」
+# 的话，「因为判宽而没触发」和「跑过了」长得一模一样。
+# ---------------------------------------------------------------------------
+echo
+echo "eval_gate 的 4 条豁免路径必须精确，最后一条必须真的触发："
+EG_OUT="$(python3 - "$SCRIPTS" "$TMP" <<'PYEOF' 2>&1
+import sys, os, subprocess, pathlib, shutil
+sys.path.insert(0, sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+ORIG = os.getcwd()
+import eval_gate as eg
+
+r = tmp / "eg"; r.mkdir(parents=True, exist_ok=True)
+subprocess.run(["git", "init", "-q", str(r)], check=True, capture_output=True)
+os.chdir(r)
+
+calls = []
+def fake_run(cmd, timeout=120, cwd=None):
+    calls.append(cmd)
+    return 0, "", ""
+eg._run = fake_run
+
+real_which = shutil.which
+def has_cargo(_):
+    calls.clear()
+    return "/usr/bin/cargo"
+
+def expect(name, msg, want):
+    """want: (ok, msg_substr, n_cargo_calls)"""
+    eg._run = fake_run
+    calls.clear()
+    try:
+        ok, out = eg.check_eval_gate(msg)
+    except Exception as e:
+        print(f"FAIL\t{name}\traised {type(e).__name__}: {e}")
+        return
+    good = (ok == want[0]) and (want[1] in out) and (len(calls) == want[2])
+    print(f"{'ok' if good else 'FAIL'}\t{name}\tok={ok} cargo_calls={len(calls)} "
+          f"msg={out[:46]!r}")
+
+# --- 豁免路径（都应放行，0 次 cargo 调用）---
+shutil.which = lambda _: "/usr/bin/cargo"     # 越过第 1 步，专注测 0/2/3
+expect("skip-marker",   "fix: x\n\n[skip-eval]",                 (True, "skipped via", 0))
+expect("did-evidence",  "fix: x\n\n[DID: abc]",                  (True, "DID/VC evidence", 0))
+expect("vc-evidence",   "fix: x\n\n[VC: def-1]",                 (True, "DID/VC evidence", 0))
+
+# 暂存区空 -> 第 2 步豁免
+subprocess.run(["git", "rm", "-r", "-q", "--cached", "."], cwd=r,
+               capture_output=True)
+expect("no-staged-rust", "feat: 完成全部改造",                   (True, "no staged *.rs", 0))
+
+# 暂存了 .rs 但**没有完成声明** -> 第 3 步豁免。这一条是防误判的关键:
+# 一个只测「拦没拦」的用例看不出 claim 检测是否过宽。
+(r / "lib.rs").write_text("pub fn a() {}\n", encoding="utf-8")
+subprocess.run(["git", "add", "lib.rs"], cwd=r, check=True, capture_output=True)
+expect("no-completion-claim", "docs: 调整措辞",                   (True, "no completion-claim", 0))
+
+# 完成声明 + staged .rs -> 必须真的跑 fmt + clippy 两条。
+# 关键词是**语义动词**（fix/ship/complete/修复/完成…），不是 conventional-commit
+# 类型 —— 下面紧跟着一条反向用例锁住这个设计。
+for claim in ("fix: 修复了 xxx", "perf: shipped the lazy sampler"):
+    expect(f"engages-on-claim:{claim[:4]}", f"{claim}\n\nRef-trace: /t.ndjson", (True, "eval-gate passed", 2))
+
+# 反向用例: **光有 commit 类型不算完成声明**。
+# 这条是设计意图不是缺陷: CLAIM_KEYWORDS 是语义动词表(eval_gate.py:37-50)，
+# 不含 feat/perf/refactor —— 那些是几乎每个 commit 都有的类型，计进去
+# 这个门就会**逢 commit 必触发**，那正是本 session 认定的更致命失效方向
+# （fail-closed，一次 --no-verify 就让门永久变装饰品）。
+# 有人日后「顺手补全」关键词表时，这条会红。
+expect("commit-type-is-not-a-claim", "feat: add the sampler\n\nRef-trace: /t.ndjson",
+       (True, "no completion-claim", 0))
+expect("perf-type-is-not-a-claim", "perf: 优化了 yyy\n\nRef-trace: /t.ndjson",
+       (True, "no completion-claim", 0))
+
+# cargo 不在 -> 第 1 步豁免（patch which，因为本机确实装了 cargo）
+shutil.which = lambda _: None
+expect("no-cargo-on-path", "fix: 完成全部改造",                   (True, "cargo 未找到", 0))
+shutil.which = real_which
+
+os.chdir(ORIG)
+PYEOF
+)"
+while IFS=$'\t' read -r st name detail; do
+    [ -z "$st" ] && continue
+    if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
+done <<< "$EG_OUT"
+[ "$VERBOSE" = 1 ] && printf '        %s\n' "$EG_OUT"
+
+# ---------------------------------------------------------------------------
 echo
 echo "passed: $PASS   failed: $FAIL"
 if [ "$FAIL" -gt 0 ]; then
