@@ -42,7 +42,15 @@ class Metrics:
     total_sessions: int = 0
     ok_sessions: int = 0
     success_rate: float = 0.0
-    avg_total_ms: int = 0  # session_close 的输出里不带总耗时,用 fetch_video_info 近似
+    # avg_total_ms 读的是 session_close.output["total_ms_proxy"]。2026-10-22 实测:
+    # 这个 key 在整个 src/ 里**一次都没被写过**(只在 eval_trace.py 自己这里出现),
+    # session_close 的 output 只有 status。所以这一项对任何 trace 都恒为 0 —— 不是
+    # 「这批 session 特别快」,是压根没埋点。旧注释写的「用 fetch_video_info 近似」
+    # 从来没被实现过,是句误导,留在这里会让人以为指标有意义。
+    avg_total_ms: int = 0
+    # 有多少个 session_close 真的带了 total_ms_proxy。0 = 这项指标**结构上测不了**,
+    # 和「测出来是 0」是两回事 —— 见 main() 里的披露逻辑。
+    sessions_with_total_ms: int = 0
     resolver_chain_length: float = 0.0  # resolver_try 事件数 / session 数
     stall_count: int = 0
     # 被丢掉的 trace 文件分两类,严重程度完全不同:
@@ -78,6 +86,7 @@ class Metrics:
             session_open_seen = False
             session_ok = False
             session_total_ms = 0
+            session_total_ms_seen = False  # key 存在 ≠ 值为 0,必须分开记
             session_resolver_count = 0
             session_stall = 0
             valid_lines = 0
@@ -104,6 +113,9 @@ class Metrics:
                             session_close_seen = True
                             session_ok = output.get("status") == "ok"
                             session_total_ms = output.get("total_ms_proxy", 0) or 0
+                            # `in` 而不是取值判断:埋点压根不写这个 key 时,值自然是 0,
+                            # 但「没测到」和「测出来是 0」在报告里必须长得不一样。
+                            session_total_ms_seen = "total_ms_proxy" in output
                         elif step == "resolver_try":
                             session_resolver_count += 1
 
@@ -151,6 +163,8 @@ class Metrics:
                 continue
 
             m.total_sessions += 1
+            if session_total_ms_seen:
+                m.sessions_with_total_ms += 1
             if session_ok:
                 m.ok_sessions += 1
             total_ms_sum += session_total_ms
@@ -174,7 +188,25 @@ class DiffRow:
     baseline_val: str
     current_val: str
     delta: str
-    verdict: str  # ✅ / ⚠️ / ❌
+    verdict: str  # ✅ / ⚠️ / ❌ / ⚪
+    measurable: bool = True
+
+    @classmethod
+    def unmeasurable(cls, name: str, why: str) -> "DiffRow":
+        """指标**结构上测不了**时用它,不要拿 0 冒充测量结果。
+
+        Why: 一行 `avg_total_ms | 0 | 0 | 0 | ✅持平` 看起来像「耗时指标很健康」,
+        实际是埋点从没写过那个 key。这和 stop-subagent-rate.sh 恒绿、eval_trace 空基线
+        恒绿是同一款病:**看起来像安全网的死指标,比没有更危险。**
+        """
+        return cls(
+            name=name,
+            baseline_val="n/a",
+            current_val="n/a",
+            delta="n/a",
+            verdict=f"⚪ 不可测 — {why}",
+            measurable=False,
+        )
 
     @classmethod
     def make(cls, name: str, b: float, c: float, fmt: str, lower_is_better: bool) -> "DiffRow":
@@ -205,7 +237,13 @@ def compare(baseline: Metrics, current: Metrics) -> list[DiffRow]:
             ".3f",
             lower_is_better=False,
         ),
-        DiffRow.make(
+        DiffRow.unmeasurable(
+            "avg_total_ms",
+            "session_close 从不带 total_ms_proxy"
+            f"(baseline {baseline.sessions_with_total_ms}/{baseline.total_sessions} 个 session 有)",
+        )
+        if baseline.sessions_with_total_ms == 0
+        else DiffRow.make(
             "avg_total_ms",
             baseline.avg_total_ms,
             current.avg_total_ms,
@@ -314,6 +352,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
 
     rows = compare(baseline, current)
+
+    # 死指标必须在**判决之前**说明白,不能只让表格里出现一个看起来正常的 0。
+    for r in rows:
+        if not r.measurable:
+            print(
+                f"⚠️  [{r.name}-dead] 该指标结构上测不了:{r.verdict.split('—', 1)[1].strip()}"
+                f" —— 表格里的 n/a 不是「持平」,是**没埋点**。别把它读成耗时正常。",
+                file=sys.stderr,
+            )
+
     print(format_report(args.baseline, args.current, rows))
 
     if has_regression(rows):
