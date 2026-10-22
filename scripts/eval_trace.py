@@ -45,6 +45,12 @@ class Metrics:
     avg_total_ms: int = 0  # session_close 的输出里不带总耗时,用 fetch_video_info 近似
     resolver_chain_length: float = 0.0  # resolver_try 事件数 / session 数
     stall_count: int = 0
+    # 被丢掉的 trace 文件分两类,严重程度完全不同:
+    #   dropped_interrupted   —— 有 session_open 无 session_close = 用户 Ctrl-C,排除合理
+    #   dropped_no_lifecycle  —— 两个都没有 = 生产端没写生命周期事件,丢它等于掩盖 bug
+    # 只有后者会让 baseline 变得不可比(见 main 里的守卫)。
+    dropped_interrupted: int = 0
+    dropped_no_lifecycle: int = 0
     errors: list[str] = field(default_factory=list)
 
     @classmethod
@@ -68,6 +74,7 @@ class Metrics:
 
         for f in ndjson_files:
             session_close_seen = False
+            session_open_seen = False
             session_ok = False
             session_total_ms = 0
             session_resolver_count = 0
@@ -90,22 +97,49 @@ class Metrics:
                         duration_ms = ev.get("duration_ms", 0) or 0
                         output = ev.get("output") or {}
 
+                        if step == "session_open":
+                            session_open_seen = True
                         if step == "session_close":
                             session_close_seen = True
                             session_ok = output.get("status") == "ok"
                             session_total_ms = output.get("total_ms_proxy", 0) or 0
                         elif step == "resolver_try":
                             session_resolver_count += 1
-                        elif step in ("resolver_try", "download_one", "fetch_video_info"):
-                            if duration_ms >= STALL_THRESHOLD_MS:
-                                session_stall += 1
+
+                        # stall 判定**独立于上面的分类**,不能挂在同一条 elif 链上。
+                        # 2026-10-22 FIX: 原来 resolver_try 那一支同时出现在
+                        # `elif step == "resolver_try"` 和下一行 `elif step in (...)` 里,
+                        # 前者先匹配就把它吃掉了,后者永远轮不到 —— 实测两个 99s 的
+                        # resolver_try(阈值的 3 倍)报 stall_count=0,而 download_one /
+                        # fetch_video_info 同样的 stall 能被抓到。
+                        # 讽刺的是 resolver_try 恰恰是最容易 stall 的那一步
+                        # (BUG-D 就是串行 resolver 链把会话挂住),它却是唯一被漏掉的。
+                        if (
+                            step in ("resolver_try", "download_one", "fetch_video_info")
+                            and duration_ms >= STALL_THRESHOLD_MS
+                        ):
+                            session_stall += 1
             except OSError as e:
                 m.errors.append(f"{f.name}: 读文件失败 {e}")
                 continue
 
             if not session_close_seen:
-                # 无 session_close = 未完成 session,不计入分母
-                m.errors.append(f"{f.name}: 无 session_close 事件,跳过")
+                # 无 session_close = 该文件不计入分母。但**分两类**,不能都当"正常跳过":
+                #   · 有 session_open 无 session_close = 用户 Ctrl-C / 进程被杀,排除合理
+                #   · 连 session_open 都没有 = 生产端压根没写生命周期事件(实测
+                #     baseline-2026-10-12/n-2026-10-12.ndjson 就是这样:29 次 resolver_try
+                #     + 3 次 download_one 全在这个文件里,session_id 还是空字符串)。
+                #     把它连同几十个事件一起丢掉,却让剩下 4 个只含 open/close 的空跑
+                #     GUI session 撑起 success_rate=1.000 —— 指标看着漂亮,分母是残的。
+                if session_open_seen:
+                    m.dropped_interrupted += 1
+                    m.errors.append(f"{f.name}: 有 session_open 无 session_close(中断),跳过")
+                else:
+                    m.dropped_no_lifecycle += 1
+                    m.errors.append(
+                        f"{f.name}: 连 session_open 都没有 —— 生产端未写生命周期事件,"
+                        "整个文件被丢弃"
+                    )
                 continue
 
             m.total_sessions += 1
@@ -241,6 +275,34 @@ def main(argv: Optional[list[str]] = None) -> int:
         for m, label in [(baseline, "baseline"), (current, "current")]:
             for e in m.errors:
                 print(f"[{label}] {e}", file=sys.stderr)
+
+    # 2026-10-22 FIX: 基线不可用时必须拒绝出判决。
+    # 之前空基线 (目录存在但没有 .ndjson) 会让所有指标算成 0.000,而 0.000 对任何
+    # current 都是"改善" —— 判定永远是 ✅,检测器在结构上不可能报警。真实发生过:
+    # ~/.local/share/x_videos-dowloads-trace/2026-09-17 是空目录,而 --quiet 又把
+    # "目录无 .ndjson 文件" 吞掉,于是 stop-trace-eval.sh 每天静默放行。
+    # 这里把"无数据"和"数据好"分开: 基线没有可用 session 就不给判决。
+    if baseline.total_sessions == 0:
+        detail = "; ".join(baseline.errors[:3]) or "无可用 session(session_close)"
+        print(
+            f"❌ [baseline-unusable] 基线无可用数据,拒绝出判决: {args.baseline} ({detail})\n"
+            "   修: 用 scripts/install_perf_baseline.sh 重新锁定基线",
+            file=sys.stderr,
+        )
+        return 1
+
+    # 分母残缺要如实披露,但**不能因此拒绝出判决**。
+    # 踩过的坑: 2026-10-22 一度把"有文件连 session_open 都没有"做成 exit=1 的硬守卫,
+    # 结果 install_perf_baseline.sh 按设计就会把 no-session fallback(n-*.ndjson)拷进
+    # 基线 —— 于是任何有 CLI 下载的基线都天天误报,把"静默漏报"换成了"永久误报",
+    # 比原来更糟。数据确实不完整,但那属于设计缺口,不该用一道会永远红的门来暴露。
+    for label, m in (("baseline", baseline), ("current", current)):
+        if m.dropped_no_lifecycle:
+            print(
+                f"⚠️  [{label}-partial] {m.dropped_no_lifecycle} 个 trace 文件无生命周期事件"
+                f"(session_open/session_close 均缺),已整份排除在分母外"
+                + (f",本次判决的 {label} 分母不完整" if label == "baseline" else "")
+            )
 
     rows = compare(baseline, current)
     print(format_report(args.baseline, args.current, rows))
