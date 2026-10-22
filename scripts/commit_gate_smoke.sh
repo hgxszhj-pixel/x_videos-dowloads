@@ -30,6 +30,38 @@ PASS=0; FAIL=0; FAILURES=()
 ok()   { PASS=$((PASS+1)); printf '  ok    %-26s %s\n' "$1" "$2"; }
 bad()  { FAIL=$((FAIL+1)); FAILURES+=("$1: $2"); printf '  FAIL  %-26s %s\n' "$1" "$2"; }
 
+# 消费内嵌 python 打印的 `状态<TAB>名字<TAB>细节`。
+# 必须**只认首字段是 ok/FAIL 的行**: 各门会往 stderr 吐自己的提示（如
+# record_event 的「未知事件类型」），而内层是 `2>&1` 捕获的，那些行没有 TAB，
+# 直接进循环会被当成一条空的 FAIL —— 一个纯噪声的假失败，看起来像真问题。
+report() {
+    local st name detail
+    while IFS=$'\t' read -r st name detail; do
+        case "$st" in ok|FAIL) ;; *) continue ;; esac
+        if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
+    done <<< "$1"
+}
+
+# section <标题> <输出变量名> —— 跑完一段必须**至少产出一个用例**。
+#
+# Why (2026-10-22): 这个守卫是被真事故逼出来的。我批量把 5 个内联读循环抽成
+# report() 时，把 `report "$VAR"` 写成了 `report "VAR"`（漏了 $）—— 传给函数的是
+# 字面量 "VAR"，那一行没有 TAB，被上面那个 ok|FAIL 守卫静默跳过。结果:五个整段
+# 用例全空，脚本照样 `passed: 10 failed: 0` **退出 0**。
+# 也就是说护栏本身挡得住噪声，却挡得住自己这类错，于是把一个明显的事故
+# 包装成了 100% 绿灯。**测试脚本报绿不等于它测了东西 —— 必须是它测过之后
+# 才报绿。** 空段显式判红，不给「没跑」和「全过」留同一种表示。
+section() {
+    local before=$PASS
+    printf '\n%s\n' "$1"
+    # 取变量值用 eval 而非 `${!2}` —— 后者对位置参数是 bad substitution（bash 5.3 也一样）。
+    # 传进来的永远是本文件里的字面量变量名，不含外部输入。
+    eval "report \"\$$2\""
+    if [ "$PASS" -eq "$before" ]; then
+        bad "section:$2" "本段一个用例都没产出 —— 静默跳过不等于通过"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # 门 1（静态）: 调度器 import 的每个模块都必须能在 scripts/ 下解析到。
 #
@@ -83,8 +115,6 @@ Intent: 移除 adaptive sampler 死代码，不改变下载 API"
 # 不 patch 的话，一条"今天碰过 memory 所以静默"的记录和一个坏掉的门
 # 在输出上完全无法区分 —— 这正是本脚本要消灭的歧义。
 # ---------------------------------------------------------------------------
-echo
-echo "memory_prompt.py 在条件满足时必须提示（patch 掉 mtime 依赖才能测）："
 MP_OUT="$(python3 - "$SCRIPTS" <<'PYEOF' 2>&1
 import sys, pathlib
 sys.path.insert(0, sys.argv[1])
@@ -106,10 +136,7 @@ for name, msg, expect in cases:
     print(f"{'ok' if got == expect else 'FAIL'}\t{name}\tfired={got} expected={expect}")
 PYEOF
 )"
-while IFS=$'\t' read -r st name detail; do
-    [ -z "$st" ] && continue
-    if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
-done <<< "$MP_OUT"
+section "memory_prompt.py 在条件满足时必须提示（patch 掉 mtime 依赖才能测）：" MP_OUT
 [ "$VERBOSE" = 1 ] && printf '        %s\n' "$MP_OUT"
 
 # ---------------------------------------------------------------------------
@@ -120,8 +147,6 @@ done <<< "$MP_OUT"
 # 找 <root>/YYYY-MM-DD/ 下按 mtime 最新的 .ndjson。用临时目录 + 今天的日期，
 # 完全不碰真实 trace 数据 —— 走的是真实参数化路径，不是打补丁绕过。
 # ---------------------------------------------------------------------------
-echo
-echo "trace_link.py 必须在该注入时注入 Ref-trace，该安静时安静："
 TL_OUT="$(python3 - "$SCRIPTS" "$TMP" <<'PYEOF' 2>&1
 import sys, os, pathlib
 from datetime import datetime
@@ -161,10 +186,7 @@ run("quiet-empty-day-dir",   empty, "fix: something", False)
 run("quiet-root-missing",    tmp / "no-such-root", "fix: something", False)
 PYEOF
 )"
-while IFS=$'\t' read -r st name detail; do
-    [ -z "$st" ] && continue
-    if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
-done <<< "$TL_OUT"
+section "trace_link.py 必须在该注入时注入 Ref-trace，该安静时安静：" TL_OUT
 [ "$VERBOSE" = 1 ] && printf '        %s\n' "$TL_OUT"
 
 # ---------------------------------------------------------------------------
@@ -177,8 +199,6 @@ done <<< "$TL_OUT"
 # 眼里都是「放行」，只有把 msg 也断言掉才分得开 —— 警告退化成静默通过，
 # 和门坏了在输出上完全一样。
 # ---------------------------------------------------------------------------
-echo
-echo "handoff_size_guard / openloops_schema 必须三态分明（block / warn / silent）："
 HO_OUT="$(python3 - "$SCRIPTS" "$TMP" <<'PYEOF' 2>&1
 import sys, os, subprocess, pathlib
 sys.path.insert(0, sys.argv[1])
@@ -253,10 +273,7 @@ three_state("loops-silent-no-section", ols.check_openloops_schema, "silent")
 os.chdir(ORIG)
 PYEOF
 )"
-while IFS=$'\t' read -r st name detail; do
-    [ -z "$st" ] && continue
-    if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
-done <<< "$HO_OUT"
+section "handoff_size_guard / openloops_schema 必须三态分明（block / warn / silent）：" HO_OUT
 [ "$VERBOSE" = 1 ] && printf '        %s\n' "$HO_OUT"
 
 # ---------------------------------------------------------------------------
@@ -270,8 +287,6 @@ done <<< "$HO_OUT"
 # 顺带断言它真的走到第 4 步并调了 2 条 cargo 命令 —— 只断言「没报错」
 # 的话，「因为判宽而没触发」和「跑过了」长得一模一样。
 # ---------------------------------------------------------------------------
-echo
-echo "eval_gate 的 4 条豁免路径必须精确，最后一条必须真的触发："
 EG_OUT="$(python3 - "$SCRIPTS" "$TMP" <<'PYEOF' 2>&1
 import sys, os, subprocess, pathlib, shutil
 sys.path.insert(0, sys.argv[1])
@@ -349,11 +364,69 @@ shutil.which = real_which
 os.chdir(ORIG)
 PYEOF
 )"
-while IFS=$'\t' read -r st name detail; do
-    [ -z "$st" ] && continue
-    if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
-done <<< "$EG_OUT"
+section "eval_gate 的 4 条豁免路径必须精确，最后一条必须真的触发：" EG_OUT
 [ "$VERBOSE" = 1 ] && printf '        %s\n' "$EG_OUT"
+
+# ---------------------------------------------------------------------------
+# 门 7: agent_did —— 往 `~/.claude/` 写 DID/信誉分，不是安全网但**会写真实状态**，
+# 坏了就是损坏用户文件。`DID_STORE`/`REPUTATION_STORE` 是模块级 Path 全局
+# (agent_did.py:34-35)，指向临时目录即可完全隔离，不碰真数据。
+#
+# 最值钱的一条是 corrupt-json: 那个文件一旦损坏，**每一次 commit 都会读它**，
+# `load_*` 必须降级成默认值而不是抛异常 —— 否则一次坏写入就把整条链永久卡死。
+# ---------------------------------------------------------------------------
+AD_OUT="$(python3 - "$SCRIPTS" "$TMP" <<'PYEOF' 2>&1
+import sys, pathlib, json
+sys.path.insert(0, sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+import agent_did as ad
+
+store = tmp / "claude-home"
+store.mkdir(parents=True, exist_ok=True)
+ad.DID_STORE = store / "agent_did.json"
+ad.REPUTATION_STORE = store / "agent_reputation.json"
+
+def check(name, got, expect):
+    ok = got == expect
+    print(f"{'ok' if ok else 'FAIL'}\t{name}\tgot={got} expected={expect}")
+
+# 1. 下夹到 0 —— test_fail 是 -3.0,初始 50,20 次就该见底
+for _ in range(20): ad.record_event("test_fail")
+check("score-clamps-at-zero", ad.load_reputation()["score"], 0.0)
+
+# 2. 上夹到 100 —— 从 0 起 40 次 test_pass(+2.0) 会到 80,再来 20 次到 120
+for _ in range(60): ad.record_event("test_pass")
+check("score-clamps-at-100", ad.load_reputation()["score"], 100.0)
+
+# 3. 事件环形封顶 500 —— 上面已记 20+60=80 条,再灌 425 条凑够 505
+for _ in range(425): ad.record_event("clippy_pass")
+check("events-capped-at-500", len(ad.load_reputation()["events"]), 500)
+
+# 4. 未知事件必须退出非 0(否则调用方会把垃圾事件记进信誉分)
+try:
+    ad.record_event("not-a-real-event"); rc = 0
+except SystemExit as e:
+    rc = e.code
+check("unknown-event-exits-nonzero", rc, 1)
+
+# 5. **坏 JSON 必须降级**: 那个文件每个 commit 都被读一次,坏了就会永久卡死整条链
+ad.REPUTATION_STORE.write_text("{ this is not json", encoding="utf-8")
+rep = ad.load_reputation()
+check("corrupt-rep-degrades", (rep["score"], rep["events"]), (50.0, []))
+ad.DID_STORE.write_text("}}not json{{", encoding="utf-8")
+check("corrupt-did-degrades", ad.load_did(), None)
+
+# 6. 降级后仍可继续写入(恢复路径通不通)
+ad.record_event("clippy_pass")
+check("writable-after-corrupt", ad.load_reputation()["score"], 51.0)
+
+# 7. DID 签发后落盘,再取不应换 id
+a, b = ad.get_did(), ad.get_did()
+check("did-stable-across-calls", a == b and a.startswith("did:"), True)
+PYEOF
+)"
+section "agent_did 的信誉分必须夹在 [0,100]、事件封顶 500、坏 JSON 必须降级：" AD_OUT
+[ "$VERBOSE" = 1 ] && printf '        %s\n' "$AD_OUT"
 
 # ---------------------------------------------------------------------------
 echo
