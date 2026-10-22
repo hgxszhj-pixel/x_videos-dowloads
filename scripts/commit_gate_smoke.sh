@@ -113,6 +113,61 @@ done <<< "$MP_OUT"
 [ "$VERBOSE" = 1 ] && printf '        %s\n' "$MP_OUT"
 
 # ---------------------------------------------------------------------------
+# 门 4: trace_link —— 注入 `Ref-trace:` 行。不是门（永不阻塞），但同样有
+# 「接线了却什么都不做」的风险，所以也要证明它在该注入时能注入。
+#
+# 隔离方式: 它从 `X_VIDEOS_TRACE_ROOT` 环境变量取根目录（trace_link.py:32），
+# 找 <root>/YYYY-MM-DD/ 下按 mtime 最新的 .ndjson。用临时目录 + 今天的日期，
+# 完全不碰真实 trace 数据 —— 走的是真实参数化路径，不是打补丁绕过。
+# ---------------------------------------------------------------------------
+echo
+echo "trace_link.py 必须在该注入时注入 Ref-trace，该安静时安静："
+TL_OUT="$(python3 - "$SCRIPTS" "$TMP" <<'PYEOF' 2>&1
+import sys, os, pathlib
+from datetime import datetime
+sys.path.insert(0, sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+DAY = datetime.now().strftime("%Y-%m-%d")
+
+root = tmp / "trace"
+day = root / DAY
+day.mkdir(parents=True, exist_ok=True)
+old = day / "older.ndjson";  old.write_text("{}\n"); os.utime(old, (1000, 1000))
+new = day / "newest.ndjson"; new.write_text("{}\n"); os.utime(new, (2000, 2000))
+empty = root / "empty-day"          # 另一个根，今天的目录存在但没有 .ndjson
+(empty / DAY).mkdir(parents=True, exist_ok=True)
+
+import trace_link as tl
+
+def run(name, root_dir, msg, expect_injected, expect_pick=None):
+    os.environ["X_VIDEOS_TRACE_ROOT"] = str(root_dir)
+    out, injected = tl.inject_ref_trace(msg)
+    ok = (injected == expect_injected)
+    detail = f"injected={injected} expected={expect_injected}"
+    if expect_injected:
+        # 断言它挑的是 mtime 最新的那个，而不只是「挑了某个」
+        line = [l for l in out.splitlines() if l.startswith("Ref-trace:")]
+        picked = pathlib.Path(line[0].split("Ref-trace: ")[1]) if line else None
+        ok = ok and picked is not None and picked.name == expect_pick
+        detail += f" picked={picked.name if picked else None} expected={expect_pick}"
+    else:
+        ok = ok and out == msg
+        detail += f" unchanged={out == msg}"
+    print(f"{'ok' if ok else 'FAIL'}\t{name}\t{detail}")
+
+run("picks-newest-by-mtime", root, "fix: something", True, "newest.ndjson")
+run("quiet-already-has-ref", root, "fix: x\nRef-trace: /x.ndjson", False)
+run("quiet-empty-day-dir",   empty, "fix: something", False)
+run("quiet-root-missing",    tmp / "no-such-root", "fix: something", False)
+PYEOF
+)"
+while IFS=$'\t' read -r st name detail; do
+    [ -z "$st" ] && continue
+    if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
+done <<< "$TL_OUT"
+[ "$VERBOSE" = 1 ] && printf '        %s\n' "$TL_OUT"
+
+# ---------------------------------------------------------------------------
 echo
 echo "passed: $PASS   failed: $FAIL"
 if [ "$FAIL" -gt 0 ]; then
