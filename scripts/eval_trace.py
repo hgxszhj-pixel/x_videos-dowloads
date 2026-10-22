@@ -51,6 +51,7 @@ class Metrics:
     # 只有后者会让 baseline 变得不可比(见 main 里的守卫)。
     dropped_interrupted: int = 0
     dropped_no_lifecycle: int = 0
+    fallback_stalls: int = 0  # 从 fallback 文件并入 stall_count 的那部分,单独记以便披露
     errors: list[str] = field(default_factory=list)
 
     @classmethod
@@ -136,9 +137,16 @@ class Metrics:
                     m.errors.append(f"{f.name}: 有 session_open 无 session_close(中断),跳过")
                 else:
                     m.dropped_no_lifecycle += 1
+                    # fallback 文件的 stall **仍然计入** —— stall_count 是绝对计数、
+                    # 没有分母,收进来不改变任何现有指标的算法,已锁基线继续可比。
+                    # 但 success_rate / resolver_chain_length / avg_total_ms 一律不算:
+                    # 没有 session_close 就没有 status,任何"成功率"都是编出来的。
+                    # (trace.rs 里 session_close 是唯一带 status 的终止事件)
+                    m.stall_count += session_stall
+                    m.fallback_stalls += session_stall
                     m.errors.append(
-                        f"{f.name}: 连 session_open 都没有 —— 生产端未写生命周期事件,"
-                        "整个文件被丢弃"
+                        f"{f.name}: 无生命周期事件(fallback 路径),"
+                        f"已并入 stall_count(+{session_stall}),其余指标不计"
                     )
                 continue
 
@@ -299,9 +307,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     for label, m in (("baseline", baseline), ("current", current)):
         if m.dropped_no_lifecycle:
             print(
-                f"⚠️  [{label}-partial] {m.dropped_no_lifecycle} 个 trace 文件无生命周期事件"
-                f"(session_open/session_close 均缺),已整份排除在分母外"
-                + (f",本次判决的 {label} 分母不完整" if label == "baseline" else "")
+                f"⚠️  [{label}-partial] {m.dropped_no_lifecycle} 个 fallback trace 文件无生命周期"
+                f"事件 —— 其 stall 已并入 stall_count(+{m.fallback_stalls}),但 success_rate /"
+                f" resolver_chain_length / avg_total_ms 不含它们(无 session_close 即无 status)"
+                + (f"　→ {label} 这三项指标的分母不完整" if label == "baseline" else "")
             )
 
     rows = compare(baseline, current)
