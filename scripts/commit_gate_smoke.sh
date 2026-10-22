@@ -168,6 +168,98 @@ done <<< "$TL_OUT"
 [ "$VERBOSE" = 1 ] && printf '        %s\n' "$TL_OUT"
 
 # ---------------------------------------------------------------------------
+# 门 2 + 门 3: handoff_size_guard / openloops_schema —— 都读 git 的**暂存区**
+# （`git diff --cached`，不是 --show-toplevel），所以隔离方式是 os.chdir 到一个
+# 临时 git 仓库，不碰本仓库的暂存区。
+#
+# 这两个门的返回值是**三态**，不是布尔: (False, msg) 拦 commit /
+# (True, msg非空) 警告但放行 / (True, "") 静默。第三态和第二态在调用方
+# 眼里都是「放行」，只有把 msg 也断言掉才分得开 —— 警告退化成静默通过，
+# 和门坏了在输出上完全一样。
+# ---------------------------------------------------------------------------
+echo
+echo "handoff_size_guard / openloops_schema 必须三态分明（block / warn / silent）："
+HO_OUT="$(python3 - "$SCRIPTS" "$TMP" <<'PYEOF' 2>&1
+import sys, os, subprocess, pathlib
+sys.path.insert(0, sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+ORIG = os.getcwd()
+
+import handoff_size_guard as hsg
+import openloops_schema as ols
+
+def mkrepo(name):
+    r = tmp / name
+    r.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(r)], check=True, capture_output=True)
+    return r
+
+def stage(repo, content):
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    (repo / "HANDOFF.md").write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "HANDOFF.md"], cwd=repo, check=True, capture_output=True)
+
+def three_state(name, fn, expect):
+    ok, msg = fn()
+    got = "block" if not ok else ("warn" if msg else "silent")
+    print(f"{'ok' if got == expect else 'FAIL'}\t{name}\tstate={got} expected={expect}")
+
+def lines(n):
+    return "# HANDOFF\n" + "".join(f"line {i}\n" for i in range(n))
+
+VALID_LOOPS = """# HANDOFF
+
+## Open Loops — Active
+
+- **收口 trace-eval 管线** — owner: 用户 · blocker: 无 · next: 跑 eval_gate · touched: 2026-10-22
+
+## Open Loops — Blocked / Waiting
+
+- **等 schema 改动批准** — waiting-on: 用户在权限提示里点确认 · eta: 明天 · touched: 2026-10-22
+"""
+
+r = mkrepo("ho")
+os.chdir(r)
+
+# --- handoff_size_guard 三态 --------------------------------------------------
+stage(r, lines(250)); three_state("size-block-over-200",  hsg.check_handoff_size, "block")
+stage(r, lines(150)); three_state("size-warn-over-100",   hsg.check_handoff_size, "warn")
+stage(r, lines(50));  three_state("size-silent-under-100", hsg.check_handoff_size, "silent")
+
+# 暂存区里没有 HANDOFF.md → 必须完全跳过（None），而不是拿工作区版本凑合判
+(r / "HANDOFF.md").write_text(lines(250), encoding="utf-8")
+subprocess.run(["git", "reset", "-q"], cwd=r, check=True, capture_output=True)
+three_state("size-silent-not-staged", hsg.check_handoff_size, "silent")
+
+# fail-open 方向: 非 git 目录里 git 会报错，门必须**放弃检查**而不是崩/拦
+bare = tmp / "not-a-repo"; bare.mkdir(parents=True, exist_ok=True)
+os.chdir(bare)
+assert hsg.get_staged_handoff_lines() is None, "非 git 目录里 get_staged_handoff_lines 应返回 None"
+three_state("size-silent-non-git-dir", hsg.check_handoff_size, "silent")
+
+# --- openloops_schema 三态 ----------------------------------------------------
+os.chdir(r)
+stage(r, VALID_LOOPS)
+three_state("loops-valid-schema", ols.check_openloops_schema, "silent")
+
+# 抽掉 Active slot 的 touched 字段 → 必须拦
+broken = VALID_LOOPS.replace(" · touched: 2026-10-22\n", "\n", 1)
+stage(r, broken); three_state("loops-block-missing-touched", ols.check_openloops_schema, "block")
+
+# 完全没有 Open Loops 段 → 按设计静默（check_openloops_schema:257）
+stage(r, "# HANDOFF\n\n就一句话。\n")
+three_state("loops-silent-no-section", ols.check_openloops_schema, "silent")
+
+os.chdir(ORIG)
+PYEOF
+)"
+while IFS=$'\t' read -r st name detail; do
+    [ -z "$st" ] && continue
+    if [ "$st" = "ok" ]; then ok "$name" "$detail"; else bad "$name" "$detail"; fi
+done <<< "$HO_OUT"
+[ "$VERBOSE" = 1 ] && printf '        %s\n' "$HO_OUT"
+
+# ---------------------------------------------------------------------------
 echo
 echo "passed: $PASS   failed: $FAIL"
 if [ "$FAIL" -gt 0 ]; then
