@@ -30,9 +30,23 @@ STALL_ELIGIBLE_STEPS = frozenset({
     "cli_resolve_attempt_done",  # CLI:单个后端尝试(新)
     "download_one",              # GUI:单个课节下载
     "fetch_video_info",          # GUI:单个课节信息获取
+    "hls_manifest_done",         # HLS:取播放清单(新)
+    "hls_keys_done",             # HLS:预取 AES key(新)
+    "hls_merge_done",            # HLS:合并分段(新)
 })
-AGGREGATE_STEPS = frozenset({"cli_resolve_done", "cli_download_run_done"})  # 明确**不**参与
+AGGREGATE_STEPS = frozenset({
+    "cli_resolve_done", "cli_download_run_done",
+    "hls_segments_done",         # **不是聚合,是天然就长**(见下)
+})  # 明确**不**参与
 ```
+
+> **`hls_segments_done` 为什么不在白名单里**:一门课的整体传输本来就可能 >30s
+> (1.3GB 的课实测 26–130s)。把它算成 stall = **每下载一次就报一次「退化」**
+> = 永久误报(2026-10-22 踩过的同款坑:把「静默漏报」换成「永久误报」)。
+>
+> 白名单是**两份定义**:`scripts/eval_trace.py` 与 `scripts/heuristic_judge_trace.py`
+> 必须一致(`tests/test_eval_trace.py::TestWhitelistSync` 钉住)。
+> **改一边就要改另一边**,否则同一份 trace 在两个工具里结论不同。
 
 **为什么是白名单而不是「任何 ≥30s 的事件都算」**:聚合步骤覆盖了叶子步骤的时间区间。
 同一次慢解析会同时命中 `cli_resolve_attempt_done`(叶子,60s)和 `cli_resolve_done`(聚合,60s),
@@ -52,7 +66,7 @@ AGGREGATE_STEPS = frozenset({"cli_resolve_done", "cli_download_run_done"})  # �
 「测得更准」而不是「性能变差」。重锁:`bash scripts/install_perf_baseline.sh`。
 
 **2026-10-30 起这条规则不再只靠人记**:`src/core/trace.rs` 的
-`TRACE_SCHEMA_VERSION`(当前 `2`)写进每个 session 的
+`TRACE_SCHEMA_VERSION`(当前 `3`)写进每个 session 的
 `session_open` / `session_close` 的 `extra.schema_version`;
 `eval_trace.py` 的 `check_version_compatible()` 发现两侧版本不一致
 (或任一侧有 session 缺版本)⇒ **拒绝出判决**,退出码 **3**:
@@ -71,6 +85,11 @@ AGGREGATE_STEPS = frozenset({"cli_resolve_done", "cli_download_run_done"})  # �
 | 2 | **真的**检测到退化 | 排查性能 |
 | 3 | 埋点版本不兼容 | 重锁基线(**不是**性能问题) |
 | 4 | current 侧无可用 session ⇒ **未出判决** | 正常(常态),不必处理 |
+
+> **v3(2026-10-30)**:新增 HLS 叶子阶段(`hls_manifest_done` / `hls_keys_done` /
+> `hls_merge_done`)并把其中 3 个加进 stall 白名单 ⇒ **`stall_count` 口径变了**
+> ⇒ 版本号 +1。**重锁基线必须在 v3 埋点下做。**
+> 本机没有任何带 `schema_version` 的真实 trace 数据 ⇒ v2→v3 不丢可比基线。
 
 **两个必须记住的例外**(都在 current 侧没有 session 时发生):
 
@@ -185,6 +204,8 @@ python3 scripts/eval_trace.py --baseline traces/2026-09-14/ --current traces/202
 | `verdict = "✅" if delta > 0 else "❌"`(lower_is_better 方向反) | `scripts/eval_trace.py:144` | `test_improvement_all_metrics` 断言 `resolver_chain_length` ✅ |
 | **2026-10-30** stall 白名单退回旧的硬编码三元组(不含 `resolver_try_done` / `cli_resolve_attempt_done`) | `scripts/eval_trace.py` stall 判定 | `test_resolver_try_done_stall_counted` + `test_cli_resolve_attempt_done_stall_counted` + `test_leaf_and_aggregate_not_double_counted`(实跑:旧代码 4 条红) |
 | **2026-10-30** 把聚合步骤也塞进 stall 白名单 | `scripts/eval_trace.py` `STALL_ELIGIBLE_STEPS` | `test_aggregate_steps_not_counted_as_stall` + `test_step_sets_are_disjoint` |
+| **2026-10-30** 从 stall 白名单删掉 3 个 `hls_*_done` | `scripts/eval_trace.py` + `scripts/heuristic_judge_trace.py` | `TestHlsLeafStepEligibility` **4 条红**(实跑) |
+| **2026-10-30** 把 `hls_segments_done` 加进 stall 白名单(永久误报) | 同上 | `test_hls_segments_done_not_counted_as_stall` + `test_step_sets_are_disjoint` + `test_hls_leaf_steps_registered` **3 条红**(实跑) |
 
 复跑命令(Python 端 `mutation_smoke.sh` 不覆盖,手测;**必须先清 `__pycache__`** 否则 revert 后 pytest 跑旧字节码):
 

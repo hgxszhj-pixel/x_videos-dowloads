@@ -104,6 +104,17 @@ grep 不到卡在哪个 idx。marker 立刻落盘 = 卡死现场的第一手证�
 | `cli_resolve_attempt_done` | CLI:单个后端尝试**结束**(fxtwitter/ytdlp/registry/scrapling) | **实测** | ✅ |
 | `cli_download_run` | CLI:整次运行**开始** | 恒 0(marker) | ❌ |
 | `cli_download_run_done` | CLI:整次运行**结束**(聚合) | 实测(聚合) | ❌ 聚合,不重复计 |
+| `hls_manifest` / `_done` | HLS:取播放清单(1 RTT) | 恒 0(marker) / **实测** | ✅ `_done` |
+| `hls_keys` / `_done` | HLS:预取 AES key(每把不同 key 1 RTT) | 恒 0(marker) / **实测** | ✅ `_done` |
+| `hls_segments` / `_done` | HLS:分段传输(并发,全课) | 恒 0(marker) / **实测** | ❌ **天然就长**,见下 |
+| `hls_merge` / `_done` | HLS:合并分段(全文件 2× 磁盘 IO) | 恒 0(marker) / **实测** | ✅ `_done` |
+
+> **`hls_segments_done` 刻意不参与 stall 判定**:一门课的整体传输本来就可能 >30s
+> (1.3GB 的课实测 26–130s),把它算成 stall = **每次下载都报「退化」** = 永久误报
+> (2026-10-22 踩过的同款坑)。它在 `AGGREGATE_STEPS` 里,理由写在代码注释里。
+>
+> **`hls_*` 的 input 只留 host**:`trace_url_host()` 剥掉 userinfo 与 query ——
+> 小鹅通 CDN 的 m3u8 URL 带 `?auth=...` 鉴权 token,NDJSON 是落盘文件,不该写进去。
 
 > **聚合 vs 叶子**:stall 判定只看叶子。同一次慢解析会同时命中
 > `cli_resolve_attempt_done`(叶子)和 `cli_resolve_done`(聚合),
@@ -138,7 +149,7 @@ grep 不到卡在哪个 idx。marker 立刻落盘 = 卡死现场的第一手证�
 
 #### 1. `extra.schema_version` —— 埋点 schema 版本
 
-`src/core/trace.rs` 的 `TRACE_SCHEMA_VERSION`(当前 = `2`),写进
+`src/core/trace.rs` 的 `TRACE_SCHEMA_VERSION`(当前 = `3`),写进
 **每个 session** 的 `session_open` 与 `session_close` 的 `extra.schema_version`。
 
 - **什么时候 +1**:只有「同名字段的含义或口径变了」才 +1。
@@ -161,6 +172,34 @@ grep 不到卡在哪个 idx。marker 立刻落盘 = 卡死现场的第一手证�
 > **这个 key 此前从未被写过** —— `avg_total_ms` 因此是死指标(恒为 0 却显示
 > 「⚪ 不可测」)。2026-10-30 起真的埋上了。
 
+### 2026-10-30 修订 3:HLS 叶子阶段(清单 / 取 key / 分段 / 合并)
+
+> **触发**:管线分析卡在最后一步 —— CLI 侧只有 `cli_download_run_done` 一个**聚合**值,
+> 「下载慢」没法拆。§3.1「合并阶段占 1–5%」当时只是**估算**,没有实测支撑。
+
+`src/hls/downloader.rs` 的 `HlsDownloader::download` 里加 4 个 `TraceStage`:
+
+| step | 覆盖的代码段 | output |
+|------|-------------|--------|
+| `hls_manifest` | `M3u8Parser::fetch_and_parse`(含 Master → Media 循环) | `segments`, `total_duration` |
+| `hls_keys` | `SegmentKeys::prefetch`(每把不同 key 1 次 RTT) | `cached_keys` |
+| `hls_segments` | 并发分段传输(信号量 c=8) | `failed`, `bytes` |
+| `hls_merge` | 顺序读分段 + 写输出文件 | `bytes_written` |
+
+**为什么 `hls_segments_done` 不进 stall 白名单**:整体传输本来就 >30s(见 step 清单的注)。
+**为什么 input 只留 host**:m3u8 URL 带鉴权 token,不该落盘。
+
+#### 版本号 2 → 3
+
+「加新步骤不用 +1」这条规则**不适用**于本轮:3 个 `hls_*_done` 被加进了
+`eval_trace.py` 的 stall 白名单 ⇒ **`stall_count` 的口径变了**
+(以前慢清单/慢合并不计,现在计)⇒ 必须 +1,否则「测得更准」会被读成「性能变差」。
+
+> 代价:用户侧的「重锁基线」必须在 **v3** 埋点下做。
+> 好消息:本机 `~/.local/share/x_videos-dowloads-trace/` 里**没有任何带
+> `schema_version` 的真实数据**(最新的是 2026-10-16 的旧埋点),
+> 所以 v2→v3 不丢任何可比基线。
+
 ### 已知边界(未解决,别当成已修)
 
 - **并发 item session 的归属**:session 栈是**全局**的,不是 task 局部的。
@@ -173,8 +212,8 @@ grep 不到卡在哪个 idx。marker 立刻落盘 = 卡死现场的第一手证�
     都在任何 item session 打开**之前**就构造好了 ⇒ 正常都落在 batch 文件里。
   - 真正要彻底解决需要 **task-local 上下文**(`tokio::task_local!`),本次没做。
     这条是**遗留**问题,不是本次引入的 —— 旧实现只有一个全局 session,串台面更大。
-- **CLI 下载的叶子阶段**(manifest / segments / merge)在 `src/commands/download/**`,
-  本次未埋点 ⇒ CLI 侧只有 run 级聚合 `cli_download_run_done`,看不到分段耗时。
+- **CLI 下载的叶子阶段**(manifest / segments / merge):✅ **已修**(2026-10-30 修订 3)
+  ⇒ 见下方 step 清单的 `hls_*` 四行。
 - **课程池流程本身没有 session**:课节池的事件落在 `no-session/<date>.ndjson` fallback 文件里,
   `eval_trace.py` 判「无生命周期事件」→ 不计入 success_rate / resolver_chain_length 分母
   (stall 仍并入)。给课节池补一个 session 会让 `resolver_chain_length` 从 0 跳到 ~29,
@@ -247,6 +286,9 @@ grep -c '"session_id":"01JB5K8Z9R3X7V4Y"' trace.ndjson
 | **2026-10-30** 删掉「current 无 session ⇒ 豁免版本判定」 | `scripts/eval_trace.py` `check_version_compatible()` | `test_current_without_sessions_is_not_a_false_alarm`(防永久误报) |
 | **2026-10-30** 删掉「current 无 session ⇒ 4 个指标全标不可测」 | `scripts/eval_trace.py` `compare()` | `test_all_metrics_unmeasurable` + `test_report_has_no_regression_verdict` + `test_main_exit_code_4`(实跑:旧代码 3 条红) |
 | **2026-10-30** 把无分母时的 `return 4` 改回 `return 0` | `scripts/eval_trace.py` `main()` | `test_main_exit_code_4` + `test_realistic_cli_only_scenario`(实跑:旧代码 3 条红) |
+| **2026-10-30** 把 `hls_merge` 埋点的 step 名改掉(等价于删掉该阶段) | `src/hls/downloader.rs` `download()` | `test_hls_download_emits_four_leaf_stage_events`(实跑:红,报错里直接列出实际事件名) |
+| **2026-10-30** 从 stall 白名单删掉 3 个 `hls_*_done` | `scripts/eval_trace.py` + `scripts/heuristic_judge_trace.py` | `TestHlsLeafStepEligibility` **4 条红**(实跑) |
+| **2026-10-30** 把 `hls_segments_done` 加进 stall 白名单(永久误报) | 同上 | `test_hls_segments_done_not_counted_as_stall` + `test_step_sets_are_disjoint` + `test_hls_leaf_steps_registered` **3 条红**(实跑) |
 
 > 2026-10-30 的 3 个变异都是**实跑验证过会红**的,不是「看着像能抓」。
 > 复现方式见下(`mutation_smoke.sh manual` 只覆盖 Rust,本轮用手改 + 还原的方式跑)。

@@ -129,6 +129,37 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 现在解析阶段的每个课节都会产出 `resolver_try_done`（真实耗时 + `backend: api|drission`），
 下一次跑真实课程就能直接读出「25 条课节各花了多久、哪条卡住、API 命中多少」。
 
+### 2.7 HLS 叶子阶段埋点（2026-10-30 第四轮）
+
+**问题**：改完上面这些，CLI 侧**仍然**只有一个 `cli_download_run_done` 聚合值 ——
+「下载慢」还是一坨黑盒。§3.1 里「合并阶段占 1–5%」当时只是**估算**，没有实测支撑。
+
+**改法**：`src/hls/downloader.rs` 的 `HlsDownloader::download` 里加 4 个 `TraceStage`：
+
+| step | 覆盖的代码段 | output |
+|------|-------------|--------|
+| `hls_manifest` | `M3u8Parser::fetch_and_parse` | `segments`, `total_duration` |
+| `hls_keys` | `SegmentKeys::prefetch` | `cached_keys` |
+| `hls_segments` | 并发分段传输（c=8） | `failed`, `bytes` |
+| `hls_merge` | 顺序读分段 + 写输出文件 | `bytes_written` |
+
+**两个刻意决定**：
+
+1. **`hls_segments_done` 不进 stall 白名单** —— 一门课的整体传输本来就可能 >30s
+   （1.3GB 的课 26–130s），算成 stall = **每下载一次报一次「退化」** = 永久误报
+   （2026-10-22 踩过的同款坑）。
+2. **input 只留 host** —— 小鹅通 CDN 的 m3u8 URL 带 `?auth=...` 鉴权 token，
+   NDJSON 是落盘文件，不该写进去。
+
+**代价**：`TRACE_SCHEMA_VERSION` 2 → 3（白名单变了 ⇒ `stall_count` 口径变了）。
+本机没有任何带 `schema_version` 的真实 trace ⇒ **不丢可比基线**，
+但用户侧的「重锁基线」必须在 v3 埋点下做。
+
+**验证**：Rust 端新测试 `test_hls_download_emits_four_leaf_stage_events`
+（mock HLS server → 断言 4 个 marker + 4 个 done + output 字段）；
+变异把 `hls_merge` 改名 → 实跑**红**（报错里直接列出实际事件名）。
+Python 端 4 条新用例（白名单资格）→ 变异实跑 **4 红 / 3 红**。
+
 ---
 
 ## 3. 刻意没改的（以及为什么）
@@ -181,7 +212,7 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 | ~~`avg_total_ms` 是死指标~~ | ✅ **已修**（2026-10-30 第二轮）：`src/core/trace.rs` 现在真的写 `session_close.output.total_ms_proxy`（口径 = session_open → session_close 的**墙钟经过时间**，含全部等待）。分母也从 `total_sessions` 改成「真测到该 key 的 session 数」，避免把「没测到」摊成「耗时 0」 |
 | **旧基线与新 trace 不可比** | ✅ **已修**（机器强制）：`TRACE_SCHEMA_VERSION` 写进每个 session 的 `extra.schema_version`；`eval_trace.py` 版本对不上就**拒绝出判决**（退出码 3）。此前这条规则只写在文档里，靠人记得重锁基线 |
 | **current 侧没 session 时报假退化** | ✅ **已修**（2026-10-30 第三轮）：没有分母时 4 个指标全标「⚪ 不可测」+ 退出码 **4**（未出判决）。旧实现会得到 `success_rate 1.000→0.000 ⇒ ❌ 退化` ⇒ hook **每天报假的「trace regression detected」**；版本检查（退出码 3）恰好挡住了它，**一旦重锁基线就会复现** |
-| CLI 的叶子阶段没埋点 | manifest / segments / merge 在 `src/commands/download/**`，本轮未埋点 ⇒ CLI 侧只有 run 级聚合 |
+| CLI 的叶子阶段没埋点 | ✅ **已修**（2026-10-30 第四轮）：`src/hls/downloader.rs` 加 `hls_manifest` / `hls_keys` / `hls_segments` / `hls_merge` 4 个 `TraceStage`（marker + 真实耗时）⇒ 「下载慢」可拆成 4 段 |
 | 课节池流程本身没有 session | 事件落进 `no-session/<date>.ndjson` fallback，不计入 success_rate 分母 |
 | 机器上没有真实 trace 数据 | `~/.local/share/x_videos-dowloads-trace/` 有历史数据(到 2026-10-16)，但**全部是旧埋点** ⇒ 版本对不上，需用新埋点重跑后重锁基线 |
 
@@ -211,15 +242,15 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 
 **估算（基于代码路径推导，无真实课程端到端数字）**：
 - 解析阶段每课节 ~0.5–0.8s（Keychain 40ms + TLS 握手 ~100–200ms + 2 RTT ~200–400ms）
-- 合并阶段占全链路 1–5%
+- 合并阶段占全链路 1–5% —— **现在可实测了**（`hls_merge_done` ÷ `hls_segments_done`），下轮真实课程就能把估算换成实测
 - 分段阶段在延迟瓶颈下 ≈ 2×（key RTT 从关键路径上移除）
 
 ---
 
 ## 6. 验证清单
 
-- [x] `cargo test --bin x-video-downloader` —— **409 passed** / 0 failed / 12 ignored
-- [x] `pytest tests/test_eval_trace.py` —— **30 passed**
+- [x] `cargo test --bin x-video-downloader` —— **410 passed** / 0 failed / 12 ignored
+- [x] `pytest tests/test_eval_trace.py` —— **35 passed**
 - [x] `cargo clippy --all-targets -- -D warnings` —— 干净
 - [x] `cargo fmt --check` —— 干净
 - [x] `bash scripts/commit_gate_smoke.sh` —— 45/45；`bash scripts/hook_smoke.sh` —— 18/18
@@ -230,6 +261,8 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 - [x] 变异测试：`inject_total_ms` 直接 return → `total_ms_proxy` 测试红；`schema_version` 改名 → 版本测试红
 - [x] 变异测试：`check_version_compatible` 恒 True → 3 条红；`avg_total_ms` 分母改回 `total_sessions` → 1 条红；删掉「current 无 session 豁免」→ 1 条红（防永久误报）
 - [x] 变异测试：删掉 `compare()` 的「current 无 session ⇒ 全标不可测」→ 3 条红；`return 4` 改回 `return 0` → 3 条红
+- [x] 变异测试（第四轮 · HLS 叶子埋点）：Rust 侧把 `hls_merge` 改名 → 1 条红（报错里列出了实际事件名）；Python 侧从 stall 白名单删掉 3 个 `hls_*_done` → **4 条红**；把 `hls_segments_done` 加进白名单（永久误报）→ **3 条红**（两份白名单同步改，`TestWhitelistSync` 同时守住）
+- [x] **测试隔离自查**：新加的 HLS 用例把 `core::trace::tests::test_trace_step_raii` 跑红了（读到 `hls_manifest` 而不是 `sleep_step`）—— 根因是 `#[tokio::test]` 写在外、`#[serial]` 写在内 ⇒ `serial_test` 拿不到全局串行锁 ⇒ 两个用例并发写同一个全局 `X_VIDEOS_TRACE_DIR`。改成 `#[serial]` 在外（与 `src/core/trace.rs` 一致）后 410 全绿。**教训：`#[serial]` 必须在 `#[tokio::test]` 外层**，否则串行锁形同虚设
 - [x] 端到端：用**真实的旧基线** `baseline-2026-10-12` 对比新埋点 → 正确拒绝出判决（rc=3）；同版本对比 → 正常出判决且 `avg_total_ms` 显示真值；current 无 session → rc=4 且报告里**没有 ❌**
 - [ ] **真实课程端到端复测** —— 需要已登录的 ego-lite profile + 一门真实课程（未做）
 
