@@ -99,7 +99,7 @@ async fn download_hls(
 ) -> Result<DownloadResult> {
     println!("检测到 m3u8 URL，使用原生 HLS 下载器");
     let client = (*http_client::shared()).clone();
-    let mut hls_downloader = HlsDownloader::new(client).max_concurrent(4).retry_count(3);
+    let mut hls_downloader = HlsDownloader::new(client).max_concurrent(8).retry_count(3);
     if let Some(ref referer) = cli.referer {
         hls_downloader = hls_downloader.referer(referer);
         println!("使用自定义 Referer: {}", referer);

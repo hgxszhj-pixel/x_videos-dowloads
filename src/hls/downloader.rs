@@ -2,6 +2,7 @@
 //!
 //! 支持并发下载、分段解密和进度回调
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 #[allow(unused_imports)] // AtomicUsize is used in #[cfg(test)] mod tests via `use super::*;`
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -48,7 +49,11 @@ pub struct HlsDownloaderConfig {
 impl Default for HlsDownloaderConfig {
     fn default() -> Self {
         Self {
-            max_concurrent: 4,
+            // 并发分段数。bench 实测 c=8 = 281ms / c=4 = 491ms(1.75×),
+            // c=8 是 sweet spot(2026-10-12 perf session 决策,当时 commit 漏了,
+            // 2026-10-30 补上)。共享 HTTP client 的 pool_max_idle_per_host(64)
+            // 足够支撑 8 条并发连接。
+            max_concurrent: 8,
             retry_count: 10,
             timeout_secs: 60,
             skip_unavailable: false,
@@ -59,6 +64,66 @@ impl Default for HlsDownloaderConfig {
             cookie_header: None,
             max_failed_segments: 5, // 默认 5 次失败后停止
         }
+    }
+}
+
+/// 一个播放列表用到的 AES 密钥表（`key_url` → 16 字节密钥）。
+///
+/// **为什么需要它**：HLS 的 `#EXT-X-KEY` 在一段 key block 里覆盖**多个**分段，
+/// 同一把 key 要重复用几十到上百次。旧实现每下载一个分段都调一次
+/// `fetch_key()` —— 也就是**每个分段多一次 HTTP 往返**去取同一把 key。
+/// 1000 分段的播放列表 = 1000 次多余的 key 请求。
+///
+/// 这条路径正是小鹅通（xet.tech / xed.plus）这类加密 HLS 的主路径，
+/// 也就是本项目最真实的下载场景 —— 每段多一次 RTT 直接乘在总时长上。
+///
+/// **语义**：按 `key_url` 缓存 —— HLS 密钥是不可变资源，同一 URL 永远同一把 key；
+/// key 轮换（block 切换）时 URL 也会变 → 自然 miss → 重新取。
+struct SegmentKeys {
+    map: HashMap<String, [u8; 16]>,
+}
+
+impl SegmentKeys {
+    /// 预取播放列表里用到的**全部不同** key（每个 URL 恰好取一次）。
+    ///
+    /// **尽力而为**：某个 key 取不到时不中断整个下载 —— 那把 key 的分段
+    /// 会在下载时回退到按需 `fetch_key()`（旧行为）。这样「key 服务器临时抽风」
+    /// 不会把整个播放列表拖死。
+    async fn prefetch(client: &Client, segments: &[M3u8Segment]) -> Self {
+        let mut urls: Vec<&str> = segments
+            .iter()
+            .filter_map(|s| s.key_url.as_deref())
+            .collect();
+        urls.sort_unstable();
+        urls.dedup();
+
+        let mut map = HashMap::with_capacity(urls.len());
+        for url in urls {
+            match fetch_key(client, url).await {
+                Ok(key) => {
+                    map.insert(url.to_string(), key);
+                }
+                Err(e) => {
+                    // 不中断:受影响的分段会走按需取 key 的回退路径
+                    warn!("预取 AES 密钥失败({}),相关分段将按需重取: {}", url, e);
+                }
+            }
+        }
+
+        if !map.is_empty() {
+            info!(
+                "预取 {} 个 AES 密钥(旧实现:每分段取一次,共 {} 次)",
+                map.len(),
+                segments.iter().filter(|s| s.key_url.is_some()).count()
+            );
+        }
+
+        Self { map }
+    }
+
+    /// 取已缓存的 key；没有则返回 None（调用方回退到按需 fetch）。
+    fn get(&self, key_url: &str) -> Option<[u8; 16]> {
+        self.map.get(key_url).copied()
     }
 }
 
@@ -197,6 +262,10 @@ impl HlsDownloader {
             total_segments, total_duration
         );
 
+        // 预取 AES 密钥:加密 HLS 的一把 key 覆盖整段 key block,
+        // 旧实现每个分段都去取一次(每段多一次 HTTP RTT)。
+        let segment_keys = Arc::new(SegmentKeys::prefetch(&self.client, &playlist.segments).await);
+
         // 2. 创建临时目录存储分段
         let temp_dir = output_path.with_extension("tmp");
         tokio::fs::create_dir_all(&temp_dir).await?;
@@ -237,6 +306,7 @@ impl HlsDownloader {
                 let progress_bytes = progress_bytes.clone();
                 let last_reported = last_reported.clone();
                 let progress_cb = progress_callback.clone();
+                let segment_keys = segment_keys.clone();
 
                 tokio::spawn(async move {
                     // 获取 semaphore permit，超过 max_concurrent 时阻塞等待
@@ -251,6 +321,7 @@ impl HlsDownloader {
                         cancel,
                         &failed_count,
                         &config,
+                        Some(segment_keys),
                     )
                     .await;
 
@@ -368,6 +439,7 @@ impl HlsDownloader {
         cancel_flag: Arc<AtomicBool>,
         failed_count: &Arc<AtomicU64>,
         config: &HlsDownloaderConfig,
+        segment_keys: Option<Arc<SegmentKeys>>,
     ) -> Result<u64> {
         let timeout = Duration::from_secs(config.timeout_secs);
         let base_delay = config.retry_base_delay_ms;
@@ -390,6 +462,7 @@ impl HlsDownloader {
                     output,
                     &config.referer,
                     &config.cookie_header,
+                    segment_keys.as_deref(),
                 ),
             )
             .await
@@ -508,6 +581,7 @@ impl HlsDownloader {
         output: &PathBuf,
         custom_referer: &Option<String>,
         custom_cookie: &Option<String>,
+        segment_keys: Option<&SegmentKeys>,
     ) -> Result<u64> {
         let mut data = Vec::new();
 
@@ -571,7 +645,12 @@ impl HlsDownloader {
         // Phase C 优化：大分段（≥1MB）使用 spawn_blocking 释放 async runtime
         // 小分段直接解密（spawn_blocking 开销 ~100μs，超过小段解密本身耗时）
         if let (Some(key_url), Some(iv_hex)) = (&segment.key_url, &segment.key_iv) {
-            let key = fetch_key(client, key_url).await?;
+            // 优先用预取好的 key（同一把 key 覆盖整个 key block）。
+            // 没有缓存 → 回退到按需取（旧行为:预取失败 / 该 key 未预取到）。
+            let key = match segment_keys.and_then(|k| k.get(key_url)) {
+                Some(key) => key,
+                None => fetch_key(client, key_url).await?,
+            };
             let iv = parse_iv(iv_hex)?;
 
             const SPAWN_BLOCKING_THRESHOLD: usize = 1024 * 1024; // 1MB
@@ -663,7 +742,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = HlsDownloaderConfig::default();
-        assert_eq!(config.max_concurrent, 4);
+        assert_eq!(config.max_concurrent, 8);
         assert_eq!(config.retry_count, 10);
         assert_eq!(config.max_failed_segments, 5);
         assert_eq!(config.retry_base_delay_ms, 100);
@@ -842,6 +921,176 @@ mod tests {
             "peak {} too low — semaphore too restrictive",
             observed_peak
         );
+    }
+
+    /// 端到端：**加密 HLS 播放列表里,同一把 key 只取一次**(不是每分段一次)。
+    ///
+    /// **这条用例必须能红**:旧实现每个分段都调一次 `fetch_key()`,
+    /// 6 个分段 = 6 次 key 请求;新实现预取后 = **1 次**。
+    /// 少掉的 5 次 RTT 直接从总下载时长里减去 ——
+    /// 加密 HLS(小鹅通 xet.tech)是本项目最真实的下载路径。
+    ///
+    /// 同时验证解密结果正确(用测试内的 CBC 加密器造密文)。
+    #[tokio::test]
+    async fn test_aes_key_fetched_once_per_distinct_key_url() {
+        use aes::cipher::{BlockEncryptMut, KeyInit};
+        use aes::Aes128;
+        use generic_array::GenericArray;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        const SEGMENT_COUNT: usize = 6;
+        const KEY: [u8; 16] = [0x2b; 16];
+        const IV_HEX: &str = "0x000102030405060708090a0b0c0d0e0f";
+        const PLAINTEXT: &[u8] = b"hello hls segment payload!!"; // 24 bytes
+
+        // CBC 加密 + PKCS7 填充(= decrypt_segment 的精确逆运算)
+        fn encrypt_cbc(plain: &[u8], key: &[u8; 16], iv: &[u8; 16]) -> Vec<u8> {
+            let mut cipher = Aes128::new(GenericArray::from_slice(key));
+            let mut data = plain.to_vec();
+            let pad = 16 - (data.len() % 16);
+            data.extend(std::iter::repeat_n(pad as u8, pad));
+            let mut prev = *iv;
+            let mut out = Vec::with_capacity(data.len());
+            for chunk in data.chunks(16) {
+                let mut block = *GenericArray::from_slice(chunk);
+                for j in 0..16 {
+                    block[j] ^= prev[j];
+                }
+                cipher.encrypt_block_mut(&mut block);
+                prev = block.into();
+                out.extend_from_slice(&block);
+            }
+            out
+        }
+
+        let iv_bytes: [u8; 16] = {
+            let mut iv = [0u8; 16];
+            for (i, b) in iv.iter_mut().enumerate() {
+                *b = i as u8;
+            }
+            iv
+        };
+        let ciphertext = encrypt_cbc(PLAINTEXT, &KEY, &iv_bytes);
+
+        let key_requests = Arc::new(AtomicUsize::new(0));
+        let segment_requests = Arc::new(AtomicUsize::new(0));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let key_req_clone = key_requests.clone();
+        let seg_req_clone = segment_requests.clone();
+        let ciphertext = Arc::new(ciphertext);
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+                let key_req = key_req_clone.clone();
+                let seg_req = seg_req_clone.clone();
+                let ciphertext = ciphertext.clone();
+
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = match socket.read(&mut buf).await {
+                        Ok(n) if n > 0 => n,
+                        _ => return,
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+
+                    let response: Vec<u8> = if req.starts_with("GET /manifest") {
+                        let mut m3u8 =
+                            String::from("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n");
+                        m3u8.push_str(&format!(
+                            "#EXT-X-KEY:METHOD=AES-128,URI=\"http://127.0.0.1:{}/key.bin\",IV={}\n",
+                            port, IV_HEX
+                        ));
+                        for i in 0..SEGMENT_COUNT {
+                            m3u8.push_str(&format!("#EXTINF:5.0,\nsegment_{:04}.ts\n", i));
+                        }
+                        m3u8.push_str("#EXT-X-ENDLIST\n");
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            m3u8.len(), m3u8
+                        )
+                        .into_bytes()
+                    } else if req.starts_with("GET /key.bin") {
+                        key_req.fetch_add(1, Ordering::SeqCst);
+                        let mut resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            KEY.len()
+                        )
+                        .into_bytes();
+                        resp.extend_from_slice(&KEY);
+                        resp
+                    } else {
+                        seg_req.fetch_add(1, Ordering::SeqCst);
+                        let mut resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            ciphertext.len()
+                        )
+                        .into_bytes();
+                        resp.extend_from_slice(&ciphertext);
+                        resp
+                    };
+
+                    let _ = socket.write_all(&response).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("output.ts");
+
+        let config = HlsDownloaderConfig {
+            max_concurrent: 4,
+            retry_count: 2,
+            timeout_secs: 5,
+            ..Default::default()
+        };
+        let downloader = HlsDownloader::with_config(config).await.unwrap();
+        let manifest_url = format!("http://127.0.0.1:{}/manifest.m3u8", port);
+
+        let result = downloader.download(&manifest_url, &output_path, None).await;
+        assert!(
+            result.is_ok(),
+            "download should succeed: {:?}",
+            result.err()
+        );
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let observed_keys = key_requests.load(Ordering::SeqCst);
+        let observed_segments = segment_requests.load(Ordering::SeqCst);
+
+        assert_eq!(observed_segments, SEGMENT_COUNT, "每个分段都该下载一次");
+        assert_eq!(
+            observed_keys, 1,
+            "同一把 key 只该取一次(旧实现每分段取一次 = {} 次)",
+            SEGMENT_COUNT
+        );
+
+        // 解密结果必须正确:合并后是 6 段明文拼接
+        let merged = std::fs::read(&output_path).unwrap();
+        assert_eq!(
+            merged.len(),
+            PLAINTEXT.len() * SEGMENT_COUNT,
+            "合并后的长度应等于 6 段明文"
+        );
+        for i in 0..SEGMENT_COUNT {
+            let start = i * PLAINTEXT.len();
+            assert_eq!(
+                &merged[start..start + PLAINTEXT.len()],
+                PLAINTEXT,
+                "第 {} 段解密后内容不对",
+                i
+            );
+        }
     }
 
     /// Retry-After 头解析：纯数字格式

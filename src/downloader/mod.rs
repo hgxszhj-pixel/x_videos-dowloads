@@ -121,7 +121,7 @@ impl VideoDownloader {
         if request.download_strategy == DownloadStrategy::Hls {
             let client = (*self.client).clone();
             let downloader = HlsDownloader::new(client)
-                .max_concurrent(4)
+                .max_concurrent(8)
                 .retry_count(self.config.retry_count);
 
             let output_path = request.output_path.clone();
