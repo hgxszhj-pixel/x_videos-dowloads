@@ -362,16 +362,29 @@ def cmd_run(args) -> int:
     return 0
 
 
+def has_skip_marker(commit_msg: str) -> bool:
+    """逃生舱标记是否**独占一行**。
+
+    旧实现用 `SKIP_MARKER in commit_msg` —— 只要正文里**提到**这个字符串
+    就会静默关掉整个门禁。实测踩中:本仓自己的 commit message 写着
+    「逃生舱 [skip-review-eval]」来解释这个机制,结果门禁被这条说明
+    自己豁免掉了(commit 8009666)。
+
+    豁免必须是**显式动作**,不能是顺口一提。所以要求标记独占一行。
+    """
+    return any(line.strip() == SKIP_MARKER for line in commit_msg.splitlines())
+
+
 def check_review_eval(commit_msg: str) -> tuple[bool, str]:
     """commit-msg 链调用:prompt 改了但没重跑评测 → 拒绝。
 
     返回 (是否通过, 给用户看的提示)。**不打印** —— 由调用方决定怎么呈现,
     与本仓库其它 check_xxx() 的契约一致。
 
-    逃生舱:commit message 含 `[skip-review-eval]`。
+    逃生舱:commit message 里有**独占一行**的 `[skip-review-eval]`。
     """
-    if SKIP_MARKER in commit_msg:
-        return True, f"[review-eval] 已跳过 (msg 含 {SKIP_MARKER})"
+    if has_skip_marker(commit_msg):
+        return True, f"[review-eval] 已跳过 (msg 有独占一行的 {SKIP_MARKER})"
 
     if not PROMPT_PATH.exists():
         return True, f"[review-eval] 跳过: 没有 {PROMPT_PATH}"

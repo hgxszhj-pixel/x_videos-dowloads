@@ -89,7 +89,13 @@ check_rc "baseline-broken-json"    1 "$(gate_rc "$TMP/base_broken.json")"
 section "2. 不该红的场景必须绿:"
 check_rc "baseline-fresh"          0 "$(gate_rc "$TMP/base_good.json")"
 check_rc "no-baseline-skip"        0 "$(gate_rc "$TMP/does_not_exist.json")"
-check_rc "escape-hatch-skip-marker" 0 "$(gate_rc "$TMP/base_stale.json" "[skip-review-eval] not sure")"
+# 逃生舱标记必须**独占一行**才生效
+check_rc "escape-hatch-own-line"   0 "$(gate_rc "$TMP/base_stale.json" "$(printf 'chore: x\n%s\n' '[skip-review-eval]')")"
+
+section "2b. 逃生舱不能被「顺口一提」误触发(2026-10-30 实测踩中):"
+# 正文里提到标记字符串(比如解释这个机制)不该关掉门禁。
+# 这条**必须能红**:用旧实现 `SKIP_MARKER in msg` 时它会 rc=0 → 假绿。
+check_rc "inline-mention-no-bypass" 1 "$(gate_rc "$TMP/base_stale.json" "逃生舱是 [skip-review-eval] 这个标记")"
 
 section "3. 缺 prompt 文件时跳过(而不是崩):"
 MISSING_PROMPT_RC="$(REVIEW_PROMPT_PATH="$TMP/nope.md" REVIEW_EVAL_BASELINE="$TMP/base_good.json" \
@@ -104,16 +110,19 @@ import review_eval as r
 r.PROMPT_PATH = r.Path(sys.argv[1])
 r.BASELINE_PATH = r.Path(sys.argv[2])
 ok_good, _ = r.check_review_eval("")
+# 下面三个都用**过期 baseline**:只有「门禁真的在判」时结果才有意义。
+# 用合格 baseline 测「豁免生效」是同义反复(good baseline 本来就放行)。
 r.BASELINE_PATH = r.Path(sys.argv[3])
 ok_stale, _ = r.check_review_eval("")
-r.BASELINE_PATH = r.Path(sys.argv[2])
-ok_skip, _ = r.check_review_eval("please [skip-review-eval] now")
-print(f"{int(ok_good)} {int(ok_stale)} {int(ok_skip)}")
+ok_skip, _ = r.check_review_eval("chore: x\n[skip-review-eval]\n")
+ok_inline, _ = r.check_review_eval("please [skip-review-eval] now")
+print(f"{int(ok_good)} {int(ok_stale)} {int(ok_skip)} {int(ok_inline)}")
 PY
 )"
 check "contract-ok/ok/ok" "$(printf '%s' "$CONTRACT" | cut -d' ' -f1)" "1"
 check "contract-stale-red" "$(printf '%s' "$CONTRACT" | cut -d' ' -f2)" "0"
 check "contract-marker-bypasses" "$(printf '%s' "$CONTRACT" | cut -d' ' -f3)" "1"
+check "contract-inline-no-bypass" "$(printf '%s' "$CONTRACT" | cut -d' ' -f4)" "0"
 
 # ---------------------------------------------------------------------------
 echo
