@@ -12,6 +12,21 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tracing::{info, warn};
 
+/// 小鹅通 API fast-path 共用的 HTTP client。
+///
+/// 旧实现每个调用点都 `reqwest::Client::builder().build()` —— 新建连接池,
+/// 于是每次调用都要重新 TLS 握手。批量解析 N 条课节 = N 次握手,纯浪费。
+/// 共享一个 client 后连接可复用(keep-alive),并且让并发解析能真正复用连接。
+fn api_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("构建 reqwest client 失败(只可能是 TLS/代理配置非法)")
+    })
+}
+
 /// TulingPython 小鹅通解析器
 pub struct TulingPythonResolver {
     drission: DrissionClient,
@@ -22,6 +37,29 @@ impl TulingPythonResolver {
         Ok(Self {
             drission: DrissionClient::new()?,
         })
+    }
+
+    /// 仅走 API fast-path 拿 m3u8 —— **不启动浏览器**。
+    ///
+    /// 返回 `None` = 该 URL 不适用 API fast-path(不是 `l_xxx` 直播回放,
+    /// 或 API 调用失败),调用方应走 Drission fallback。
+    ///
+    /// 单独暴露出来是为了让批量解析能**并发**跑 API 路径:
+    /// API 路径是纯 HTTP,彼此无共享状态,可以并发;
+    /// 而 Drission 路径要操作同一个浏览器 profile,必须串行。
+    /// 把两者混在一个 `get_video_info` 里就没法区分这两种并发语义。
+    #[cfg(target_os = "macos")]
+    pub async fn try_api_video_info(&self, url: &str) -> Option<VideoInfo> {
+        let (m3u8_url, title) = try_api_fetch_lesson_m3u8(url).await?;
+        let mut info = VideoInfo::new(title, m3u8_url, None);
+        info.download_strategy = crate::types::DownloadStrategy::Hls;
+        Some(info)
+    }
+
+    /// 非 macOS 没有 API fast-path(依赖 ego-lite Keychain 解密)。
+    #[cfg(not(target_os = "macos"))]
+    pub async fn try_api_video_info(&self, _url: &str) -> Option<VideoInfo> {
+        None
     }
 
     /// 从 URL 提取 column/product ID
@@ -166,10 +204,7 @@ impl PlatformResolver for TulingPythonResolver {
         // 跳过 Drission 浏览器拦截。Drission 在 SPA 懒加载场景拦截不到 m3u8
         // (player 需用户点击触发, 2026-08-29 实测单 lesson 30s 超时仍失败)。
         // 失败返回 None, 调用方 fallback 到下方 Drission 流程。
-        #[cfg(target_os = "macos")]
-        if let Some((m3u8_url, title)) = try_api_fetch_lesson_m3u8(url).await {
-            let mut info = VideoInfo::new(title, m3u8_url, None);
-            info.download_strategy = crate::types::DownloadStrategy::Hls;
+        if let Some(info) = self.try_api_video_info(url).await {
             return Ok(info);
         }
 
@@ -388,10 +423,7 @@ async fn try_api_list_collection(url: &str, column_id: &str) -> Option<Vec<Colle
     )
     .ok()?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .ok()?;
+    let client = api_client();
 
     let body = serde_json::json!({
         "column_id": column_id,
@@ -454,10 +486,7 @@ async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
     )
     .ok()?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .ok()?;
+    let client = api_client();
 
     // 1. 拿 m3u8 URL
     let lookback_url = format!(
@@ -527,7 +556,7 @@ async fn try_api_fetch_lesson_m3u8(url: &str) -> Option<(String, String)> {
     let m3u8_url = chosen_url.or(first_url)?;
 
     // 2. 拿标题 (失败则 fallback 到 alive_id placeholder)
-    let title = fetch_lesson_title(&client, &cookie_header, &alive_id, url)
+    let title = fetch_lesson_title(client, &cookie_header, &alive_id, url)
         .await
         .unwrap_or_else(|| format!("lesson_{}", alive_id));
 

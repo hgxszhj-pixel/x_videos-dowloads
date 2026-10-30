@@ -241,12 +241,76 @@ async fn is_logged_in_via_ego_lite() -> LoginStatus {
     LoginStatus::NotLoggedIn
 }
 
+/// ego-lite cookie 解密结果的进程内缓存有效期(秒)。
+///
+/// 取一个短 TTL 而不是「进程期不变」:用户重新扫码登录后,旧 cookie 会在
+/// TTL 内继续被使用 —— 60s 足够覆盖一个批次的解析窗口,又不至于让
+/// 「登录了但还是用旧 cookie」持续到重启。
+const EGO_LITE_COOKIE_CACHE_TTL_SECS: u64 = 60;
+
+/// ego-lite cookie 解密缓存条目:`(取回时刻, 原始条目列表)`。
+#[cfg(target_os = "macos")]
+type EgoCookieCache = std::sync::Mutex<Option<(std::time::Instant, Vec<(String, String, String)>)>>;
+
+/// ego-lite cookie 解密缓存。
+///
+/// 只缓存**成功**的结果 —— 失败通常是「ego-lite 没装 / 没登录过」,
+/// 让用户登录后重试就该重新算,不该被负缓存挡住。
+#[cfg(target_os = "macos")]
+static EGO_LITE_COOKIE_CACHE: std::sync::OnceLock<EgoCookieCache> = std::sync::OnceLock::new();
+
 /// 从 ego-lite 的 Default/Cookies SQLite 数据库读 tulingpyton.cn 相关 cookies,
 /// 用 Keychain "ego safe storage" 派生 AES-128-GCM 密钥解密,返回 (host, name, value) 元组列表。
 /// 共享底层,供 [`decrypt_ego_lite_cookies_for_vip`] 和
 /// [`decrypt_ego_lite_cookies_for_host`] 两个包装函数使用。
+///
+/// **带进程内缓存** —— 解密一次的成本是:spawn `security` 子进程读 Keychain
+/// (2026-10-30 实测 30-40ms)+ PBKDF2 1003 轮 + 打开 SQLite 解密全部 cookie。
+/// 旧实现在每个调用点都重算一遍,批量解析 N 条课节 = N 次 Keychain 访问
+/// (N 次可能弹权限授权窗)。缓存把 N 次降到 1 次。
+///
+/// 缓存的是**原始条目列表**(不过滤 host):过滤逻辑是纯内存操作,很便宜;
+/// 真正贵的是解密那一步,所有 host 共享。
 #[cfg(target_os = "macos")]
 fn decrypt_ego_lite_cookies_raw() -> anyhow::Result<Vec<(String, String, String)>> {
+    let cache = EGO_LITE_COOKIE_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    cached_with_ttl(
+        cache,
+        std::time::Duration::from_secs(EGO_LITE_COOKIE_CACHE_TTL_SECS),
+        decrypt_ego_lite_cookies_raw_uncached,
+    )
+}
+
+/// 带 TTL 的单值缓存 —— 把「命中」与「过期重算」拆成可单测的纯逻辑。
+///
+/// 抽成泛型是为了能注入**计数函数**:单测断言「TTL 内调用 N 次只真的算 1 次」。
+/// 缓存很容易写成一个永远命中或永远不命中的空壳,而这两种错误**都不会让
+/// 编译失败**,只有计数断言能抓住。
+///
+/// `compute` 取 `Fn` 而非 `FnOnce` 是为了测试能多次调用同一个闭包;
+/// 实现内部每次只调它一次。
+fn cached_with_ttl<T: Clone>(
+    cache: &std::sync::Mutex<Option<(std::time::Instant, T)>>,
+    ttl: std::time::Duration,
+    compute: impl Fn() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    {
+        let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, value)) = guard.as_ref() {
+            if at.elapsed() < ttl {
+                return Ok(value.clone());
+            }
+        }
+    }
+    let value = compute()?;
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = Some((std::time::Instant::now(), value.clone()));
+    Ok(value)
+}
+
+/// 解密 ego-lite cookie 的**未缓存**实现。见 [`decrypt_ego_lite_cookies_raw`]。
+#[cfg(target_os = "macos")]
+fn decrypt_ego_lite_cookies_raw_uncached() -> anyhow::Result<Vec<(String, String, String)>> {
     use rusqlite::Connection;
 
     // 1. ego-lite profile 路径
@@ -1130,6 +1194,82 @@ fn merge_paginated_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ego-lite cookie 缓存的行为契约(2026-10-30 提速)。
+    ///
+    /// 这三条断言是**能红的**:把缓存读去掉 / 把 TTL 判断写反 / 把失败也缓存,
+    /// 至少一条会失败。缓存写错不会让编译失败,只有计数断言能抓住。
+    mod cookie_cache {
+        use super::super::cached_with_ttl;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Mutex;
+        use std::time::Duration;
+
+        /// TTL 内必须只真的算一次 —— 缓存写空就退化成 N 次 Keychain 访问。
+        #[test]
+        fn cache_hit_avoids_recompute() {
+            let cache: Mutex<Option<(std::time::Instant, String)>> = Mutex::new(None);
+            let calls = AtomicUsize::new(0);
+            let compute = || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>("cookie".to_string())
+            };
+            assert_eq!(
+                cached_with_ttl(&cache, Duration::from_secs(60), compute).unwrap(),
+                "cookie"
+            );
+            assert_eq!(
+                cached_with_ttl(&cache, Duration::from_secs(60), compute).unwrap(),
+                "cookie"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "TTL 内第二次调用必须命中缓存,不该再算一次"
+            );
+        }
+
+        /// TTL 过期必须重算 —— 否则改了 cookie 也不生效。
+        #[test]
+        fn expired_cache_recomputes() {
+            let cache: Mutex<Option<(std::time::Instant, String)>> = Mutex::new(None);
+            let calls = AtomicUsize::new(0);
+            let compute = || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>("cookie".to_string())
+            };
+            cached_with_ttl(&cache, Duration::from_millis(0), compute).unwrap();
+            cached_with_ttl(&cache, Duration::from_millis(0), compute).unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), 2, "TTL=0 必须每次重算");
+        }
+
+        /// 失败**不能**被缓存 —— 否则用户登录后仍拿旧失败结果,永远起不来。
+        ///
+        /// 断言的是**行为**(失败后重试能成功)而不是实现细节(调用次数):
+        /// 如果有人把缓存类型改成能存错误,这次调用会返回缓存里的 Err,
+        /// 断言立刻红。
+        #[test]
+        fn failure_is_not_cached() {
+            let cache: Mutex<Option<(std::time::Instant, String)>> = Mutex::new(None);
+            let calls = AtomicUsize::new(0);
+            let compute = || {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err::<String, anyhow::Error>(anyhow::anyhow!("boom"))
+                } else {
+                    Ok("cookie".to_string())
+                }
+            };
+            assert!(
+                cached_with_ttl(&cache, Duration::from_secs(60), compute).is_err(),
+                "首次调用应当失败"
+            );
+            assert_eq!(
+                cached_with_ttl(&cache, Duration::from_secs(60), compute).unwrap(),
+                "cookie",
+                "失败不该被缓存 —— 用户登录后重试必须能成功"
+            );
+        }
+    }
 
     #[test]
     fn test_default_config_has_persistent_profile() {

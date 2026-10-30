@@ -513,7 +513,6 @@ impl TraceStage {
     ///
     /// 用于「总耗时」这类**聚合** stage:它的耗时是子步骤之和,
     /// 再放一个 marker 只会让 trace 里多一行没信息量的噪声。
-    #[expect(dead_code, reason = "GUI 解析阶段埋点用,随该埋点一起落地")]
     pub fn without_marker(done_step: &str, input: Value, extra: Value) -> Self {
         Self {
             done_step: done_step.to_string(),
@@ -535,7 +534,6 @@ impl TraceStage {
     /// 用于「先探一下、探到才记录」的分支 —— 例如「文件已存在」的本地检查:
     /// 探到不存在时这次检查**没有产出**,真正的 done 事件由后面的解析尝试发出。
     /// 不加这个 API 的话,`TraceStage` 被 drop 会写一条 `status=abandoned` 的假事件。
-    #[expect(dead_code, reason = "GUI 解析阶段埋点用,随该埋点一起落地")]
     pub fn discard(mut self) {
         self.finished = true;
     }

@@ -18,7 +18,7 @@ use crate::platform::{
 use crate::types::sanitize_filename;
 use crate::types::{DownloadProgress, DownloadRequest};
 
-use crate::core::trace::{trace_event, trace_session_open_guarded, TraceStep};
+use crate::core::trace::{trace_event, trace_session_open_guarded, TraceStage, TraceStep};
 
 use super::store::add_completed_download;
 
@@ -943,11 +943,129 @@ mod status_enum_tests {
     }
 }
 
+/// `resolve_items_serially` 的结果契约(**顺序** + **覆盖范围**)。
+///
+/// **顺序**:`results` 按 item 下标填、最后展平 ⇒ 返回顺序与 `state.items` 一致
+/// (旧实现靠 `results.push(...)` 的**执行顺序**保证)。
+/// 顺序一旦错位,上层会把 A 课节的状态显示到 B 课节上,而且**不会报任何错**
+/// —— 所以必须钉住。
+///
+/// **覆盖范围(最容易误解的地方)**:`results` 只承载**非成功**的课节 ——
+/// `skipped` / `exists` / 解析失败。**解析成功**(拿到 m3u8)的课节只写
+/// `resolved[i]`,`results[i]` 保持 `None`,展平时被跳过 ⇒
+/// `results.len()` **不等于** `items.len()`。
+/// 上层把 `results` 当"状态行"用(跳过 / 已下载 / 失败),
+/// 成功项由 `resolved` 驱动下载,不进 `results`。
+#[cfg(test)]
+mod resolve_order_tests {
+    use super::*;
+    use serial_test::serial;
+
+    /// 把 trace 输出重定向到临时目录,返回原来的 env 值(结束时还原)。
+    ///
+    /// **为什么必须**(两个独立原因):
+    /// 1. 用户真实 trace 目录 `~/.local/share/x_videos-dowloads-trace/` 是
+    ///    perf 基线的采集源(`scripts/install_perf_baseline.sh`),
+    ///    测试往里写事件 = 污染基线;
+    /// 2. `resolve_items_serially` 会发 `resolver_try` 事件,而 `trace_event`
+    ///    写入的是**当前最内层 session**。若此刻另一个测试正开着 trace session,
+    ///    这些事件会落进**别人的** session 文件 ⇒ 那个测试的行数断言被撑破
+    ///    (实测 release 模式下 `test_integration_4_fault_points` 因此失败)。
+    ///
+    /// 配合 `#[serial]`:trace.rs 里的测试全部是 `#[serial]`,标记本模块后
+    /// 两个模块的测试**互斥**执行,不存在"别人的 session 正开着"的窗口。
+    fn redirect_trace_dir(tag: &str) -> Option<std::ffi::OsString> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp = std::env::temp_dir().join(format!("resolve-order-test-{tag}-{nanos}"));
+        let prev = std::env::var_os("X_VIDEOS_TRACE_DIR");
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+        prev
+    }
+
+    fn restore_trace_dir(prev: Option<std::ffi::OsString>) {
+        match prev {
+            Some(v) => std::env::set_var("X_VIDEOS_TRACE_DIR", v),
+            None => std::env::remove_var("X_VIDEOS_TRACE_DIR"),
+        }
+    }
+
+    fn item(i: usize) -> CourseItemDisplay {
+        CourseItemDisplay {
+            id: format!("id{i}"),
+            index: (i + 1) as u32,
+            title: format!("课节{i}-__no_such_file__"),
+            page_url: "https://example.invalid/course".to_string(),
+            jump_url: None,
+            // 全部不选 → 走 skipped 分支,不触网(测试必须离线可跑)
+            selected: false,
+            status: "pending".into(),
+            progress: 0.0,
+            slot: None,
+            speed: String::new(),
+            downloaded_bytes: 0,
+            total_bytes: 0,
+        }
+    }
+
+    /// skipped 的课节:每个都写一条 results,且顺序与 items 对齐。
+    #[serial]
+    #[tokio::test]
+    async fn resolve_results_stay_aligned_with_items() {
+        let prev_dir = redirect_trace_dir("align");
+        let state = CourseCollectionState {
+            visible: true,
+            items: (0..3).map(item).collect(),
+            status: String::new(),
+            overwrite_existing: false,
+        };
+        let (results, resolved) = resolve_items_serially(&state, &[], false).await;
+
+        assert_eq!(
+            results.len(),
+            3,
+            "3 个**全部 skipped**的课节,每个都该有一条 results(成功项才不进 results)"
+        );
+        for (i, (id, status)) in results.iter().enumerate() {
+            assert_eq!(
+                id,
+                &format!("id{i}"),
+                "第 {i} 条结果的 id 必须与 items 对齐"
+            );
+            assert_eq!(status, "skipped");
+        }
+        assert!(
+            resolved.iter().all(|r| r.is_none()),
+            "skipped 的课节不该有 m3u8"
+        );
+        restore_trace_dir(prev_dir);
+    }
+
+    /// 空课程池不该 panic,也不该返回多余的行。
+    #[serial]
+    #[tokio::test]
+    async fn resolve_empty_pool_returns_empty() {
+        let prev_dir = redirect_trace_dir("empty");
+        let state = CourseCollectionState {
+            visible: true,
+            items: vec![],
+            status: String::new(),
+            overwrite_existing: false,
+        };
+        let (results, resolved) = resolve_items_serially(&state, &[], false).await;
+        assert!(results.is_empty());
+        assert!(resolved.is_empty());
+        restore_trace_dir(prev_dir);
+    }
+}
+
 pub(super) async fn course_download_pool_impl(
     state: CourseCollectionState,
     slots: Vec<Arc<CourseItemSlot>>,
 ) -> Vec<(String, String)> {
-    // 第一步：串行解析所有课节（CDP 同一 profile，必须串行）
+    // 第一步：解析所有课节（API fast-path 并发 + Drission fallback 串行）
     let overwrite = state.overwrite_existing;
     let (results, resolved) = resolve_items_serially(&state, &slots, overwrite).await;
     // 第二步：并发下载已解析的 m3u8（HLS 独立任务，互不依赖）
@@ -962,14 +1080,26 @@ pub(super) async fn course_download_pool_impl(
 ///
 /// `overwrite_existing` (P-3 2026-08-29): true → 跳过 exists 检查,允许覆盖;
 /// false → 存在同名 mp4 时标记 "✓ 已下载" 不重下。
+///
+/// **三段式(2026-10-30 提速)**:旧实现整个 for-loop 串行,每条课节都要
+/// 付出「Keychain 解密 cookie + 新建 TLS 连接 + 2 次 RTT」的固定开销,
+/// 25 条课节 ≈ 15-20s 全花在**还没开始下载**上。现在拆成:
+/// 1. **前置检查**(skip / 已下载 / 覆盖删旧文件)—— 纯本地 IO,串行最省事;
+/// 2. **API fast-path 并发** —— 纯 HTTP,彼此无共享状态,可以并发;
+/// 3. **Drission fallback 串行** —— 同一个浏览器 profile 不能并发开多个实例。
+///
+/// 第 2/3 段必须分开:API 路径不碰浏览器,Drission 路径要独占 profile。
+/// 混在一个 `get_video_info` 里就区分不了这两种并发语义。
 async fn resolve_items_serially(
     state: &CourseCollectionState,
     slots: &[Arc<CourseItemSlot>],
     overwrite_existing: bool,
 ) -> (Vec<(String, String)>, Vec<Option<String>>) {
     use crate::platform::TulingPythonResolver;
+    use futures::StreamExt;
     let total = state.items.len();
-    let mut results: Vec<(String, String)> = Vec::with_capacity(total);
+    // 按 item 下标存,最后展平 —— 保证返回顺序与 state.items 一致(旧实现靠 push 顺序保证)。
+    let mut results: Vec<Option<(String, String)>> = vec![None; total];
     let mut resolved: Vec<Option<String>> = vec![None; total];
 
     // 一次性加载输出目录,避免每条课节重复 load config
@@ -977,22 +1107,53 @@ async fn resolve_items_serially(
         .map(|c| c.output_dir)
         .unwrap_or_else(|_| PathBuf::from("./Downloads"));
 
+    // ---- 第 1 段:前置检查(纯本地)----
+    // 需要走 resolver 的课节:(item 下标, session_url)
+    let mut pending: Vec<(usize, String)> = Vec::new();
+
     for (i, item) in state.items.iter().enumerate() {
         let slot = slots.get(i).cloned();
         // Trace BUG-D: 串行 resolver try — 记 idx + title + 状态,复发时 grep idx 直接定位卡死位置
+        //
+        // 2026-10-30:这是一条**开始标记**(duration_ms 恒为 0),不是测量值。
+        // 旧代码把它当成测量值用(名字叫 resolver_try、字段叫 resolver_chain_length),
+        // 于是 `eval_trace.py` 的 stall 判定(`duration_ms >= 30_000`)永远命中不了
+        // resolver 这一步 —— 而 BUG-D 恰恰就是 resolver 链把会话挂住。
+        // 现在:
+        //   · 本事件 = 「开始处理第 i 个课节」的 marker(count 保持不变 = 课节数,
+        //     `eval_trace.py` 的 `resolver_chain_length` 指标仍按它计数 → 指标口径不变);
+        //   · 真正的耗时由后面第 2/3 段的 `resolver_try_done` 事件携带(真实 Instant 计时)。
+        //
+        // **`extra.resolver_chain_length` → `extra.course_item_count` 的理由**:
+        // 这里原本放的是「课节总数」,而 eval_trace.py 的同名指标
+        // `resolver_chain_length` 的定义是「每个 session 的 resolver_try 事件数」
+        // —— 两个同名不同义的东西,极易被后来者当成同一个。
+        // 全仓检索确认:**没有任何消费者读 `extra.resolver_chain_length`**
+        // (eval_trace.py 按事件计数算指标,heuristic_judge_trace.py 只读 step/duration_ms),
+        // 所以改名不会动任何指标值。改名后语义自洽:extra 说的是课节数,指标说的是尝试数。
         trace_event(
             "resolver_try",
             serde_json::json!({"idx": i, "title": item.title, "item_id": item.id}),
-            serde_json::json!({"selected": item.selected}),
+            serde_json::json!({"selected": item.selected, "phase": "start"}),
             0,
-            serde_json::json!({"resolver_chain_length": total}),
+            serde_json::json!({"course_item_count": total}),
         )
         .await;
         if !item.selected {
-            results.push((item.id.clone(), "skipped".into()));
+            // 没进解析阶段:也补一条 done,保证「每个 marker 至少有一条 done」,
+            // 于是「只有 marker 没有 done」= 卡死(而不是"被跳过")。
+            // duration 是**实测**值(跳过分支没有 IO,自然是亚毫秒级),
+            // `attempted:false` 说明压根没调 resolver —— 与「duration 写死 0」是两回事。
+            let stage = TraceStage::without_marker(
+                "resolver_try_done",
+                serde_json::json!({"idx": i, "title": item.title, "item_id": item.id}),
+                serde_json::json!({"backend": "none", "course_item_count": total}),
+            );
+            results[i] = Some((item.id.clone(), "skipped".into()));
             if let Some(s) = slot {
                 s.set_status(CourseItemStatus::Skipped);
             }
+            stage.finish(serde_json::json!({"status": "skipped", "attempted": false}));
             continue;
         }
         // P-1 (2026-08-16): 跳过已下载课节 — 检查输出目录是否存在同名 mp4 (>0 字节)
@@ -1001,6 +1162,11 @@ async fn resolve_items_serially(
         // 填充 slot.total_bytes/progress 让 UI 直接显示 "✓ 已下载" + 100% + 文件大小
         // P-3 (2026-08-29): `overwrite_existing=true` 时跳过本检查,允许覆盖重下
         if !overwrite_existing {
+            let stage = TraceStage::without_marker(
+                "resolver_try_done",
+                serde_json::json!({"idx": i, "title": item.title, "item_id": item.id}),
+                serde_json::json!({"backend": "none", "course_item_count": total}),
+            );
             if let Some(file_size) =
                 file_is_already_downloaded_with_index(&output_dir, &item.title, Some(item.index))
                     .await
@@ -1010,9 +1176,13 @@ async fn resolve_items_serially(
                     s.progress.store(10000, Ordering::Relaxed);
                     s.set_status(CourseItemStatus::Exists);
                 }
-                results.push((item.id.clone(), "exists".into()));
+                results[i] = Some((item.id.clone(), "exists".into()));
+                stage.finish(serde_json::json!({"status": "exists", "attempted": false}));
                 continue;
             }
+            // 文件不存在 → 这次本地检查没有产出,discard 掉(不发任何事件);
+            // 该课节真正的 done 事件由后面的 API / Drission 解析尝试发出。
+            stage.discard();
         } else {
             // 覆盖模式:先删旧文件,避免 HLS `File::create` 截断失败
             // (实测 m3u8 17GB 文件覆盖时,旧 .tmp 目录残留会导致空间浪费)
@@ -1028,34 +1198,121 @@ async fn resolve_items_serially(
             .jump_url
             .clone()
             .unwrap_or_else(|| build_session_url(&item.page_url, &item.id));
-        let resolver = match TulingPythonResolver::new() {
-            Ok(r) => r,
-            Err(e) => {
-                let msg = format!("failed: TulingPythonResolver 初始化失败 ({e})");
-                results.push((item.id.clone(), msg));
-                if let Some(s) = slot.as_ref() {
+        pending.push((i, session_url));
+    }
+
+    if pending.is_empty() {
+        return (results.into_iter().flatten().collect(), resolved);
+    }
+
+    let resolver = match TulingPythonResolver::new() {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            let msg = format!("failed: TulingPythonResolver 初始化失败 ({e})");
+            for (i, _) in &pending {
+                results[*i] = Some((state.items[*i].id.clone(), msg.clone()));
+                if let Some(s) = slots.get(*i).as_ref() {
                     s.set_status(CourseItemStatus::Failed);
                 }
-                continue;
             }
-        };
+            return (results.into_iter().flatten().collect(), resolved);
+        }
+    };
+
+    // ---- 第 2 段:API fast-path 并发 ----
+    // 并发度上限:小鹅通 API 是普通公网接口,8 路足够吃满单连接的带宽,
+    // 再高只会挤占带宽并放大被限流的概率。
+    const API_RESOLVE_CONCURRENCY: usize = 8;
+    let api_hits: Vec<(usize, Option<String>)> =
+        futures::stream::iter(pending.iter().cloned().map(|(i, url)| {
+            let resolver = resolver.clone();
+            async move {
+                // 2026-10-30:这一段是「真实的解析尝试」——用 TraceStage 计时,
+                // done 事件带**实测**耗时(不是写死的 0)。
+                // `try_api_video_info` 返回 Option(None = 没命中),
+                // 没命中不是错误:后面会落到第 3 段的 Drission。
+                let stage = TraceStage::without_marker(
+                    "resolver_try_done",
+                    serde_json::json!({"idx": i, "url": url}),
+                    serde_json::json!({"backend": "api", "course_item_count": total}),
+                );
+                let info = resolver.try_api_video_info(&url).await;
+                match &info {
+                    Some(_) => stage.finish(
+                        serde_json::json!({"status": "ok", "attempted": true, "backend": "api"}),
+                    ),
+                    None => stage.finish(serde_json::json!({
+                        "status": "miss",
+                        "attempted": true,
+                        "backend": "api",
+                    })),
+                }
+                (i, info.map(|info| info.url))
+            }
+        }))
+        .buffer_unordered(API_RESOLVE_CONCURRENCY)
+        .collect()
+        .await;
+
+    // API 没命中的课节 → 第 3 段串行走 Drission
+    let mut need_browser: Vec<(usize, String)> = Vec::new();
+    for (i, maybe_url) in api_hits {
+        match maybe_url {
+            Some(url) => {
+                resolved[i] = Some(url);
+                if let Some(s) = slots.get(i).as_ref() {
+                    s.set_status(CourseItemStatus::Downloading);
+                }
+            }
+            None => {
+                if let Some((_, url)) = pending.iter().find(|(idx, _)| *idx == i) {
+                    need_browser.push((i, url.clone()));
+                }
+            }
+        }
+    }
+
+    // ---- 第 3 段:Drission fallback(必须串行)----
+    // 同一个浏览器 profile 不能并发开多个 Chromium 实例(SingletonLock 冲突),
+    // 这是旧实现整段串行的根因 —— 但它只约束浏览器路径,不约束上面的 API 路径。
+    for (i, session_url) in need_browser {
+        let item = &state.items[i];
+        // 2026-10-30:Drission fallback 也是一次真实的解析尝试 —— 同样用 TraceStage 计时。
+        // 这一步最容易挂住(要开浏览器、可能被登录墙拦住),所以它的耗时最该被看见。
+        let stage = TraceStage::without_marker(
+            "resolver_try_done",
+            serde_json::json!({"idx": i, "url": session_url}),
+            serde_json::json!({"backend": "drission", "course_item_count": total}),
+        );
         match resolver.get_video_info(&session_url).await {
             Ok(info) => {
+                stage.finish(serde_json::json!({
+                    "status": "ok",
+                    "attempted": true,
+                    "backend": "drission",
+                }));
                 resolved[i] = Some(info.url);
-                if let Some(s) = slot.as_ref() {
+                if let Some(s) = slots.get(i).as_ref() {
                     s.set_status(CourseItemStatus::Downloading);
                 }
             }
             Err(e) => {
                 let norm = translate_resolve_error(&e);
-                results.push((item.id.clone(), norm));
-                if let Some(s) = slot.as_ref() {
+                stage.finish(serde_json::json!({
+                    "status": "err",
+                    "attempted": true,
+                    "backend": "drission",
+                    "err": e.to_string(),
+                }));
+                results[i] = Some((item.id.clone(), norm));
+                if let Some(s) = slots.get(i).as_ref() {
                     s.set_status(CourseItemStatus::Failed);
                 }
             }
         }
     }
-    (results, resolved)
+
+    (results.into_iter().flatten().collect(), resolved)
 }
 
 /// 把课节页 URL 拼成课节播放页（追加 resource_id=xxx）。
