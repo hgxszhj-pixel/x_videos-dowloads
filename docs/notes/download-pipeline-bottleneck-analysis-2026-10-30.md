@@ -107,7 +107,7 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 **结果顺序**：旧实现靠 `results.push()` 的执行顺序保证与 `state.items` 对齐。
 改成按下标填 + 最后展平后，顺序由数据结构保证。新测试 `resolve_results_stay_aligned_with_items` 钉住这个契约。
 
-### 2.6 解析阶段的真实耗时埋点（commit `5e98539` + 本次）
+### 2.6 解析阶段的真实耗时埋点（commit `ddae06e`）
 
 改动前**测不出**解析阶段有多慢：`trace_event("resolver_try", ..., 0, ...)` 的
 `duration_ms` 是写死的 0，而 `eval_trace.py` 的 stall 判定是 `duration_ms >= 30_000`
@@ -166,7 +166,7 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 
 仓库有 NDJSON trace 管线（`src/core/trace.rs`）+ `scripts/eval_trace.py）。
 
-**本次已经关掉的盲区**（commit `5e98539`）：
+**本次已经关掉的盲区**（commit `ddae06e`）：
 
 | 盲区 | 处置 |
 |------|------|
