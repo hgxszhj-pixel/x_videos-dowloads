@@ -1,19 +1,12 @@
 # CLAUDE.md
 
+@AGENTS.md
+
 @andrej-karpathy-skills:karpathy-guidelines
 
 ## 启动命令（任何会话开始前先确认）
 
-```bash
-cargo build                       # Debug 构建
-cargo test --bins                 # 单测（先跑这个；项目 bin-only,无 [lib]）
-cargo clippy --all-targets -- -D warnings   # lint 必过
-cargo run -- --gui                # GUI 模式
-cargo run -- "<url>"              # CLI 单 URL
-bash scripts/mutation_smoke.sh smoke        # 变异测试（防 AI 假测试）
-```
-
-> 来源: Matt Pocock `/retro` 实测 — 启动指令不清，agent 三次试才跑起来。**已验证的命令写在这里，新会话第一眼必看。**
+启动前跑 `cargo verify`（详见 [`~/.claude/skills/cargo-verify-on-startup/SKILL.md`](~/.claude/skills/cargo-verify-on-startup/SKILL.md)）。
 
 ## Commit 规则（Intent Lock）
 
