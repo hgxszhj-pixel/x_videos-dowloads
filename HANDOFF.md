@@ -4,8 +4,8 @@
 
 ## 当前状态 (2026-10-30)
 
-- **HEAD**: `d6eb0a9` docs(dna): 记录埋点版本号 + 墙钟总耗时口径 + 退出码语义 · **当前分支**: `gitbutler/workspace` (默认 PR 目标: `main`)
-- **本轮第二段(度量可信度)**: 把「换了埋点就不能比旧基线」这条**只写在文档里的规则变成机器强制** —— `TRACE_SCHEMA_VERSION` 写进每个 session 的 `extra.schema_version`,`eval_trace.py` 版本对不上 ⇒ **拒绝出判决(exit 3)**,不再报一个假的「❌ 退化」。同时修掉 `avg_total_ms` 死指标(`total_ms_proxy` 现在真埋,口径 = session_open→session_close 墙钟时间,含全部等待)+ 它的分母(用「真测到的 session 数」而非全部 session,否则把「没测到」摊成「耗时 0」)。**自事故**:差点把「current 侧没有 session」(只用 CLI 时的常态)判成版本不兼容 ⇒ **永久误报**,正是 2026-10-22 的老错误;已加豁免 + 回归用例锁住
+- **HEAD**: `ee71f9b` docs(handoff): 补本轮第二段(度量可信度)交接 · **当前分支**: `gitbutler/workspace` (默认 PR 目标: `main`)
+- **本轮第二段(度量可信度)**: 把「换了埋点就不能比旧基线」这条**只写在文档里的规则变成机器强制** —— `TRACE_SCHEMA_VERSION` 写进每个 session 的 `extra.schema_version`,`eval_trace.py` 版本对不上 ⇒ **拒绝出判决(exit 3)**,不再报假的「❌ 退化」。同时修掉 `avg_total_ms` 死指标(`total_ms_proxy` 真埋,口径 = session_open→session_close 墙钟时间,含全部等待;分母改用「真测到的 session 数」)。**自事故**:差点把「current 侧没有 session」(只用 CLI 的常态)判成版本不兼容 ⇒ **永久误报**,正是 2026-10-22 的老错误;已加豁免 + 回归用例锁住
 - **本轮主线**: 「分析影响视频产出的速度的环节在哪儿,进行改进和升级」→ 逐阶段耗时分析 + 提速落地 **3 commit**(`44dbc77` HLS / `ddae06e` trace / `10a2dc4` resolve)。下载阶段两处纯浪费:**加密 HLS 每分段重取同一把 AES key**(取 key 的 await 占着信号量 permit ⇒ 每段关键路径 2 个 RTT → 1 个 ≈ 2×)+ **分段并发 4→8**(2026-10-12 bench 已出 1.75×,代码没落地)。解析阶段是另一类问题:整段串行,25 课节 ≈ 15–20s 花在下载开始之前 ⇒ **API fast-path 并发 8 路**(「CDP 同 profile 必须串行」只约束 Drission 浏览器路径,不约束纯 HTTP 的 API 路径)+ **cookie 解密缓存 60s**(原来每课节 spawn `security` 读 Keychain 30–40ms)+ **共享 HTTP client**(原来每调用点新建连接池 = 重 TLS 握手)。配套把 trace 管线修好才测得出来:**嵌套 session 栈**(旧全局单例被内层顶掉 ⇒ batch session 被 eval 丢弃)+ **`TraceStage`**(duration 由类型内部算、调用点没这个参数 ⇒ 结构上写不死 0;旧 `resolver_try` duration 恒 0 ⇒ stall 判定对 resolver **永远不可能命中**,而 BUG-D 恰恰就是 resolver 挂住)+ CLI 侧首次埋点。**刻意没改**:HLS 合并(占全链路 1–5%,重写收益 < 2%)、临时目录(空间问题非速度问题)、Drission 浏览器复用(收益大但只是 fallback)。详见 `docs/notes/download-pipeline-bottleneck-analysis-2026-10-30.md`
 - **上一轮主线**: Anthropic《Claude Code 团队怎么做 code review》的 4 条「可选后续」全部落地 —— ① **改审查 prompt 必须先跑分**:`scripts/review_eval.py` + 3 个取自本仓真实历史缺陷的 fixture(anyhow 拍平类型 / 冒烟漏 `$` / elif 吃掉 stall),recall **1.00 (3/3)**、0 误报,接进 commit-msg 门禁(逃生舱 `[skip-review-eval]`),冒烟 11/11 且**真 prompt 变异 → 门禁 rc=1 → 还原 → rc=0**; ② **revert_rate 指标**:`scripts/revert_rate.py` 只认 git 机器信号 `This reverts commit <sha>.`(中文「回滚/回退」只进候选清单,首测关键字口径 3/3 全误报),冒烟 10/10; ③ **合并队列语义**写进 `docs/dna/review-checklist.md`(基线移动过 → Phase 1/3 必须在更新后的 main 上重跑); ④ **CI 边界补测**:5 个 Rust 文件 + 18 条新测试,**374 → 396 passed**,顺带修掉 4 个真 bug(`parse_iv` 多字节 IV panic / `is_live` 恒 false / yt-dlp `[download]100%` 无空格丢进度 / `calculate_segment_ranges` 下溢);补:逃生舱标记改为**必须独占一行**(旧实现正文里**提到**标记就静默关掉门禁,本仓自己的 commit 8009666 写「逃生舱 [skip-review-eval]」解释机制,结果被这条说明自己豁免掉 —— 实测踩中);冒烟 11/11 → **13/13**
 - **再上一轮**: exam-lookup 收编页 —— 192 条「只有题干」里 **175 条题库本来就有答案**(`solve.lookup` ≥0.86)→ 补 `_bank_lookup` + 批量划掉,待收编 **201→23**;修三处性能/渲染根因(`list_items` 全表富化 10.7s→1.4s、`ask_ctx` gram 按 mtime 缓存、`esc` 收到数字页码打挂整页);`soul.py`+`check_skill.py` 接成每日 09:00 自检 cron `7db708b9d608`;头条《Claude Code 18 个用法》→ 提示词层对照审计(18 条覆盖 ~80%,缺执行率)+ `rules/` 实测 Δ≈9.1k token/session;skill 侧 trim 119→32 保留(Δ1145 token)+ 判据层 `criteria` H1–H10;门禁审计 3 个死检测器已修(hook_smoke 18/18 · commit_gate_smoke 43/43 · skill_gate 13/13)
@@ -17,7 +17,7 @@
 
 ## Sessions 索引 (最近 → 更早)
 
-每条链接到完整 session 文件。本索引只保留**最近 27 条**(2026-10-04 起),全部 41 个文件在
+每条链接到完整 session 文件。本索引只保留**最近 27 条**(2026-10-04 起),全部 42 个文件在
 `docs/handoff/sessions/` 里按日期命名 —— 全量清单交给目录本身,不在这里再抄一份。
 
 - 2026-10-30 — [下载管线瓶颈分析 + 解析阶段提速 + trace 嵌套 session 修复(3 commit,406 passed)](docs/handoff/sessions/2026-10-30-download-pipeline-bottleneck-analysis-+-resolve-speedup-+-trace-nested-session-fix.md)
@@ -47,7 +47,6 @@
 - 2026-09-14 — [T-Mem 轻接方法论落地 + L1 commit hook 实装 (无 commit, memory + hook)](docs/handoff/sessions/2026-09-14-T-Mem-轻接方法论落地-+-L1-commit-hook-实装-无-commit-memory-.md)
 - 2026-09-14 — [SHANHU batch_video_state 0% pending 永久卡死 BUG 修复](docs/handoff/sessions/2026-09-14-SHANHU-batch_video_state-批量下载按钮-0%-pending-永久卡死-BU.md)
 - 2026-09-13 — [SHANHU GUI "Status: Fetching..." 永久卡死两层叠加 bug 修复](docs/handoff/sessions/2026-09-13-SHANHU-GUI-"Status-Fetching..."-永久卡死两层叠加-bug-修复-co.md)
-- 2026-09-06 — [SHANHU session 过期主动检测 (P1 commit `5ca9e1c`)](docs/handoff/sessions/2026-09-06-SHANHU-session-过期主动检测-P1-commit-`5ca9e1c`.md)
 
 ## Sessions Archive
 
@@ -69,7 +68,6 @@
 - **moscan 卸载两条** — owner: 用户 · blocker: 厂商脚本须 handoff + macOS 辅助功能权限未开 · next: 跑 Paragon/OrbStack/搜狗 qlgenerator 卸载脚本(备份包 `~/Desktop`);系统设置 → 隐私与安全 → 辅助功能 → 允许 moscan 后跑端到端 · touched: 2026-10-04
 - **H3 green tier 剩 6 IO-bound 文件 + planner agent tier 化** — owner: 引擎 · blocker: mock 成本高 / 待规划 · next: 等集成测试框架或抽 pure-fn 分支;下轮开 `/plan` 命令给方案 · touched: 2026-10-04
 - **3 hooks 观察期 (PreCompact mini-handoff / Stop subagent-rate / commit-msg memory-prompt)** — owner: 主对话 · blocker: 需 1-2 周 session 数据判误报率 · next: 监控 SUBAGENT_MIN_THRESHOLD=10 误报/漏报;memory_prompt INSIGHT_SIGNALS 触发率;PreCompact 在 HANDOFF.md 不存在时退化行为 · touched: 2026-10-12
-- **`avg_total_ms` 要真埋点** — owner: 引擎 · blocker: ~~需改 `src/core/trace.rs` 写 `total_ms_proxy`~~ · next: ✅ **已做**(2026-10-30 第二轮):口径 = session_open → session_close 的**墙钟经过时间**(含全部等待;不用叶子 duration 之和 —— 那会漏掉没埋点的等待,而「转圈但没速度」就是那部分);分母也修了(用「真测到该 key 的 session 数」而非全部 session)。旧基线仍无此 key ⇒ 对旧基线仍显示「⚪ 不可测」 · touched: 2026-10-30
 
 ## Open Loops — Blocked / Waiting (被外部卡住)
 
