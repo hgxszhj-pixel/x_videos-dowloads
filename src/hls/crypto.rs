@@ -73,8 +73,23 @@ pub async fn fetch_key(client: &reqwest::Client, key_url: &str) -> Result<[u8; 1
 }
 
 /// 解析 IV 字符串（0x... 格式）
+///
+/// 边界（2026-10-30 补测时发现）：
+/// - 长度检查按**字节**，而切片 `&hex[i..i+2]` 要求落在**字符边界**上 ——
+///   8 个 emoji 正好 32 字节，能过长度检查，却在 i=2 处切在字符中间 → panic。
+///   所以必须先验 ASCII 再切片。IV 来自远端 m3u8，不是可信输入。
+/// - 前缀大小写都接受（规范写 `0x`，部分源写 `0X`）；只剥**一层** ——
+///   旧实现用 `trim_start_matches` 会把 `0x0x…` 也一起剥掉。
 pub fn parse_iv(hex: &str) -> Result<[u8; 16]> {
-    let hex = hex.trim_start_matches("0x");
+    let hex = hex.trim();
+    let hex = hex
+        .strip_prefix("0x")
+        .or_else(|| hex.strip_prefix("0X"))
+        .unwrap_or(hex);
+
+    if !hex.is_ascii() {
+        return Err(anyhow!("IV must be ASCII hex chars"));
+    }
     if hex.len() != 32 {
         return Err(anyhow!("IV must be 32 hex chars (16 bytes)"));
     }
@@ -117,5 +132,45 @@ mod tests {
         let iv = parse_iv("0x12345678901234567890123456789012").unwrap();
         assert_eq!(iv[0], 0x12);
         assert_eq!(iv[1], 0x34);
+    }
+
+    /// 边界补测（2026-10-30）。
+    ///
+    /// 关键一条是**非 ASCII 不能 panic** —— IV 来自远端 m3u8，不是可信输入。
+    /// 旧实现按字节查长度（8 个 emoji = 32 字节，能过），
+    /// 却按字符切片 `&hex[i..i+2]` → 切在多字节字符中间 → panic。
+    #[test]
+    fn test_parse_iv_boundary() {
+        // 前缀大小写都接受
+        assert_eq!(
+            parse_iv("0X12345678901234567890123456789012").unwrap()[0],
+            0x12
+        );
+        // 无前缀也接受（旧行为保持）
+        assert_eq!(
+            parse_iv("12345678901234567890123456789012").unwrap()[0],
+            0x12
+        );
+        // 大写 hex 数字（32 位）
+        assert_eq!(
+            parse_iv("0xABCDEFabcdefABCDEFabcdefABCDEF12").unwrap()[0],
+            0xAB
+        );
+        // 长度不对
+        assert!(parse_iv("0x1234").is_err());
+        assert!(parse_iv("").is_err());
+        // 非法 hex
+        assert!(parse_iv("0xzzzz5678901234567890123456789012").is_err());
+
+        // 8 个 emoji 恰好 32 字节 —— 旧实现在这里 panic
+        let emoji = format!("0x{}", "😀".repeat(8));
+        assert!(
+            parse_iv(&emoji).is_err(),
+            "非 ASCII IV 必须报错而不是 panic"
+        );
+
+        // 多字节字符 + 十六进制混合，长度同样凑够 32 字节
+        let mixed = format!("0x{}abcd", "😀".repeat(7));
+        assert!(parse_iv(&mixed).is_err());
     }
 }

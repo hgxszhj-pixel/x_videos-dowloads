@@ -210,9 +210,22 @@ pub fn parse_ytdlp_progress(line: &str) -> Option<DownloadProgress> {
         return None;
     }
 
-    // 提取百分比
-    let percent_str = line.split('%').next()?.split_whitespace().last()?;
+    // 先剥掉 "[download]" 前缀 —— yt-dlp 也会写成 `[download]100%`（无空格）,
+    // 不剥的话百分号前那截是 "[download]100",parse::<f64>() 直接失败 → 整行进度丢失。
+    let payload = match line.split_once(']') {
+        Some((_, rest)) => rest,
+        None => line,
+    };
+
+    // 提取百分比。split_whitespace 本身会吃掉首尾空白,不需要先 trim。
+    let percent_str = payload.split('%').next()?.split_whitespace().last()?;
     let percent: f64 = percent_str.parse::<f64>().ok()? / 100.0;
+    // `f64::parse` 接受 "NaN"/"inf",而 `clamp` 对 NaN 返回 NaN ——
+    // 那样 percent=NaN 会一路进到 UI 进度条(NaN% 显示成乱码),
+    // 且 bytes_downloaded 与 percent 自相矛盾。非有限值一律当噪声丢掉。
+    if !percent.is_finite() {
+        return None;
+    }
 
     // 提取速度
     let speed = if let Some(speed_part) = line.split("at ").nth(1) {
@@ -230,7 +243,10 @@ pub fn parse_ytdlp_progress(line: &str) -> Option<DownloadProgress> {
         0
     };
 
-    let bytes_downloaded = (total_bytes as f64 * percent) as u64;
+    // 百分比可能 > 100%（yt-dlp 重新下载/多路合并时会报 100%+）,
+    // 不夹住会出现 bytes_downloaded > total_bytes,进度条溢出。
+    let percent = percent.clamp(0.0, 1.0);
+    let bytes_downloaded = ((total_bytes as f64 * percent).round() as u64).min(total_bytes);
 
     Some(DownloadProgress {
         task_id: "ytdlp".to_string(),
@@ -378,5 +394,56 @@ mod tests {
             extract_retry_after_from_err("HTTP 429 (retry-after: not_a_number)"),
             None
         );
+    }
+
+    /// yt-dlp 进度行解析（边界补测 2026-10-30）
+    #[test]
+    fn test_parse_ytdlp_progress_basic() {
+        let p =
+            parse_ytdlp_progress("[download]  45.2% of 100.00MiB at  2.50MiB/s ETA 00:15").unwrap();
+        assert_eq!(p.total_bytes, 100 * 1024 * 1024);
+        assert!((p.percent - 0.452).abs() < 1e-9);
+        assert!((p.speed - 2.5 * 1024.0 * 1024.0).abs() < 1e-3);
+        assert!(p.bytes_downloaded > 0 && p.bytes_downloaded < p.total_bytes);
+    }
+
+    /// yt-dlp 偶尔写成 `[download]100%`（冒号后无空格）——
+    /// 旧实现在这里百分号前那截是 "[download]100",parse 失败 → 整行进度直接丢。
+    #[test]
+    fn test_parse_ytdlp_progress_no_space_after_tag() {
+        let p = parse_ytdlp_progress("[download]100% of 10.00MiB").unwrap();
+        assert!((p.percent - 1.0).abs() < 1e-9);
+        assert_eq!(p.total_bytes, 10 * 1024 * 1024);
+        assert_eq!(p.bytes_downloaded, p.total_bytes);
+    }
+
+    #[test]
+    fn test_parse_ytdlp_progress_rejects_non_progress_lines() {
+        assert!(parse_ytdlp_progress("[download] Destination: a.mp4").is_none());
+        assert!(parse_ytdlp_progress("100% of 10.00MiB").is_none());
+        assert!(parse_ytdlp_progress("").is_none());
+    }
+
+    /// 超过 100% 的进度（yt-dlp 重新下载 / 多路合并时会报）必须夹住，
+    /// 否则 bytes_downloaded > total_bytes,进度条溢出。
+    #[test]
+    fn test_parse_ytdlp_progress_clamps_over_100_percent() {
+        let p = parse_ytdlp_progress("[download] 150.0% of 100.00MiB").unwrap();
+        assert!(p.percent <= 1.0);
+        assert!(p.bytes_downloaded <= p.total_bytes);
+    }
+
+    /// `f64::parse` 接受 "NaN"/"inf",而 `f64::clamp` 对 NaN **返回 NaN**
+    /// （不抛错、不夹住）。那样 percent=NaN 会一路进到 UI 进度条，
+    /// 且 bytes_downloaded(=0) 与 percent(=NaN) 自相矛盾。
+    /// 非有限值必须整行丢弃。
+    #[test]
+    fn test_parse_ytdlp_progress_rejects_non_finite_percent() {
+        assert!(
+            parse_ytdlp_progress("[download] NaN% of 100.00MiB").is_none(),
+            "NaN 百分比必须丢弃,不能变成 NaN 进度"
+        );
+        assert!(parse_ytdlp_progress("[download] inf% of 100.00MiB").is_none());
+        assert!(parse_ytdlp_progress("[download] -inf% of 100.00MiB").is_none());
     }
 }

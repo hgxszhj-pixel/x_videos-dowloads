@@ -47,7 +47,12 @@ impl VideoDownloader {
             let temp_path = temp_dir_path.join(format!("part_{}.tmp", i));
             let expected_offset = i as u64 * chunk_size;
             let expected_segment_size = if i == segments - 1 {
-                total_size - expected_offset
+                // saturating_sub：`(segments-1)*chunk_size > total_size` 时
+                // （例如 total=10 / segments=7 / chunk=2 → offset=12 > 10）
+                // 旧的 `total_size - expected_offset` 在 debug 构建里直接
+                // 下溢 panic。calculate_segment_ranges 那边已经夹了，
+                // 这边自己重算 offset —— 两处会漂移，所以同样夹。
+                total_size.saturating_sub(expected_offset)
             } else {
                 chunk_size
             };
@@ -120,7 +125,7 @@ impl VideoDownloader {
                         let seg_idx_u32 = segment_idx as u32;
                         let last_segment = seg_idx_u32 == total_segments - 1;
                         let denominator = if last_segment {
-                            total_size - expected_offset
+                            total_size.saturating_sub(expected_offset)
                         } else {
                             chunk_size
                         } as f64;

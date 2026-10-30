@@ -749,6 +749,34 @@ mod tests {
         assert_eq!(ranges[2], (8, 9)); // Last segment takes remainder
     }
 
+    /// 边界补测（2026-10-30）：退化输入必须**返回**而不是下溢 panic。
+    /// 调用方按 `segment_ranges[i]` 索引，所以长度必须正好是 segments。
+    #[test]
+    fn test_calculate_segment_ranges_degenerate_inputs_do_not_panic() {
+        let downloader = VideoDownloader::new().unwrap();
+        // total_size = 0 → 旧实现 `total_size - 1` 下溢 panic
+        let ranges = downloader.calculate_segment_ranges(4, 0, 25);
+        assert_eq!(ranges.len(), 4);
+        // chunk_size = 0 → 旧实现 `(i+1)*chunk_size - 1` 下溢 panic
+        let ranges = downloader.calculate_segment_ranges(4, 100, 0);
+        assert_eq!(ranges.len(), 4);
+        // segments = 0 → 空
+        let ranges = downloader.calculate_segment_ranges(0, 100, 25);
+        assert!(ranges.is_empty());
+    }
+
+    /// chunk 过大时 start 可能越过文件尾 → 下游 `end - start + 1` 下溢 panic。
+    #[test]
+    fn test_calculate_segment_ranges_never_exceeds_total_size() {
+        let downloader = VideoDownloader::new().unwrap();
+        let ranges = downloader.calculate_segment_ranges(7, 10, 2);
+        assert_eq!(ranges.len(), 7);
+        for (start, end) in &ranges {
+            assert!(start <= end, "start={} end={} 反向区间会下溢", start, end);
+            assert!(*end < 10, "end={} 越出文件尾", end);
+        }
+    }
+
     #[test]
     fn test_calculate_backoff_rate_limit() {
         // DownloadErrorType::Http(429) → 固定 60s

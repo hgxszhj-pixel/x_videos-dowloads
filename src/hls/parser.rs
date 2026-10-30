@@ -58,7 +58,10 @@ impl M3u8Parser {
         let mut version: Option<u32> = None;
         let mut target_duration: f64 = 0.0;
         let mut segments: Vec<M3u8Segment> = Vec::new();
-        let mut is_live = false;
+        // HLS 规范 (RFC 8216 §4.3.3.1): Media Playlist 不含 #EXT-X-ENDLIST 就是直播。
+        // 旧实现把 is_live 写死 false、且只在看到 ENDLIST 时再赋一次 false ——
+        // 这个字段**永远**是 false,直播流与点播流无法区分(2026-10-30 边界补测发现)。
+        let mut saw_endlist = false;
 
         // 加密状态
         let mut current_key_url: Option<String> = None;
@@ -101,7 +104,7 @@ impl M3u8Parser {
                     current_key_url = Self::extract_attribute(line, "URI");
                     current_key_iv = Self::extract_iv(line);
                 } else if line == "#EXT-X-ENDLIST" {
-                    is_live = false;
+                    saw_endlist = true;
                 }
             } else {
                 // 非注释行 = URL
@@ -119,6 +122,14 @@ impl M3u8Parser {
         }
 
         let total_duration: f64 = segments.iter().map(|s| s.duration).sum();
+        // 没有 ENDLIST 且确实有分段 = 直播。空播放列表(既无 ENDLIST 也无分段)
+        // 不自称直播 —— 一个空列表说自己是直播没有意义。
+        //
+        // 注意这是**规范下限**,不是可靠的直播/点播判别器:
+        //  - 不少点播 CDN 的 playlist 干脆不写 `#EXT-X-ENDLIST` → 会被判成直播;
+        //  - 刚开播的直播 playlist 一条分段都没有 → 这里判成「非直播」。
+        // 真要区分 VOD/live,得看 `total_duration` 是否随时间增长,或站点特征。
+        let is_live = !saw_endlist && !segments.is_empty();
 
         Ok(M3u8Playlist {
             version,
@@ -270,6 +281,77 @@ segment1.ts
             M3u8Parser::resolve_url(base, "/play/hls/x/index.m3u8"),
             "https://hn.bfvvs.com/play/hls/x/index.m3u8"
         );
+    }
+
+    /// 边界补测（2026-10-30）。
+    ///
+    /// 关键一条是 **is_live**：HLS 规范（RFC 8216 §4.3.3.1）说
+    /// 「Media Playlist 不含 #EXT-X-ENDLIST 就是直播」，旧实现把这个字段
+    /// 写死成 false —— 直播流和点播流根本区分不出来。
+    #[test]
+    fn test_parse_live_playlist_has_no_endlist() {
+        let content = "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:9.9,\nseg0.ts\n";
+        let playlist = M3u8Parser::parse(content, "https://example.com/hls/").unwrap();
+        assert!(
+            playlist.is_live,
+            "没有 #EXT-X-ENDLIST 的 Media Playlist 是直播"
+        );
+        assert_eq!(playlist.segments.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_vod_playlist_with_endlist_is_not_live() {
+        let content = "#EXTM3U\n#EXTINF:9.9,\nseg0.ts\n#EXT-X-ENDLIST\n";
+        let playlist = M3u8Parser::parse(content, "https://example.com/hls/").unwrap();
+        assert!(!playlist.is_live);
+    }
+
+    #[test]
+    fn test_parse_empty_playlist() {
+        let playlist = M3u8Parser::parse("", "https://example.com/hls/").unwrap();
+        assert!(playlist.segments.is_empty());
+        assert_eq!(playlist.total_duration, 0.0);
+        assert_eq!(playlist.version, None);
+        // 空播放列表不自称直播
+        assert!(!playlist.is_live);
+    }
+
+    #[test]
+    fn test_parse_media_sequence_offset() {
+        let content = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:5\n#EXTINF:1.0,\na.ts\n#EXTINF:1.0,\nb.ts\n";
+        let playlist = M3u8Parser::parse(content, "https://example.com/hls/").unwrap();
+        assert_eq!(playlist.segments[0].sequence, 5);
+        assert_eq!(playlist.segments[1].sequence, 6);
+    }
+
+    #[test]
+    fn test_parse_key_method_none_clears_key_for_next_segment() {
+        let content = "#EXTM3U\n\
+            #EXT-X-KEY:METHOD=AES-128,URI=\"https://example.com/k.bin\",IV=0x12345678901234567890123456789012\n\
+            #EXTINF:1.0,\nenc.ts\n\
+            #EXT-X-KEY:METHOD=NONE\n\
+            #EXTINF:1.0,\nplain.ts\n";
+        let playlist = M3u8Parser::parse(content, "https://example.com/hls/").unwrap();
+        assert!(playlist.segments[0].key_url.is_some());
+        assert!(playlist.segments[0].key_iv.is_some());
+        assert!(playlist.segments[1].key_url.is_none());
+        assert!(playlist.segments[1].key_iv.is_none());
+    }
+
+    #[test]
+    fn test_parse_base_url_without_trailing_slash() {
+        let content = "#EXTM3U\n#EXTINF:1.0,\nseg.ts\n";
+        let playlist = M3u8Parser::parse(content, "https://example.com/hls").unwrap();
+        assert_eq!(playlist.segments[0].url, "https://example.com/hls/seg.ts");
+    }
+
+    #[test]
+    fn test_parse_total_duration_uses_float_tolerance() {
+        // f64 累加有精度误差（3.3*3 = 9.900000000000001），
+        // 这里锁的是「近似等于 9.9」而不是那个具体的浮点残值。
+        let content = "#EXTM3U\n#EXTINF:3.3,\na.ts\n#EXTINF:3.3,\nb.ts\n#EXTINF:3.3,\nc.ts\n";
+        let playlist = M3u8Parser::parse(content, "https://example.com/hls/").unwrap();
+        assert!((playlist.total_duration - 9.9).abs() < 1e-9);
     }
 
     /// 回归测试:小鹅通 m3u8 含 ?sign=&t=&us= 时,段 URL 必须保留路径前缀。

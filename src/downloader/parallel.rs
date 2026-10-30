@@ -16,45 +16,55 @@ use crate::core::constants::*;
 use crate::core::segment::download_segment_with_retry;
 use crate::types::{DownloadProgress, DownloadRequest, DownloadResult, DownloadStatus};
 
-impl VideoDownloader {
-    /// 根据速度计算最佳线程数（自适应）
-    fn calculate_optimal_threads(&self, current_speed: u64, current_threads: u32) -> u32 {
-        if !self.config.adaptive_threads {
-            return current_threads;
-        }
+/// 按当前速度调整并发线程数（纯函数，便于边界测试）。
+///
+/// 语义：
+/// - 速度低于阈值 → 加一线程（上限 max）
+/// - 速度高于阈值 ×3 → 减一线程（下限 min）
+/// - 其余 → 不变
+///
+/// 与旧的内联实现**不是逐条等价**，有一处有意的差异：
+/// 旧实现直接 `current ± 1`,不夹到 `[min, max]`；本实现两个方向都夹在
+/// `[min.min(max), max]` 内。
+/// 触发路径：`recommended_segments_for_size` 用 `profile.max_threads`(8),
+/// 而 `with_website_profile` 在 `has_thread_limit` 时把 `config.max_threads`
+/// 设成 4 —— 于是 `current=8 > max=4`,旧实现会报 `active_threads=7`（超过上限）。
+/// 影响仅限显示：`active_threads` 在 `src/` 内无读取方,且 `current_threads`
+/// 从不参与分段 spawn（所有分段在 `parallel_download` 里一次性起完）。
+///
+/// 边界处理（2026-10-30 补测时发现）：
+/// - `threshold * 3` 用 `saturating_mul` —— 阈值是用户可配的 u64，
+///   配到 > u64::MAX/3 时旧代码在 debug 构建里直接 panic。
+/// - min > max（配置写反）时两个方向都夹在 [min.min(max), max] 内，
+///   不会出现「加线程分支返回比 min 还小」的值。
+///
+/// 旧版 `VideoDownloader::calculate_optimal_threads` 是**死代码**
+/// （全仓无调用点，真实逻辑内联在 `parallel_download` 的进度任务里），
+/// 已删除并由本函数取代 —— 一份实现、纯函数、可测。
+pub(crate) fn adjust_thread_count(
+    speed_bps: u64,
+    threshold: u64,
+    min: u32,
+    max: u32,
+    current: u32,
+) -> u32 {
+    let lo = min.min(max);
+    let hi = max;
 
-        let threshold = self.config.speed_threshold_bps;
-        let min = self.config.min_threads;
-        let max = self.config.max_threads;
-
-        // 速度过低，增加线程
-        if current_speed < threshold && current_threads < max {
-            let new_threads = (current_threads + 1).min(max);
-            info!(
-                "速度过低 ({:.1} KB/s < {:.1} KB/s)，增加线程: {} -> {}",
-                current_speed as f64 / 1024.0,
-                threshold as f64 / 1024.0,
-                current_threads,
-                new_threads
-            );
-            return new_threads;
-        }
-
-        // 速度很好，尝试减少线程（更省资源）
-        if current_speed > threshold * 3 && current_threads > min {
-            let new_threads = (current_threads - 1).max(min);
-            info!(
-                "速度良好 ({:.1} KB/s)，减少线程: {} -> {}",
-                current_speed as f64 / 1024.0,
-                current_threads,
-                new_threads
-            );
-            return new_threads;
-        }
-
-        current_threads
+    // 速度过低，增加线程
+    if speed_bps < threshold && current < hi {
+        return (current + 1).min(hi).max(lo);
     }
 
+    // 速度很好，尝试减少线程（更省资源）
+    if speed_bps > threshold.saturating_mul(3) && current > lo {
+        return (current - 1).max(lo).min(hi);
+    }
+
+    current
+}
+
+impl VideoDownloader {
     /// 计算分段范围
     pub(super) fn calculate_segment_ranges(
         &self,
@@ -62,15 +72,30 @@ impl VideoDownloader {
         total_size: u64,
         chunk_size: u64,
     ) -> Vec<(u64, u64)> {
+        if segments == 0 {
+            return Vec::new();
+        }
+        // 退化输入（没有内容可切）：返回 segments 个空区间而不是下溢 panic。
+        // 调用方按 `segment_ranges[i]` 索引，**长度必须正好是 segments**。
+        if total_size == 0 || chunk_size == 0 {
+            return vec![(0, 0); segments as usize];
+        }
+
+        let last = total_size - 1;
         (0..segments)
             .map(|i| {
-                let start = i as u64 * chunk_size;
+                // chunk 过大时 start 可能越过文件尾
+                //（例如 total=10, segments=7, chunk=2 → start=12 > 9），
+                // 夹到 last，否则下游 `end - start + 1` 会下溢。
+                let start = (i as u64 * chunk_size).min(last);
                 let end = if i == segments - 1 {
-                    total_size - 1
+                    last
                 } else {
-                    (i + 1) as u64 * chunk_size - 1
+                    ((i + 1) as u64 * chunk_size - 1).min(last)
                 };
-                (start, end)
+                // 保证 start <= end：下游按 `end - start + 1` 算长度，
+                // 反向区间会下溢 panic。
+                (start, end.max(start))
             })
             .collect()
     }
@@ -192,11 +217,13 @@ impl VideoDownloader {
                 // 动态计算推荐线程数
                 if adaptive {
                     let speed_bps = speed as u64;
-                    if speed_bps < speed_threshold && current_threads < max_threads {
-                        current_threads = (current_threads + 1).min(max_threads);
-                    } else if speed_bps > speed_threshold * 3 && current_threads > min_threads {
-                        current_threads = (current_threads - 1).max(min_threads);
-                    }
+                    current_threads = adjust_thread_count(
+                        speed_bps,
+                        speed_threshold,
+                        min_threads,
+                        max_threads,
+                        current_threads,
+                    );
                 }
 
                 let mut progress = progress_clone.lock().await;
@@ -262,8 +289,11 @@ impl VideoDownloader {
 
         // 等待所有分段下载完成
         let mut success_count = 0u32;
-        // 使用固定大小数组避免每次分配 Vec（max_threads=8）
-        let mut segment_sizes = [0u64; 8];
+        // 用 Vec 而不是固定 [u64; 8]：这个数组按 `segment_sizes[i]`（i < segments）
+        // 索引，固定 8 元素只是靠「segments ≤ 8」这个隐含前提才不越界。
+        // 一旦某个网站特征把 max_threads 提到 >8，这里会**越界 panic**。
+        // 长度按 segments 分配 → 与 calculate_segment_ranges 的契约一致。
+        let mut segment_sizes = vec![0u64; segments as usize];
         for (i, handle) in handles.into_iter().enumerate() {
             match handle.await {
                 Ok(Ok(size)) => {
@@ -401,5 +431,65 @@ impl VideoDownloader {
 
         let elapsed = start_time.elapsed().as_secs_f64();
         Ok(DownloadResult::success(output_path, total_size, elapsed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adjust_thread_count;
+
+    #[test]
+    fn test_adjust_thread_count_slow_adds_one() {
+        // 速度低于阈值 → 加一线程
+        assert_eq!(adjust_thread_count(1_000, 10_000, 2, 8, 4), 5);
+        // 已到上限 → 不动
+        assert_eq!(adjust_thread_count(1_000, 10_000, 2, 8, 8), 8);
+    }
+
+    #[test]
+    fn test_adjust_thread_count_fast_removes_one() {
+        // 速度高于阈值×3 → 减一线程
+        assert_eq!(adjust_thread_count(50_000, 10_000, 2, 8, 4), 3);
+        // 已到下限 → 不动
+        assert_eq!(adjust_thread_count(50_000, 10_000, 2, 8, 2), 2);
+    }
+
+    #[test]
+    fn test_adjust_thread_count_middle_band_unchanged() {
+        // 阈值到阈值×3 之间 → 不动
+        assert_eq!(adjust_thread_count(10_000, 10_000, 2, 8, 4), 4);
+        assert_eq!(adjust_thread_count(30_000, 10_000, 2, 8, 4), 4);
+    }
+
+    /// 阈值是用户可配的 u64 —— 配成 u64::MAX 时旧代码的 `threshold * 3`
+    /// 在 debug 构建里直接溢出 panic。
+    #[test]
+    fn test_adjust_thread_count_threshold_overflow_does_not_panic() {
+        assert_eq!(adjust_thread_count(u64::MAX, u64::MAX, 2, 8, 4), 4);
+        assert_eq!(adjust_thread_count(0, u64::MAX, 2, 8, 4), 5);
+    }
+
+    /// 配置写反（min > max）时两个方向都不能越界。
+    ///
+    /// **这条用例必须能红**：旧的内联实现只做 `(current ± 1)`、不夹到
+    /// `[min, max]` —— `current=10` 且 min=8/max=2 时旧实现返回 9（越界），
+    /// 新实现返回 2。
+    /// 用 `current=8` 的话旧实现根本进不了减线程分支（`current > min` 为假），
+    /// 断言会「假绿」—— 这就是「已 codified」≠「有效」。
+    #[test]
+    fn test_adjust_thread_count_min_greater_than_max() {
+        let slow = adjust_thread_count(1_000, 10_000, 8, 2, 1);
+        assert!((2..=8).contains(&slow), "got {}", slow);
+        // 减线程方向：旧实现返回 9（越界），新实现夹回 2
+        let fast = adjust_thread_count(50_000, 10_000, 8, 2, 10);
+        assert_eq!(fast, 2, "must be clamped into [min.min(max), max]");
+    }
+
+    /// 真实触发路径：`recommended_segments_for_size` 用 `profile.max_threads`(8)，
+    /// 而 `with_website_profile` 在 `has_thread_limit` 时把 `config.max_threads`
+    /// 设成 4。旧实现会报 7（超过上限），新实现报 4。
+    #[test]
+    fn test_adjust_thread_count_clamps_to_effective_max() {
+        assert_eq!(adjust_thread_count(50_000, 10_000, 2, 4, 8), 4);
     }
 }
