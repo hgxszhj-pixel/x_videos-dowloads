@@ -34,7 +34,44 @@ from typing import Optional
 
 
 STALL_THRESHOLD_MS = 30_000  # 与 eval_trace.py 对齐
-CORE_STEPS = frozenset({"resolver_try", "fetch_video_info", "download_one"})
+
+# 参与 stall 判定的叶子步骤 —— **必须与 eval_trace.py 的 STALL_ELIGIBLE_STEPS 一致**。
+#
+# 这里刻意不 import eval_trace(本脚本的契约是「不读 eval_trace.py」,保持独立可跑),
+# 代价是两份定义需要同步。改一边就要改另一边。
+#
+# 为什么必须对齐:2026-10-30 新增了聚合事件 `cli_download_run_done`
+# (整次 CLI 运行的耗时)和 `cli_resolve_done`(整个解析阶段的耗时)。
+# 本脚本原来的 stall 判定是「任何 duration ≥ 阈值的事件都算」——
+# 那样任何一次真实下载(必然 > 30s)都会算成 stall,robust 分数被凭空压低,
+# 制造出「版本变慢」的假信号。对齐到叶子白名单后,聚合事件不再计入。
+STALL_ELIGIBLE_STEPS = frozenset(
+    {
+        "resolver_try",  # 兼容旧 trace(新埋点里是 marker,duration 恒 0)
+        "resolver_try_done",  # GUI:单次解析尝试
+        "cli_resolve_attempt_done",  # CLI:单个后端尝试
+        "download_one",  # GUI:单个课节下载
+        "fetch_video_info",  # GUI:单个课节信息获取
+    }
+)
+
+# 「核心事件」判定用:命中任意一个即认为结构里有实质内容。
+# 2026-10-30 补齐 CLI 侧的步骤 —— 否则 CLI session(只有 cli_resolve / cli_download_run)
+# 会被判成「结构缺 1 项」,readable 分数白丢一档。
+CORE_STEPS = frozenset(
+    {
+        "resolver_try",
+        "resolver_try_done",
+        "fetch_video_info",
+        "download_one",
+        "cli_resolve",
+        "cli_resolve_done",
+        "cli_resolve_attempt",
+        "cli_resolve_attempt_done",
+        "cli_download_run",
+        "cli_download_run_done",
+    }
+)
 
 
 def heuristic_judge(events: list[dict]) -> dict:
@@ -45,8 +82,12 @@ def heuristic_judge(events: list[dict]) -> dict:
     has_core = any(s in CORE_STEPS for s in steps)
 
     resolver_tries = sum(1 for s in steps if s == "resolver_try")
+    # stall 只看叶子步骤(与 eval_trace.py 对齐,理由见 STALL_ELIGIBLE_STEPS 注释)
     stall_count = sum(
-        1 for ev in events if (ev.get("duration_ms", 0) or 0) >= STALL_THRESHOLD_MS
+        1
+        for ev in events
+        if ev.get("step", "") in STALL_ELIGIBLE_STEPS
+        and (ev.get("duration_ms", 0) or 0) >= STALL_THRESHOLD_MS
     )
 
     # efficiency: resolver 链长度

@@ -35,6 +35,7 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::cli::Cli;
 use crate::config::AppConfig;
+use crate::core::trace::{trace_session_open_guarded, TraceStage};
 
 fn main() {
     // 设置语言环境，避免 ICU4X 日语分词模型错误
@@ -250,11 +251,35 @@ fn main() {
         .enable_time()
         .build()
         .expect("tokio runtime 创建失败");
-    runtime
-        .block_on(commands::download::run(cli, config))
-        .unwrap_or_else(|e| {
-            error!("错误: {}", e);
-        });
+
+    // 2026-10-30:CLI 下载此前**零** trace 事件 → CLI 下载对 trace/eval 管线完全不可见
+    // (GUI 有 fetch_video_info / resolver_try / download_one,CLI 一条都没有)。
+    // 现在 CLI 也有自己的 session 文件 + 分阶段耗时:
+    //   · `cli_download_run`       —— 整个下载流程的开始标记
+    //   · `cli_download_run_done`  —— 整个下载流程的总耗时(实测,**聚合值**)
+    //   · `cli_resolve*`           —— 解析阶段(见 resolver_chain.rs)
+    // 叶子阶段的耗时(manifest / segments / merge)在 src/commands/download/** 与
+    // src/downloader/** —— 那两个目录归别的 agent 管,本轮不碰(已上报)。
+    let session = runtime.block_on(trace_session_open_guarded("cli-download"));
+    let run_stage = TraceStage::start(
+        "cli_download_run",
+        serde_json::json!({
+            "url": cli.url.clone(),
+            "batch": cli.batch.is_some(),
+        }),
+        serde_json::json!({}),
+    );
+    let run_result = runtime.block_on(commands::download::run(cli, config));
+    match &run_result {
+        Ok(_) => run_stage.finish(serde_json::json!({"status": "ok"})),
+        Err(e) => run_stage.finish(serde_json::json!({"status": "err", "err": e.to_string()})),
+    }
+    // session_close 写进 **CLI session 自己的**文件(嵌套 session 修复后按 id 写回)。
+    let cli_status = if run_result.is_ok() { "ok" } else { "err" };
+    runtime.block_on(session.close(serde_json::json!({"status": cli_status})));
+    run_result.unwrap_or_else(|e| {
+        error!("错误: {}", e);
+    });
     std::process::exit(0);
 }
 

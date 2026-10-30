@@ -13,9 +13,39 @@
 | 指标 | 类型 | 计算 | 含义 |
 |------|------|------|------|
 | `success_rate` | float 0.0-1.0 | `ok_sessions / total_sessions` | session_close.output.status == "ok" 的占比 |
-| `avg_total_ms` | int | `Σ(session_close.duration_ms_proxy) / N` | session_close 到 fetch_video_info 之间的总耗时(秒级) |
+| `avg_total_ms` | int | `Σ(session_close.total_ms_proxy) / N` | ⚠️ **死指标**:`total_ms_proxy` 在整个 `src/` 里一次都没被写过 ⇒ 恒为 0 ⇒ 报「⚪ 不可测」 |
 | `resolver_chain_length` | float | `Σ(resolver_try events) / N` | 平均每个 session 串行 resolver 多少次(BUG-D 卡死点) |
-| `stall_count` | int | `Σ(events where step in {resolver_try,download_one} and duration_ms ≥ 30000)` | stall ≥ 30s 的事件总数(BUG-E / BUG-D 都触发) |
+| `stall_count` | int | `Σ(events where step ∈ STALL_ELIGIBLE_STEPS and duration_ms ≥ 30000)` | stall ≥ 30s 的**叶子**事件总数(BUG-E / BUG-D 都触发) |
+
+### `stall_count` 的 step 白名单(2026-10-30 起)
+
+```python
+STALL_ELIGIBLE_STEPS = frozenset({
+    "resolver_try",              # 兼容旧 trace(新埋点里是 marker,duration 恒 0)
+    "resolver_try_done",         # GUI:单次解析尝试(新)
+    "cli_resolve_attempt_done",  # CLI:单个后端尝试(新)
+    "download_one",              # GUI:单个课节下载
+    "fetch_video_info",          # GUI:单个课节信息获取
+})
+AGGREGATE_STEPS = frozenset({"cli_resolve_done", "cli_download_run_done"})  # 明确**不**参与
+```
+
+**为什么是白名单而不是「任何 ≥30s 的事件都算」**:聚合步骤覆盖了叶子步骤的时间区间。
+同一次慢解析会同时命中 `cli_resolve_attempt_done`(叶子,60s)和 `cli_resolve_done`(聚合,60s),
+两个都计 = 同一段墙钟耗时被数两遍 ⇒ `stall_count` 虚高,发版对比会把
+「测得更准」误判成「性能退化」。
+
+**指标口径不变**:`resolver_chain_length` 仍然只按 `resolver_try` 事件数算。
+新埋点多了 `resolver_try_done` 事件,但它**不**进链长指标 ——
+否则同一个指标名会同时表示「课节数」和「尝试数」,已锁基线直接失效。
+
+### ⚠️ 换埋点后必须重新锁基线
+
+2026-10-30 之前,`resolver_try` 的 duration 是写死的 0 ⇒ resolver 阶段**永远**不可能
+被判成 stall。埋点修好后,同样的运行会**多出** `resolver_try_done` 带来的 stall。
+
+⇒ **基线与 current 必须来自同一套埋点版本**,否则 `stall_count` 的 delta 是
+「测得更准」而不是「性能变差」。重锁:`bash scripts/install_perf_baseline.sh`。
 
 ### 指标来源(NDJSON 5 元组)
 
@@ -23,8 +53,11 @@
 // 一次 session_close
 {"step":"session_close","output":{"status":"ok","total_steps":5}}
 
-// 一次 resolver_try(在 resolve_items_serially 内)
-{"step":"resolver_try","input":{"idx":2,"title":"..."},"duration_ms":0}
+// 一次 resolver_try(在 resolve_items_serially 内)—— **开始标记**,duration 恒 0
+{"step":"resolver_try","input":{"idx":2,"title":"..."},"output":{"phase":"start"},"duration_ms":0}
+
+// 一次 resolver_try_done(同一次尝试的**真实耗时**)← stall 判定看它
+{"step":"resolver_try_done","input":{"idx":2,"url":"..."},"output":{"status":"ok","attempted":true,"backend":"api"},"duration_ms":31500,"extra":{"backend":"api","course_item_count":29}}
 
 // 一次 download_one(TraceStep RAII drop)
 {"step":"download_one","input":{"title":"..."},"duration_ms":31500}  ← stall ≥ 30s
@@ -102,6 +135,8 @@ python3 scripts/eval_trace.py --baseline traces/2026-09-14/ --current traces/202
 |------|------|---------|
 | `success_rate = (total - ok) / total`(倒置) | `scripts/eval_trace.py:120` | `test_single_session_ok_metrics` 断言 `== 1.0` + `test_improvement_all_metrics` / `test_regression_success_rate_drops` 判定方向 |
 | `verdict = "✅" if delta > 0 else "❌"`(lower_is_better 方向反) | `scripts/eval_trace.py:144` | `test_improvement_all_metrics` 断言 `resolver_chain_length` ✅ |
+| **2026-10-30** stall 白名单退回旧的硬编码三元组(不含 `resolver_try_done` / `cli_resolve_attempt_done`) | `scripts/eval_trace.py` stall 判定 | `test_resolver_try_done_stall_counted` + `test_cli_resolve_attempt_done_stall_counted` + `test_leaf_and_aggregate_not_double_counted`(实跑:旧代码 4 条红) |
+| **2026-10-30** 把聚合步骤也塞进 stall 白名单 | `scripts/eval_trace.py` `STALL_ELIGIBLE_STEPS` | `test_aggregate_steps_not_counted_as_stall` + `test_step_sets_are_disjoint` |
 
 复跑命令(Python 端 `mutation_smoke.sh` 不覆盖,手测;**必须先清 `__pycache__`** 否则 revert 后 pytest 跑旧字节码):
 

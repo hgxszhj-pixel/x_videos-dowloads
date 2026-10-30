@@ -450,8 +450,22 @@ pub(super) async fn batch_download_impl(
 
     let success_count = results.iter().filter(|r| r.2).count();
     info!("批量下载完成: {}/{} 成功", success_count, total);
+    // 2026-10-30:status 从 "done" 改成 "ok"/"err"。
+    //
+    // 为什么必须改:嵌套 session 修复后,batch session **保住自己的文件**
+    // (旧实现它的 session_close 落进 item 的文件、自己只剩 session_open
+    //  → eval_trace 判「有 open 无 close」→ 整个 batch session 被丢弃)。
+    // 现在它进了指标分母,而 `eval_trace.py` 判成功只看 `status == "ok"` ——
+    // 沿用 "done" 会让**每一个** batch session 都被记成失败,success_rate 直接塌。
+    // 语义映射:全部成功 → "ok";有任何一项失败 → "err"(部分失败不是成功)。
+    // 原始计数(total / success)仍在 output 里,不影响任何既有指标口径。
+    let batch_status = if success_count == total { "ok" } else { "err" };
     session
-        .close(serde_json::json!({"status": "done", "total": total, "success": success_count}))
+        .close(serde_json::json!({
+            "status": batch_status,
+            "total": total,
+            "success": success_count,
+        }))
         .await;
     results
 }

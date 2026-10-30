@@ -11,6 +11,9 @@ eval_trace.py — Trace-Driven Eval (本地 NDJSON baseline vs current 对比)
   3. resolver_chain_length — 平均每次 session 串行 resolver 多少次
   4. stall_count         — duration ≥ 30s 的 stall 事件总数
 
+stall 判定只看**叶子步骤**(STALL_ELIGIBLE_STEPS):聚合步骤不参与,
+否则同一次慢解析会被叶子 + 聚合各数一遍,stall_count 虚高。
+
 用法:
   python3 scripts/eval_trace.py \\
       --baseline traces/2026-09-14-baseline/ \\
@@ -33,6 +36,44 @@ from typing import Optional
 
 
 STALL_THRESHOLD_MS = 30_000  # ≥ 30s 算 stall(BUG-D / BUG-E 经验值)
+
+# 参与 stall 判定的 step 白名单 —— **只放叶子步骤**。
+#
+# 为什么要白名单而不是「任何 duration ≥ 阈值的事件都算」:
+# 聚合步骤(`cli_resolve_done` = 整个解析阶段、`cli_download_run_done` = 整次 CLI
+# 下载)覆盖了叶子步骤的时间区间。同一次慢解析会同时命中
+# `cli_resolve_attempt_done`(叶子,60s)和 `cli_resolve_done`(聚合,60s),
+# 计两次 stall = 同一次墙钟耗时被数了两遍 —— stall_count 会虚高,
+# 发版对比时把「测得更准」误判成「性能退化」。
+#
+# 2026-10-30 新增的叶子步骤:
+#   · resolver_try_done        —— GUI 侧单次解析尝试(API / Drission),真实耗时
+#   · cli_resolve_attempt_done —— CLI 侧单个后端尝试(fxtwitter/ytdlp/registry/…),真实耗时
+# 旧步骤保留在白名单里是为了兼容**历史 trace 文件**(旧文件的 `resolver_try`
+# 可能带真实耗时);新埋点的 `resolver_try` 是开始标记(duration 恒 0),永远命不中。
+STALL_ELIGIBLE_STEPS = frozenset(
+    {
+        "resolver_try",  # 兼容旧 trace(新埋点里是 marker,duration 恒 0)
+        "resolver_try_done",  # GUI:单次解析尝试(新)
+        "cli_resolve_attempt_done",  # CLI:单个后端尝试(新)
+        "download_one",  # GUI:单个课节下载
+        "fetch_video_info",  # GUI:单个课节信息获取
+    }
+)
+
+# 聚合步骤 —— 明确**不**参与 stall 判定(理由见 STALL_ELIGIBLE_STEPS 注释)。
+# 列出它们是为了让「为什么这个 step 不算 stall」在代码里可查,而不是靠读者猜。
+#
+# marker 半边(`cli_resolve` / `cli_download_run`)也列进来:它们的 duration 恒 0,
+# 本来就命不中阈值,列出来是为了让「一个聚合 stage = marker + done」的对应关系可查。
+AGGREGATE_STEPS = frozenset(
+    {
+        "cli_resolve",  # CLI 解析阶段开始(marker,duration 恒 0)
+        "cli_resolve_done",  # CLI 解析阶段总计
+        "cli_download_run",  # CLI 整次运行开始(marker,duration 恒 0)
+        "cli_download_run_done",  # CLI 整次运行总计
+    }
+)
 
 
 @dataclass
@@ -127,8 +168,13 @@ class Metrics:
                         # fetch_video_info 同样的 stall 能被抓到。
                         # 讽刺的是 resolver_try 恰恰是最容易 stall 的那一步
                         # (BUG-D 就是串行 resolver 链把会话挂住),它却是唯一被漏掉的。
+                        #
+                        # 2026-10-30: 旧 `resolver_try` 的 duration 是**写死的 0**
+                        # (它只是个开始标记),所以哪怕把它加进白名单也永远不会命中。
+                        # 真正的耗时由新埋点 `resolver_try_done` / `cli_resolve_attempt_done`
+                        # 携带,这两个叶子步骤已加入 STALL_ELIGIBLE_STEPS。
                         if (
-                            step in ("resolver_try", "download_one", "fetch_video_info")
+                            step in STALL_ELIGIBLE_STEPS
                             and duration_ms >= STALL_THRESHOLD_MS
                         ):
                             session_stall += 1

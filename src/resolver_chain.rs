@@ -9,6 +9,7 @@ use tracing::info;
 
 use crate::cli::Cli;
 use crate::config::AppConfig;
+use crate::core::trace::TraceStage;
 use crate::fxtwitter::FxTwitterResolver;
 use crate::platform::{
     BilibiliResolver, DouYinResolver, NnyyResolver, ResolverError, ResolverRegistry,
@@ -95,7 +96,74 @@ pub fn is_x_com_url(url: &str) -> bool {
 }
 
 /// 获取视频信息（使用 ResolverRegistry 统一调度）
+///
+/// 2026-10-30:CLI 路径此前**零** trace 事件 —— CLI 下载对 trace/eval 管线完全不可见
+/// (GUI 有 `fetch_video_info` / `resolver_try` / `download_one`,CLI 什么都没有)。
+/// 现在:
+///   · `cli_resolve`       —— 解析阶段开始标记
+///   · `cli_resolve_done`  —— 解析阶段总耗时(**实测**,聚合值)
+///   · `cli_resolve_attempt`       —— 单个后端尝试的开始标记
+///   · `cli_resolve_attempt_done`  —— 单个后端尝试的耗时(**实测**,叶子值,stall 判定看它)
+///
+/// 聚合值(`cli_resolve_done`)与叶子值(`cli_resolve_attempt_done`)分开:
+/// `eval_trace.py` 的 stall 判定只看叶子步骤,避免同一次慢解析被计两次 stall。
 pub async fn get_video_info(
+    ytdlp: &YtDlp,
+    url: &str,
+    cli: &Cli,
+    config: &AppConfig,
+) -> Result<VideoInfo> {
+    let total_stage = TraceStage::start(
+        "cli_resolve",
+        serde_json::json!({"url": url}),
+        serde_json::json!({"x_com": is_x_com_url(url)}),
+    );
+    let result = get_video_info_inner(ytdlp, url, cli, config).await;
+    match &result {
+        Ok(info) => total_stage.finish(serde_json::json!({
+            "status": "ok",
+            "title_len": info.title.len(),
+        })),
+        Err(e) => total_stage.finish(serde_json::json!({
+            "status": "err",
+            "err": e.to_string(),
+        })),
+    }
+    result
+}
+
+/// 计时一次 resolver 尝试:写 `cli_resolve_attempt` 开始标记 +
+/// `cli_resolve_attempt_done`(带**真实**耗时)。
+///
+/// 耗时由 `TraceStage` 内部用 `Instant` 计算 —— 调用点没有 duration 参数,
+/// 结构上就写不死 0(旧代码 GUI 侧正是这么把 resolver 的耗时抹掉的)。
+async fn timed_resolve_attempt<T, E>(
+    backend: &str,
+    url: &str,
+    fut: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, E>
+where
+    E: std::fmt::Display,
+{
+    let stage = TraceStage::start(
+        "cli_resolve_attempt",
+        serde_json::json!({"url": url}),
+        serde_json::json!({"backend": backend}),
+    );
+    let out = fut.await;
+    match &out {
+        Ok(_) => stage.finish(serde_json::json!({"status": "ok", "backend": backend})),
+        Err(e) => stage.finish(serde_json::json!({
+            "status": "err",
+            "backend": backend,
+            "err": e.to_string(),
+        })),
+    }
+    out
+}
+
+/// `get_video_info` 的真正实现(外层 [`get_video_info`] 负责计时埋点)。
+async fn get_video_info_inner(
     ytdlp: &YtDlp,
     url: &str,
     cli: &Cli,
@@ -112,14 +180,17 @@ pub async fn get_video_info(
             FxTwitterResolver::new()
         };
 
-        if let Ok(info) = fxtwitter.get_video_info(url).await {
+        if let Ok(info) =
+            timed_resolve_attempt("fxtwitter", url, fxtwitter.get_video_info(url)).await
+        {
             info!("FxTwitter 解析成功!");
             return Ok(info);
         }
         info!("FxTwitter 解析失败，尝试 yt-dlp...");
 
         // 2. yt-dlp fallback
-        return fetch_with_ytdlp(ytdlp, url, cli, config).await;
+        return timed_resolve_attempt("ytdlp", url, fetch_with_ytdlp(ytdlp, url, cli, config))
+            .await;
     }
 
     // 其他平台: ResolverRegistry > yt-dlp > FxTwitter > Scrapling
@@ -130,7 +201,7 @@ pub async fn get_video_info(
     info!("使用解析器: {:?}", resolver.platform());
 
     // 尝试解析器
-    match resolver.get_video_info(url).await {
+    match timed_resolve_attempt("registry", url, resolver.get_video_info(url)).await {
         Ok(info) => {
             info!("Resolver 解析成功!");
             return Ok(info);
@@ -156,7 +227,9 @@ pub async fn get_video_info(
     }
 
     // yt-dlp fallback
-    if let Ok(info) = fetch_with_ytdlp(ytdlp, url, cli, config).await {
+    if let Ok(info) =
+        timed_resolve_attempt("ytdlp", url, fetch_with_ytdlp(ytdlp, url, cli, config)).await
+    {
         return Ok(info);
     }
     info!("yt-dlp 也失败，尝试 FxTwitter...");
@@ -168,7 +241,7 @@ pub async fn get_video_info(
         FxTwitterResolver::new()
     };
 
-    if let Ok(info) = fxtwitter.get_video_info(url).await {
+    if let Ok(info) = timed_resolve_attempt("fxtwitter", url, fxtwitter.get_video_info(url)).await {
         info!("FxTwitter 解析成功!");
         return Ok(info);
     }
@@ -176,7 +249,8 @@ pub async fn get_video_info(
 
     // Scrapling 最后尝试
     if let Ok(client) = crate::scrapling_client::ScraplingClient::new() {
-        if let Ok(info) = client.get_video_info(url).await {
+        if let Ok(info) = timed_resolve_attempt("scrapling", url, client.get_video_info(url)).await
+        {
             info!("Scrapling 解析成功!");
             return Ok(info);
         }

@@ -25,7 +25,15 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from eval_trace import Metrics, compare, format_report, has_regression, STALL_THRESHOLD_MS  # noqa: E402
+from eval_trace import (  # noqa: E402
+    AGGREGATE_STEPS,
+    Metrics,
+    STALL_ELIGIBLE_STEPS,
+    STALL_THRESHOLD_MS,
+    compare,
+    format_report,
+    has_regression,
+)
 
 
 def write_ndjson(path: Path, events: list[dict]) -> None:
@@ -236,6 +244,164 @@ class TestStallDetection(unittest.TestCase):
             )
             m = Metrics.from_dir(tmp_path)
             self.assertEqual(m.stall_count, 0)
+
+
+class TestNewStepStallEligibility(unittest.TestCase):
+    """Case 7(2026-10-30): 新增叶子步骤必须能计成 stall,聚合步骤必须**不**计。
+
+    这组 case 是「eval 侧改动是否真的生效」的牙齿证明:
+    旧 eval_trace.py 的白名单是硬编码三元组
+    `("resolver_try", "download_one", "fetch_video_info")`,
+    所以下面前两条在旧代码上必然 stall_count == 0 → 必红。
+    """
+
+    def test_resolver_try_done_stall_counted(self):
+        """GUI 单次解析尝试卡住 ≥30s → 必须被计成 stall(BUG-D 那一步)。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session(
+                    "s1",
+                    status="ok",
+                    stall_steps=(("resolver_try_done", 99_000),),
+                ),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 1)
+
+    def test_cli_resolve_attempt_done_stall_counted(self):
+        """CLI 单个后端尝试卡住 ≥30s → 必须被计成 stall。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session(
+                    "s1",
+                    status="ok",
+                    stall_steps=(("cli_resolve_attempt_done", 45_000),),
+                ),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 1)
+
+    def test_legacy_resolver_try_with_real_duration_still_counted(self):
+        """旧 trace 文件里 resolver_try 可能带真实耗时 → 必须仍然命中(向后兼容)。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session(
+                    "s1",
+                    status="ok",
+                    stall_steps=(("resolver_try", 99_000),),
+                ),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 1)
+
+    def test_aggregate_steps_not_counted_as_stall(self):
+        """聚合步骤(cli_resolve_done / cli_download_run_done)不算 stall —— 防重复计数。
+
+        同一次慢解析会同时命中叶子(`cli_resolve_attempt_done`)和聚合
+        (`cli_resolve_done`);两者都计 = 同一段墙钟耗时被数两遍。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session(
+                    "s1",
+                    status="ok",
+                    stall_steps=(
+                        ("cli_resolve_done", 60_000),
+                        ("cli_download_run_done", 600_000),
+                    ),
+                ),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 0)
+
+    def test_leaf_and_aggregate_not_double_counted(self):
+        """一次慢解析 = 1 次 stall(叶子),不是 2 次(叶子+聚合)。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session(
+                    "s1",
+                    status="ok",
+                    stall_steps=(
+                        ("cli_resolve_attempt_done", 60_000),
+                        ("cli_resolve_done", 60_000),
+                    ),
+                ),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 1)
+
+    def test_new_steps_do_not_change_resolver_chain_length(self):
+        """指标口径不变:`resolver_chain_length` 仍只按 `resolver_try` 事件数算。
+
+        新埋点多了 `resolver_try_done` 事件,但**不能**让它进入链长指标 ——
+        否则同一个指标名会同时表示「课节数」和「尝试数」,基线直接失效。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session(
+                    "s1",
+                    status="ok",
+                    resolver_count=3,
+                    stall_steps=(("resolver_try_done", 99_000),),
+                ),
+            )
+            m = Metrics.from_dir(tmp_path)
+            # 3 个 resolver_try marker / 1 个 session = 3.0(done 事件不参与)
+            self.assertEqual(m.resolver_chain_length, 3.0)
+
+    def test_step_sets_are_disjoint(self):
+        """白名单与聚合名单不得重叠 —— 重叠就意味着某个 step 又被算了两次。"""
+        self.assertEqual(STALL_ELIGIBLE_STEPS & AGGREGATE_STEPS, frozenset())
+
+    def test_new_leaf_steps_registered(self):
+        """两个新叶子步骤必须在白名单里(防止以后有人误删)。"""
+        self.assertIn("resolver_try_done", STALL_ELIGIBLE_STEPS)
+        self.assertIn("cli_resolve_attempt_done", STALL_ELIGIBLE_STEPS)
+
+
+class TestWhitelistSync(unittest.TestCase):
+    """Case 8(2026-10-30):两个脚本的 stall 白名单必须一致。
+
+    `heuristic_judge_trace.py` 的契约是「不读 eval_trace.py」(保持独立可跑),
+    代价是白名单有**两份定义**。忘了同步 ⇒ 同一份 trace 在两个工具里结论不同
+    (eval 说 stall=1,heuristic 说 stall=0),而且没人会发现。
+
+    变异:从 heuristic_judge_trace.py 的白名单里删掉 `resolver_try_done`
+         → 本 case 必红。
+    """
+
+    def test_heuristic_judge_stall_whitelist_matches_eval(self):
+        import heuristic_judge_trace
+
+        self.assertEqual(
+            heuristic_judge_trace.STALL_ELIGIBLE_STEPS,
+            STALL_ELIGIBLE_STEPS,
+            "heuristic_judge_trace.py 与 eval_trace.py 的 stall 白名单必须一致",
+        )
+
+    def test_aggregate_markers_not_stall_eligible(self):
+        """marker(step = `<stage>`)永远不该进 stall 白名单。
+
+        聚合 stage 的 marker 半边(`cli_resolve` / `cli_download_run`)列在
+        AGGREGATE_STEPS 里;叶子 stage 的 marker 半边(`cli_resolve_attempt`)
+        两边都不列 —— 它既不是聚合(duration 恒 0),也不该计 stall。
+        """
+        for marker in ("cli_resolve", "cli_download_run", "cli_resolve_attempt"):
+            self.assertNotIn(marker, STALL_ELIGIBLE_STEPS)
+        for aggregate_marker in ("cli_resolve", "cli_download_run"):
+            self.assertIn(aggregate_marker, AGGREGATE_STEPS)
 
 
 class TestReportFormat(unittest.TestCase):
