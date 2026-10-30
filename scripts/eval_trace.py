@@ -24,12 +24,18 @@ stall 判定只看**叶子步骤**(STALL_ELIGIBLE_STEPS):聚合步骤不参与,
   1 = 一般错误(目录不存在 / 文件解析失败 / 基线无可用 session)
   2 = 检测到退化(任一关键指标恶化)
   3 = 埋点版本不兼容(baseline 与 current 的 schema_version 不一致)⇒ **拒绝出判决**
+  4 = current 侧无可用 session(4 个指标都没有分母)⇒ **未出判决**(不是「无退化」)
 
   退出码 3 是 2026-10-30 新增的:本轮改了埋点语义(`resolver_try` 的 duration
   从「写死 0」变成真实耗时,新增 `cli_*` 步骤),旧基线与新 trace 的 stall_count
   口径不同 —— delta 既可能是「性能变差」也可能是「测得更准」,光看数字分不出来。
   这条规则之前只写在文档里,**没有任何东西检查它** ⇒ hook 会报一个假的「退化」。
   现在版本号写进每个 session 的事件,版本对不上就拒绝出判决。
+
+  退出码 4 同日新增:只用了 CLI(没开 GUI session)时 current 侧**没有** session
+  是常态。此时 4 个指标都没有分母 —— 照常比较会得到 success_rate 0.000 vs 1.000
+  ⇒ ❌「退化」⇒ hook 天天报假警报(2026-10-22 的「永久误报」老坑)。
+  所以此时全部指标标「⚪ 不可测」,**不出判决**,用独立的 4 表示「没测到」。
 
 参考: docs/dna/trace-eval-metrics.md | docs/dna/trace-schema.md
 """
@@ -351,16 +357,45 @@ def check_version_compatible(baseline: Metrics, current: Metrics) -> tuple[bool,
 
 def compare(baseline: Metrics, current: Metrics) -> list[DiffRow]:
     """生成 4 指标 baseline vs current 对比行"""
+    # current 侧没有可用 session 时,4 个指标**全都没有分母**(不是「测出来是 0」)。
+    # 照常比较会得到 success_rate 0.000 vs 1.000 ⇒ ❌ 退化 ⇒ stop-trace-eval
+    # 每天报一个假的「regression detected」—— 2026-10-22 的「永久误报」老坑。
+    # 只用了 CLI(没开 GUI session)时 current 侧就是空的,这是**常态**。
+    if current.total_sessions == 0:
+        why = "current 侧没有可用 session(没有分母,不是「测出来是 0」)"
+        return [
+            DiffRow.unmeasurable(name, why)
+            for name in (
+                "success_rate",
+                "avg_total_ms",
+                "resolver_chain_length",
+                "stall_count",
+            )
+        ]
+
     # avg_total_ms 只有**两侧都真的测到了**才可比。
     # 任一侧为 0 ⇒ 那一侧压根没埋点 ⇒ 显示「⚪ 不可测」,而不是拿 0 冒充测量结果。
     total_ms_unmeasurable = (
         baseline.sessions_with_total_ms == 0 or current.sessions_with_total_ms == 0
     )
-    total_ms_reason = (
-        "session_close 不带 total_ms_proxy"
-        f"(baseline {baseline.sessions_with_total_ms}/{baseline.total_sessions} 个 session 有,"
-        f" current {current.sessions_with_total_ms}/{current.total_sessions} 个)"
-    )
+    # 原因要说清**是哪一侧**没埋 —— 笼统说「session_close 不带 total_ms_proxy」
+    # 会让「baseline 有、current 没有」被误读成「两边都没有」。
+    if baseline.sessions_with_total_ms == 0 and current.sessions_with_total_ms == 0:
+        total_ms_reason = (
+            "两侧 session_close 都不带 total_ms_proxy"
+            f"(baseline {baseline.sessions_with_total_ms}/{baseline.total_sessions},"
+            f" current {current.sessions_with_total_ms}/{current.total_sessions} 个 session 有)"
+        )
+    elif baseline.sessions_with_total_ms == 0:
+        total_ms_reason = (
+            "baseline 的 session_close 不带 total_ms_proxy"
+            f"(旧埋点,{baseline.sessions_with_total_ms}/{baseline.total_sessions} 个 session 有)"
+        )
+    else:
+        total_ms_reason = (
+            "current 的 session_close 不带 total_ms_proxy"
+            f"(旧埋点,{current.sessions_with_total_ms}/{current.total_sessions} 个 session 有)"
+        )
     return [
         DiffRow.make(
             "success_rate",
@@ -488,7 +523,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if current.total_sessions == 0:
         print(
             "⚠️  [current-no-sessions] current 侧没有可用 session(只有 fallback 文件或空)—— "
-            "下面的指标没有分母,**不可读作「没有退化」**"
+            "下面的指标**没有分母**,不可读作「没有退化」;本次未出判决(exit 4)。"
         )
 
     # 分母残缺要如实披露,但**不能因此拒绝出判决**。
@@ -507,16 +542,22 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     rows = compare(baseline, current)
 
-    # 死指标必须在**判决之前**说明白,不能只让表格里出现一个看起来正常的 0。
+    # 不可测的指标必须在**判决之前**说明白,不能只让表格里出现一个看起来正常的 0。
     for r in rows:
         if not r.measurable:
             print(
-                f"⚠️  [{r.name}-dead] 该指标结构上测不了:{r.verdict.split('—', 1)[1].strip()}"
-                f" —— 表格里的 n/a 不是「持平」,是**没埋点**。别把它读成耗时正常。",
+                f"⚠️  [{r.name}-unmeasurable] 该指标本次不可测:{r.verdict.split('—', 1)[1].strip()}"
+                f" —— 表格里的 n/a 不是「持平」,是**没有测量结果**。别把它读成耗时正常。",
                 file=sys.stderr,
             )
 
     print(format_report(args.baseline, args.current, rows))
+
+    # current 侧没有 session ⇒ 4 个指标全都没有分母 ⇒ **本次未出判决**。
+    # 不能返回 0(=「无退化」,那是拿「没测到」冒充「测过且没变」,H2),
+    # 也不能返回 2(=「真退化」,那是把常态说成事故)。
+    if current.total_sessions == 0:
+        return 4
 
     if has_regression(rows):
         return 2

@@ -501,15 +501,17 @@ class TestSchemaVersionGuard(unittest.TestCase):
             self.assertEqual(rc, 0, "同版本应正常出判决")
 
     def test_current_without_sessions_is_not_a_false_alarm(self):
-        """current 侧没有 session 时**不得**判成「版本不兼容」。
+        """current 侧没有 session 时**不得**判成「版本不兼容」,也**不得**判成「退化」。
 
         Why: 只用了 CLI(没开 GUI session)时,今天的 trace 只落在 no-session/
         fallback 里 ⇒ current.total_sessions == 0 是**常态**。此时 current 的
         版本集合自然是空的,照常比对就会得到「版本不一致」⇒ **永久误报** ——
         那正是 2026-10-22 把「静默漏报」换成「永久误报」的老错误。
 
-        变异点:把 `check_version_compatible` 里的 `if current.total_sessions == 0:
-        return True, ""` 删掉 → 本 case 必红。
+        变异点 1:把 `check_version_compatible` 里的 `if current.total_sessions == 0:
+        return True, ""` 删掉 → 本 case 必红(rc 变成 3)。
+        变异点 2:把 `compare()` 里的 `if current.total_sessions == 0:` 提前返回
+        整段删掉 → 本 case 必红(rc 变成 2,报告里出现 ❌ 退化)。
         """
         with tempfile.TemporaryDirectory() as tmp:
             b = self._write_dir(tmp, "b", "2")
@@ -521,6 +523,76 @@ class TestSchemaVersionGuard(unittest.TestCase):
             self.assertNotEqual(
                 rc, 3, "current 无 session 是常态,不能判成版本不兼容(会永久误报)"
             )
+            self.assertNotEqual(
+                rc, 2, "current 无 session 时不得判成「退化」—— 没有分母,不是「变差了」"
+            )
+            self.assertEqual(rc, 4, "没有分母 ⇒ 未出判决,应返回独立的 4(不是 0/2)")
+
+
+class TestNoVerdictWhenCurrentHasNoSessions(unittest.TestCase):
+    """current 侧没有可用 session ⇒ 4 个指标都没有分母 ⇒ **不出判决**。
+
+    Why(2026-10-30 实测):旧实现照常比较,得到
+    `success_rate | 1.000 | 0.000 | -1.000 | ❌ 退化` ⇒ rc=2 ⇒ stop-trace-eval
+    每天报「trace regression detected」—— 而实际只是「今天没开 GUI session」。
+    这就是 2026-10-22 踩过的「把静默漏报换成永久误报」,只是这次更隐蔽:
+    版本检查(退出码 3)恰好把它挡住了,一旦用户重锁基线就会复现。
+
+    H2(不可测 ≠ 零值):没有分母的指标必须显示「⚪ 不可测」,
+    绝不能显示「❌ 退化」或「✅ 持平」。
+
+    变异点:删掉 `compare()` 开头的 `if current.total_sessions == 0:` 提前返回
+    ⇒ 本 class 全红。
+    """
+
+    def _baseline(self, tmp: str) -> Path:
+        d = Path(tmp) / "base"
+        d.mkdir()
+        write_ndjson(d / "s.ndjson", make_session("s1"))
+        return d
+
+    def _current_empty(self, tmp: str) -> Path:
+        d = Path(tmp) / "cur"
+        d.mkdir()
+        return d
+
+    def test_all_metrics_unmeasurable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = compare(Metrics.from_dir(self._baseline(tmp)), Metrics.from_dir(self._current_empty(tmp)))
+            self.assertEqual(len(rows), 4)
+            for r in rows:
+                self.assertFalse(r.measurable, f"{r.name} 必须标为不可测")
+                self.assertIn("⚪", r.verdict)
+                self.assertNotIn("❌", r.verdict, f"{r.name} 不得判成退化")
+                self.assertNotIn("✅", r.verdict, f"{r.name} 不得判成持平/改善")
+
+    def test_no_regression_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = compare(Metrics.from_dir(self._baseline(tmp)), Metrics.from_dir(self._current_empty(tmp)))
+            self.assertFalse(has_regression(rows), "没有分母时不得报回归")
+
+    def test_report_has_no_regression_verdict(self):
+        """整份报告里不能出现 ❌ —— hook 只 grep 这个字符。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            b, c = self._baseline(tmp), self._current_empty(tmp)
+            report = format_report(b, c, compare(Metrics.from_dir(b), Metrics.from_dir(c)))
+            self.assertNotIn("❌", report, f"报告里不能有 ❌:\n{report}")
+
+    def test_main_exit_code_4(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b, c = self._baseline(tmp), self._current_empty(tmp)
+            rc = main(["--baseline", str(b), "--current", str(c), "--quiet"])
+            self.assertEqual(rc, 4, "没有分母 ⇒ 未出判决,必须用独立的 4")
+
+    def test_realistic_cli_only_scenario(self):
+        """真实场景:current 只有 no-session fallback 文件(无生命周期事件)。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self._baseline(tmp)
+            c = Path(tmp) / "cur"
+            c.mkdir()
+            write_ndjson(c / "n.ndjson", [{"step": "resolver_try", "duration_ms": 10}])
+            rc = main(["--baseline", str(b), "--current", str(c), "--quiet"])
+            self.assertEqual(rc, 4, "只用 CLI 的常态路径必须是 4,不能是 2")
 
 
 class TestAvgTotalMsDenominator(unittest.TestCase):
