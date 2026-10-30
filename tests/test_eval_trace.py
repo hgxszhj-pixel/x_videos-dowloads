@@ -30,9 +30,11 @@ from eval_trace import (  # noqa: E402
     Metrics,
     STALL_ELIGIBLE_STEPS,
     STALL_THRESHOLD_MS,
+    check_version_compatible,
     compare,
     format_report,
     has_regression,
+    main,
 )
 
 
@@ -49,10 +51,23 @@ def make_session(
     total_ms_proxy: int = 5000,
     resolver_count: int = 2,
     stall_steps: tuple[tuple[str, int], ...] = (),
+    schema_version: str | None = "2",
 ) -> list[dict]:
-    """fixture 辅助:构造一个完整 session 的 NDJSON 事件列表"""
+    """fixture 辅助:构造一个完整 session 的 NDJSON 事件列表
+
+    `schema_version` 对应 src/core/trace.rs 的 `TRACE_SCHEMA_VERSION`(写进
+    session_open / session_close 的 `extra.schema_version`)。传 None 模拟
+    **旧埋点**——那时还没有这个字段,版本未知 ⇒ 与任何一侧都不可比。
+    """
+    version_extra = {} if schema_version is None else {"schema_version": schema_version}
     events = [
-        {"step": "session_open", "session_id": session_id, "duration_ms": 0, "output": {}},
+        {
+            "step": "session_open",
+            "session_id": session_id,
+            "duration_ms": 0,
+            "output": {},
+            "extra": dict(version_extra),
+        },
         {
             "step": "fetch_video_info",
             "session_id": session_id,
@@ -102,7 +117,7 @@ def make_session(
                 "status": status,
                 "total_ms_proxy": total_ms_proxy,
             },
-            "extra": {},
+            "extra": dict(version_extra),
         }
     )
     return events
@@ -419,6 +434,126 @@ class TestReportFormat(unittest.TestCase):
         self.assertIn("✅", report)
         # baseline=3.0 current=1.0 → 改善 ✅
         # baseline=1 current=0 → 改善 ✅
+
+
+class TestSchemaVersionGuard(unittest.TestCase):
+    """埋点版本必须一致,否则拒绝出判决(2026-10-30 新增)。
+
+    Why: 本轮改了埋点语义(`resolver_try` 的 duration 从写死 0 变成真实耗时,
+    新增 `cli_*` 步骤)。旧 baseline 与新 current 的 stall_count 口径不同 ——
+    delta 既可能是「性能变差」也可能是「测得更准」。这条规则之前只写在文档里,
+    **没有任何东西检查它** ⇒ hook 会报一个假的「退化」。
+
+    变异点:把 `check_version_compatible` 改成恒返回 True(或 main() 里删掉那个
+    `if not version_ok` 分支)→ 本 class 的 mismatch 用例必红。
+    """
+
+    def _write_dir(self, tmp: str, name: str, version: str | None) -> Path:
+        d = Path(tmp) / name
+        d.mkdir()
+        write_ndjson(d / "s.ndjson", make_session("s1", schema_version=version))
+        return d
+
+    def test_same_version_is_compatible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self._write_dir(tmp, "b", "2")
+            c = self._write_dir(tmp, "c", "2")
+            mb, mc = Metrics.from_dir(b), Metrics.from_dir(c)
+            ok, why = check_version_compatible(mb, mc)
+            self.assertTrue(ok, f"同版本应当可比,实得 {why}")
+            self.assertEqual(mb.schema_versions, {"2"})
+            self.assertEqual(mc.schema_versions, {"2"})
+
+    def test_different_version_is_incompatible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self._write_dir(tmp, "b", "2")
+            c = self._write_dir(tmp, "c", "1")
+            ok, why = check_version_compatible(Metrics.from_dir(b), Metrics.from_dir(c))
+            self.assertFalse(ok, "版本不一致必须判为不可比")
+            self.assertIn("版本不一致", why)
+
+    def test_missing_version_is_incompatible(self):
+        """旧埋点(没有 schema_version)与任何一侧都不可比。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self._write_dir(tmp, "b", None)
+            c = self._write_dir(tmp, "c", "2")
+            ok, why = check_version_compatible(Metrics.from_dir(b), Metrics.from_dir(c))
+            self.assertFalse(ok, "版本未知必须判为不可比")
+            self.assertIn("缺 schema_version", why)
+
+    def test_main_returns_3_on_version_mismatch(self):
+        """main() 必须用**独立的退出码 3** 表示「版本不兼容」。
+
+        为什么要独立于 1/2:1 = 基线坏(要重锁),2 = 真的检测到退化(要处理),
+        3 = 埋点换了(要重锁)。混在一起调用方就没法分别处置。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self._write_dir(tmp, "b", "2")
+            c = self._write_dir(tmp, "c", "1")
+            rc = main(["--baseline", str(b), "--current", str(c), "--quiet"])
+            self.assertEqual(rc, 3, "版本不兼容必须 exit 3")
+
+    def test_main_returns_0_when_versions_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self._write_dir(tmp, "b", "2")
+            c = self._write_dir(tmp, "c", "2")
+            rc = main(["--baseline", str(b), "--current", str(c), "--quiet"])
+            self.assertEqual(rc, 0, "同版本应正常出判决")
+
+    def test_current_without_sessions_is_not_a_false_alarm(self):
+        """current 侧没有 session 时**不得**判成「版本不兼容」。
+
+        Why: 只用了 CLI(没开 GUI session)时,今天的 trace 只落在 no-session/
+        fallback 里 ⇒ current.total_sessions == 0 是**常态**。此时 current 的
+        版本集合自然是空的,照常比对就会得到「版本不一致」⇒ **永久误报** ——
+        那正是 2026-10-22 把「静默漏报」换成「永久误报」的老错误。
+
+        变异点:把 `check_version_compatible` 里的 `if current.total_sessions == 0:
+        return True, ""` 删掉 → 本 case 必红。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self._write_dir(tmp, "b", "2")
+            # current 目录只有一个没有生命周期事件的 fallback 文件
+            c = Path(tmp) / "c"
+            c.mkdir()
+            write_ndjson(c / "n.ndjson", [{"step": "resolver_try", "duration_ms": 10}])
+            rc = main(["--baseline", str(b), "--current", str(c), "--quiet"])
+            self.assertNotEqual(
+                rc, 3, "current 无 session 是常态,不能判成版本不兼容(会永久误报)"
+            )
+
+
+class TestAvgTotalMsDenominator(unittest.TestCase):
+    """avg_total_ms 的分母必须是「真测到 total_ms_proxy 的 session 数」。
+
+    Why:分子只累加了带 key 的 session,分母却用全部 session ⇒ 把「没测到」
+    摊成「耗时 0」,系统性低报(H3:分母必须可复算)。
+    2026-10-30 起 total_ms_proxy 真的被埋点了,这个偏差会第一次显形。
+
+    变异点:把 from_dir 里的 `total_ms_sum // m.sessions_with_total_ms`
+    改回 `// m.total_sessions` → 本 case 必红。
+    """
+
+    def test_denominator_counts_only_sessions_with_total_ms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            # session A 测到了 8000ms
+            write_ndjson(d / "a.ndjson", make_session("a", total_ms_proxy=8000))
+            # session B 没测到(旧埋点:close 不带这个 key)
+            events_b = make_session("b")
+            for ev in events_b:
+                if ev["step"] == "session_close":
+                    ev["output"].pop("total_ms_proxy", None)
+            write_ndjson(d / "b.ndjson", events_b)
+
+            m = Metrics.from_dir(d)
+            self.assertEqual(m.total_sessions, 2)
+            self.assertEqual(m.sessions_with_total_ms, 1)
+            self.assertEqual(
+                m.avg_total_ms,
+                8000,
+                "分母必须是 1(只有测到的那个),不是 2 —— 否则 8000 被摊成 4000",
+            )
 
 
 if __name__ == "__main__":

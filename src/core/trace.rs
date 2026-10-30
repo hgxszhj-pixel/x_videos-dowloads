@@ -17,11 +17,30 @@ use std::time::Instant;
 use chrono::Utc;
 use serde_json::{json, Value};
 
+/// 埋点 schema 版本 —— **改埋点语义时必须 +1**。
+///
+/// 为什么需要它(2026-10-30):本轮把 `resolver_try` 的 duration 从「写死 0」改成
+/// marker + `resolver_try_done` 携带真实耗时,并新增了一批 `cli_*` 步骤。
+/// 这意味着**旧 baseline 与新 current 的 stall_count 口径不同** ——
+/// 旧 baseline 里 resolver 永远不可能被判成 stall(阈值 30s,duration 恒 0),
+/// 新 current 里会。同一个 delta 既可能是「性能变差」也可能是「测得更准」,
+/// 光看数字分不出来。
+///
+/// 之前这条规则只写在文档里(`docs/dna/trace-eval-metrics.md`),**没有任何东西检查它**
+/// ⇒ 下一次拿旧 baseline 比新 trace,stop-trace-eval hook 会报一个假的「退化」。
+/// 现在版本号写进每个 session 的事件里,`eval_trace.py` 版本不一致就**拒绝出判决**。
+///
+/// 版本号语义:整数,单调递增;只有在「同名字段的含义或口径变了」时才 +1
+/// (加新步骤、加可选字段 **不用** +1 —— 那不影响已有指标的计算)。
+pub const TRACE_SCHEMA_VERSION: u32 = 2;
+
 /// 一个 trace session 的运行时状态:session_id + **它自己的** NDJSON 文件句柄。
 struct TraceSessionState {
     session_id: String,
     /// 文件打开失败时为 None(此时该 session 的事件走 no-session fallback)
     file: Option<std::fs::File>,
+    /// 打开时刻 —— 用来算 session 的墙钟总耗时(写进 `session_close.output.total_ms_proxy`)。
+    opened_at: Instant,
 }
 
 /// 全局 session **栈**(2026-10-30 从「单个全局 SESSION_ID + TRACE_FILE」改成栈)。
@@ -73,6 +92,19 @@ fn session_has_file(session_id: &str) -> bool {
         sessions
             .iter()
             .any(|st| st.session_id == session_id && st.file.is_some())
+    })
+}
+
+/// 指定 session 的打开时刻 —— 用来算墙钟总耗时。
+///
+/// session 已从栈里移除(已关闭)时返回 None ⇒ **不写** `total_ms_proxy`
+/// (宁可标「没测到」,也不要写一个假的 0 —— 这正是 H2「不可测 ≠ 零值」)。
+fn session_opened_at(session_id: &str) -> Option<Instant> {
+    with_sessions(|sessions| {
+        sessions
+            .iter()
+            .find(|st| st.session_id == session_id)
+            .map(|st| st.opened_at)
     })
 }
 
@@ -145,11 +177,15 @@ pub async fn trace_session_open(prefix: &str) -> String {
                 sessions.push(TraceSessionState {
                     session_id: session_id.clone(),
                     file: Some(f),
+                    opened_at: Instant::now(),
                 })
             });
 
             // 写入 session meta 作为 NDJSON 第一行(special step="session_open")
             // 写给**自己**的文件(此时它就是最内层,但显式按 id 写更抗嵌套)
+            //
+            // `extra.schema_version`:埋点 schema 版本(2026-10-30 新增)。
+            // `eval_trace.py` 靠它拒绝「旧埋点 baseline vs 新埋点 current」的无效对比。
             let meta = json!({
                 "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
                 "session_id": session_id,
@@ -157,7 +193,7 @@ pub async fn trace_session_open(prefix: &str) -> String {
                 "input": {},
                 "output": {"file_path": file_path.to_string_lossy()},
                 "duration_ms": 0u64,
-                "extra": {"prefix": prefix}
+                "extra": {"prefix": prefix, "schema_version": TRACE_SCHEMA_VERSION}
             });
             let _ = write_event_to(&session_id, &meta);
         }
@@ -193,6 +229,8 @@ pub async fn trace_session_close(summary: Value) {
 ///
 /// 按 id 移除而不是 pop:嵌套 session 的 close 顺序未必是栈序(并发时更不是)。
 async fn close_session(session_id: &str, summary: Value) {
+    let mut summary = summary;
+    inject_total_ms(&mut summary, session_id);
     let close_event = json!({
         "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
         "session_id": session_id,
@@ -200,12 +238,38 @@ async fn close_session(session_id: &str, summary: Value) {
         "input": {},
         "output": summary,
         "duration_ms": 0u64,
-        "extra": {}
+        "extra": {"schema_version": TRACE_SCHEMA_VERSION}
     });
     let _ = write_event_to(session_id, &close_event);
 
     // 从栈里按 id 移除(IO 已在锁外,各自独立 lock + poison-tolerant)
     with_sessions(|sessions| sessions.retain(|st| st.session_id != session_id));
+}
+
+/// 把 session 的**墙钟总耗时**写进 `output.total_ms_proxy`。
+///
+/// 口径(2026-10-30 定义,此前这个 key 从没被写过 ⇒ `avg_total_ms` 是死指标):
+/// **session_open → session_close 的真实经过时间**,含全部等待。
+///
+/// 为什么不用「各叶子步骤 duration 之和」:那会把**没有埋点的等待**漏掉 ——
+/// 而「转圈但没有速度」恰恰就是那部分等待(解析阶段的固定开销)。
+/// 叶子之和会系统性低报总耗时,拿它当「这次下载花了多久」是错的。
+///
+/// session 已从栈里移除(重复 close / 非本进程打开)→ **不写**这个 key:
+/// 宁可让 `eval_trace.py` 显示「⚪ 不可测」,也不写一个假的 0(H2)。
+fn inject_total_ms(summary: &mut Value, session_id: &str) {
+    let Some(opened_at) = session_opened_at(session_id) else {
+        return;
+    };
+    let total_ms = opened_at.elapsed().as_millis() as u64;
+    if summary.is_object() {
+        summary["total_ms_proxy"] = json!(total_ms);
+    } else {
+        // summary 不是对象(如 json!(null))→ 包一层,别把调用方的字段弄丢
+        let mut wrapper = json!({ "summary": summary.clone() });
+        wrapper["total_ms_proxy"] = json!(total_ms);
+        *summary = wrapper;
+    }
 }
 
 /// RAII guard:保证 session 一定被关闭 —— 覆盖所有 `?` / early return / panic 展开路径。
@@ -261,17 +325,19 @@ impl Drop for TraceSession {
         // 想要「IO 完全在锁外」需要重构写路径(按 session 分桶 + 每桶独立锁),
         // 本轮没做 —— 现状是**吞吐**问题,不是**正确性**问题。
         let session_id = self.session_id.clone();
+        let mut output = json!({
+            "status": "dropped",
+            "reason": "session guard dropped without explicit close (early return / error / panic)"
+        });
+        inject_total_ms(&mut output, &session_id);
         let event = json!({
             "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
             "session_id": session_id,
             "step": "session_close",
             "input": {},
-            "output": {
-                "status": "dropped",
-                "reason": "session guard dropped without explicit close (early return / error / panic)"
-            },
+            "output": output,
             "duration_ms": 0u64,
-            "extra": {"implicit": true}
+            "extra": {"implicit": true, "schema_version": TRACE_SCHEMA_VERSION}
         });
         // write_event_to 自己内部短暂 lock,flush 在锁内但只此一次。
         let _ = write_event_to(&session_id, &event);
@@ -1615,6 +1681,101 @@ mod tests {
             ev["duration_ms"].as_u64().unwrap() >= 20,
             "abandoned 的 done 也要带真实耗时"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
+
+    /// session_close 必须带**真实**的墙钟总耗时。
+    ///
+    /// Why: `eval_trace.py` 的 `avg_total_ms` 读 `session_close.output["total_ms_proxy"]`,
+    /// 而该 key 在整个 src/ 里**从没被写过** ⇒ 这一项指标恒为 0,
+    /// 报告里只能显示「⚪ 不可测」(H2:不可测 ≠ 零值)。
+    #[serial]
+    #[tokio::test]
+    async fn test_session_close_carries_real_total_ms() {
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-totalms-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        let _session = trace_session_open("totalms").await;
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        trace_session_close(json!({"status": "ok"})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let path = find_session_file(&tmp, "totalms");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let close_line = content
+            .lines()
+            .find(|l| l.contains("\"step\":\"session_close\""))
+            .expect("应有 session_close 行");
+        let ev: Value = serde_json::from_str(close_line).expect("JSON 应合法");
+        assert!(
+            ev["output"].get("total_ms_proxy").is_some(),
+            "session_close 必须带 total_ms_proxy,否则 avg_total_ms 永远是死指标"
+        );
+        let ms = ev["output"]["total_ms_proxy"].as_u64().unwrap();
+        assert!(
+            ms >= 50,
+            "墙钟总耗时至少要覆盖 sleep 的 60ms(留 10ms 调度余量),实得 {ms}ms"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        reset_globals().await;
+    }
+
+    /// 测不到耗时时就**不写** `total_ms_proxy` —— 宁可「不可测」也不要假 0。
+    ///
+    /// H2:不可测 ≠ 零值。写一个 0 会让报告出现「avg_total_ms | 0 | 0 | ✅持平」,
+    /// 看起来像「耗时指标很健康」,实际是压根没测到。
+    #[serial]
+    #[test]
+    fn test_inject_total_ms_absent_for_unknown_session() {
+        let mut summary = json!({"status": "ok"});
+        inject_total_ms(&mut summary, "no-such-session-xyz");
+        assert!(
+            summary.get("total_ms_proxy").is_none(),
+            "session 不在栈里 → 测不到 → 不写 key,不能写 0 冒充测量结果"
+        );
+    }
+
+    /// 每个 session 必须带埋点 schema 版本 —— `eval_trace.py` 靠它拒绝
+    /// 「旧埋点 baseline vs 新埋点 current」的无效对比。
+    ///
+    /// Why: 本轮改了埋点语义(`resolver_try` duration 从写死 0 变成真实耗时),
+    /// 旧 baseline 与新 current 的 stall_count 口径不同,delta 分不清是
+    /// 「性能变差」还是「测得更准」。规则之前只写在文档里,没有任何东西检查它。
+    #[serial]
+    #[tokio::test]
+    async fn test_session_open_carries_schema_version() {
+        reset_globals().await;
+        let tmp = std::env::temp_dir().join(format!(
+            "trace-schema-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &tmp);
+
+        let _session = trace_session_open("schema").await;
+        trace_session_close(json!({"status": "ok"})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let path = find_session_file(&tmp, "schema");
+        let content = std::fs::read_to_string(&path).unwrap();
+        for step in ["session_open", "session_close"] {
+            let line = content
+                .lines()
+                .find(|l| l.contains(&format!("\"step\":\"{step}\"")))
+                .unwrap_or_else(|| panic!("应有 {step} 行"));
+            let ev: Value = serde_json::from_str(line).expect("JSON 应合法");
+            assert_eq!(
+                ev["extra"]["schema_version"],
+                json!(TRACE_SCHEMA_VERSION),
+                "{step} 必须带 extra.schema_version"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&tmp);
         reset_globals().await;
