@@ -345,6 +345,15 @@ expect("no-completion-claim", "docs: 调整措辞",                   (True, "no
 for claim in ("fix: 修复了 xxx", "perf: shipped the lazy sampler"):
     expect(f"engages-on-claim:{claim[:4]}", f"{claim}\n\nRef-trace: /t.ndjson", (True, "eval-gate passed", 2))
 
+# 工作区 ≠ 暂存区 ⇒ clippy 验的不是「这次提交」。
+# 变异点: 去掉 eval_gate.py 的 `_git_unstaged_build_files` 检查(或让它返回 [])
+#        → 本用例必红(消息里不会出现「未暂存」)。
+# 场景来源: 2026-10-30 实测 —— staged 的 trace.rs 缺 `#[expect(dead_code)]`、
+#          工作区有 ⇒ 门禁绿灯但**提交的树编译不过**(dead_code 报错)。
+(r / "lib.rs").write_text("pub fn a() { /* 工作区改过但没 add */ }\n", encoding="utf-8")
+expect("unstaged-build-file-warns", "fix: 修复了 xxx", (True, "未暂存", 2))
+subprocess.run(["git", "checkout", "--", "lib.rs"], cwd=r, capture_output=True)
+
 # 反向用例: **光有 commit 类型不算完成声明**。
 # 这条是设计意图不是缺陷: CLAIM_KEYWORDS 是语义动词表(eval_gate.py:37-50)，
 # 不含 feat/perf/refactor —— 那些是几乎每个 commit 都有的类型，计进去

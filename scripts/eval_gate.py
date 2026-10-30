@@ -55,6 +55,9 @@ CLAIM_RE = re.compile(
 
 RUST_EXTS = {".rs"}
 
+# 影响编译的构建期文件 —— 它们有未暂存改动时,`cargo clippy` 验的不是「这次提交」
+_BUILD_FILES = {"Cargo.toml", "Cargo.lock", "build.rs"}
+
 # 跳过 marker (escape hatch)
 SKIP_MARKER = "[skip-eval]"
 EVIDENCE_MARKERS = ("[DID:", "[VC:")
@@ -71,6 +74,39 @@ def _git_cached_files() -> list[str]:
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
     return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _git_unstaged_build_files() -> list[str]:
+    """**未暂存**的构建相关改动 —— 工作区 ≠ 暂存区的证明。
+
+    为什么需要它(H4:检查对象是 staged,不是工作区):
+    `cargo fmt --check` / `cargo clippy` 编译的是**工作区**,
+    而「这次提交」的内容是 **HEAD + 暂存区**。
+    两者不一致时,clippy 的绿灯**不能证明这次提交能编译** —— 典型场景:
+    暂存区里是一份编译不过的旧版本,工作区已经改好了但没 `git add`。
+    此时门必须说清「验的是工作区」,而不是报一个假的「passed」。
+
+    覆盖两类:
+      · tracked 的未暂存改动(`git diff --name-only`)—— 包括「暂存了 A 又把 A 改回工作区」
+      · untracked 的新源文件(`git ls-files --others`)—— 工作区会编译它,提交里没有
+    非构建相关文件(文档/脚本)不影响编译,不算。
+    """
+    names: list[str] = []
+    for cmd in (
+        ["git", "diff", "--name-only"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+        for line in out.splitlines():
+            f = line.strip()
+            if not f:
+                continue
+            if Path(f).suffix in RUST_EXTS or Path(f).name in _BUILD_FILES:
+                names.append(f)
+    return names
 
 
 def _strip_trailers(body: str) -> str:
@@ -167,6 +203,17 @@ def check_eval_gate(commit_msg: str | None = None) -> tuple[bool, str]:
             "❌ eval-gate 拦截: completion claim + Rust staged = 必须跑过 fmt + clippy\n\n"
             f"{body}\n\n"
             "绕过: 在 commit msg 加 [skip-eval] (保留 Intent Lock)"
+        )
+
+    # 4c. 工作区 ≠ 暂存区 ⇒ fmt/clippy 验的是**工作区**,不是「这次提交」。
+    #     不拦(门的三态:拦/警告/静默 —— 硬拦会逼人用 --no-verify,反而让门变装饰品),
+    #     但必须说清楚:这次提交的编译状态**未被验证**。
+    dirty = _git_unstaged_build_files()
+    if dirty:
+        return True, (
+            f"⚠️ eval-gate: fmt + clippy 通过,但工作区有**未暂存**的构建相关改动 ⇒ "
+            f"验的是工作区,**不是这次提交**;未暂存: {', '.join(dirty)}\n"
+            "   (要证明这次提交本身能编译:先 `git add` 这些文件再 commit)"
         )
 
     return True, f"✓ eval-gate passed: fmt + clippy on {len(rust_staged)} rust file(s)"
