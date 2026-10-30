@@ -245,6 +245,8 @@ grep -c '"session_id":"01JB5K8Z9R3X7V4Y"' trace.ndjson
 | **2026-10-30** `check_version_compatible` 恒返回 True | `scripts/eval_trace.py` | `test_different_version_is_incompatible` + `test_main_returns_3_on_version_mismatch` |
 | **2026-10-30** `avg_total_ms` 分母用 `total_sessions` | `scripts/eval_trace.py` `from_dir()` | `test_denominator_counts_only_sessions_with_total_ms`(8000 vs 摊成 4000) |
 | **2026-10-30** 删掉「current 无 session ⇒ 豁免版本判定」 | `scripts/eval_trace.py` `check_version_compatible()` | `test_current_without_sessions_is_not_a_false_alarm`(防永久误报) |
+| **2026-10-30** 删掉「current 无 session ⇒ 4 个指标全标不可测」 | `scripts/eval_trace.py` `compare()` | `test_all_metrics_unmeasurable` + `test_report_has_no_regression_verdict` + `test_main_exit_code_4`(实跑:旧代码 3 条红) |
+| **2026-10-30** 把无分母时的 `return 4` 改回 `return 0` | `scripts/eval_trace.py` `main()` | `test_main_exit_code_4` + `test_realistic_cli_only_scenario`(实跑:旧代码 3 条红) |
 
 > 2026-10-30 的 3 个变异都是**实跑验证过会红**的,不是「看着像能抓」。
 > 复现方式见下(`mutation_smoke.sh manual` 只覆盖 Rust,本轮用手改 + 还原的方式跑)。

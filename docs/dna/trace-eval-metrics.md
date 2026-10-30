@@ -66,16 +66,31 @@ AGGREGATE_STEPS = frozenset({"cli_resolve_done", "cli_download_run_done"})  # �
 
 | 码 | 含义 | 该做什么 |
 |----|------|---------|
-| 0 | 无退化 | — |
+| 0 | 无退化(全部指标改善或持平) | — |
 | 1 | 基线不可用(空/无 session) | 重锁基线 |
 | 2 | **真的**检测到退化 | 排查性能 |
 | 3 | 埋点版本不兼容 | 重锁基线(**不是**性能问题) |
+| 4 | current 侧无可用 session ⇒ **未出判决** | 正常(常态),不必处理 |
 
-**一个必须记住的例外**:current 侧**没有** session 时**不做版本判定**。
-只用了 CLI(没开 GUI session)时,今天的 trace 只落在 `no-session/` fallback 里
-⇒ `current.total_sessions == 0` 是**常态**。照常比对会得到「版本不一致」
-⇒ **永久误报**(2026-10-22 把「静默漏报」换成「永久误报」的老错误)。
-这种情况改为如实披露「current 无可用 session,指标没有分母」。
+**两个必须记住的例外**(都在 current 侧没有 session 时发生):
+
+1. **不做版本判定** —— 只用了 CLI(没开 GUI session)时,今天的 trace 只落在
+   `no-session/` fallback 里 ⇒ `current.total_sessions == 0` 是**常态**。
+   current 的版本集合自然是空的,照常比对会得到「版本不一致」⇒ **永久误报**
+   (2026-10-22 把「静默漏报」换成「永久误报」的老错误)。
+2. **不出判决(退出码 4)** —— 没有分母时,4 个指标全部显示「⚪ 不可测」。
+   照常比较会得到 `success_rate | 1.000 | 0.000 | -1.000 | ❌ 退化`
+   ⇒ rc=2 ⇒ stop-trace-eval **每天报一个假的「trace regression detected」**。
+   这是 2026-10-30 实测发现的:版本检查(退出码 3)恰好把它挡住了,
+   **一旦用户重锁基线(version 对上)就会复现** —— 属于「已 codified 但没被验过会红」。
+
+> **H2(不可测 ≠ 零值)在退出码层面的同款要求**:没有测量结果 ≠ 测过且没变。
+> 所以既不能返回 0(=「无退化」),也不能返回 2(=「真退化」),
+> 用独立的 4 表示「本次没测」。
+
+**验证**(`tests/test_eval_trace.py::TestNoVerdictWhenCurrentHasNoSessions`,5 个用例):
+变异点 = 删掉 `compare()` 开头的 `if current.total_sessions == 0:` 提前返回
+⇒ 3 条红;把 `return 4` 改回 `return 0` ⇒ 3 条红。
 
 ### 指标来源(NDJSON 5 元组)
 
