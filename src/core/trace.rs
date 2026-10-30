@@ -32,7 +32,13 @@ use serde_json::{json, Value};
 ///
 /// 版本号语义:整数,单调递增;只有在「同名字段的含义或口径变了」时才 +1
 /// (加新步骤、加可选字段 **不用** +1 —— 那不影响已有指标的计算)。
-pub const TRACE_SCHEMA_VERSION: u32 = 2;
+///
+/// **v3(2026-10-30)**:新增 HLS 叶子阶段埋点(`hls_manifest_done` / `hls_keys_done` /
+/// `hls_merge_done`),并把这 3 个 step 加进 `eval_trace.py` 的 stall 白名单
+/// ⇒ **`stall_count` 的口径变了**(以前 30s 以上的慢清单/慢合并不计,现在计)
+/// ⇒ 必须 +1,否则「测得更准」会被读成「性能变差」。
+/// `hls_segments_done` 刻意**不**进白名单:一门课的整体传输本来就可能 >30s。
+pub const TRACE_SCHEMA_VERSION: u32 = 3;
 
 /// 一个 trace session 的运行时状态:session_id + **它自己的** NDJSON 文件句柄。
 struct TraceSessionState {

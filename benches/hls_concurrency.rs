@@ -35,6 +35,29 @@ mod drission_client {
     }
 }
 
+// Stub: bench 无法访问 main.rs 的 `core` mod(单 crate root 限制)。
+// 真实 `TraceStage` 把埋点写进 NDJSON;bench 路径不需要 trace,这里给一个 no-op 实现。
+// 签名与 `src/core/trace.rs` 保持一致 —— 那边改了 API,这里要同步(否则 bench 编译不过)。
+#[allow(dead_code)]
+pub mod core {
+    pub mod trace {
+        use serde_json::Value;
+
+        pub struct TraceStage;
+
+        impl TraceStage {
+            pub fn start(_step: &str, _input: Value, _extra: Value) -> Self {
+                Self
+            }
+            pub fn without_marker(_done_step: &str, _input: Value, _extra: Value) -> Self {
+                Self
+            }
+            pub fn finish(self, _output: Value) {}
+            pub fn discard(self) {}
+        }
+    }
+}
+
 // Copy of `crate::types::{DownloadProgress, DownloadStatus}` current definitions
 // (crate is binary-only; the inline `mod hls` resolves `crate::types` to this stub).
 // Keep in sync with src/types.rs when hls-facing surface changes.

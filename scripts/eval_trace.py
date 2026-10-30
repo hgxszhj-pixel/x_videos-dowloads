@@ -62,6 +62,9 @@ STALL_THRESHOLD_MS = 30_000  # ≥ 30s 算 stall(BUG-D / BUG-E 经验值)
 # 2026-10-30 新增的叶子步骤:
 #   · resolver_try_done        —— GUI 侧单次解析尝试(API / Drission),真实耗时
 #   · cli_resolve_attempt_done —— CLI 侧单个后端尝试(fxtwitter/ytdlp/registry/…),真实耗时
+#   · hls_manifest_done        —— HLS:取播放清单(1 RTT)
+#   · hls_keys_done            —— HLS:预取 AES key(每把 key 1 RTT)
+#   · hls_merge_done           —— HLS:合并分段(全文件 2× 磁盘 IO)
 # 旧步骤保留在白名单里是为了兼容**历史 trace 文件**(旧文件的 `resolver_try`
 # 可能带真实耗时);新埋点的 `resolver_try` 是开始标记(duration 恒 0),永远命不中。
 STALL_ELIGIBLE_STEPS = frozenset(
@@ -71,6 +74,9 @@ STALL_ELIGIBLE_STEPS = frozenset(
         "cli_resolve_attempt_done",  # CLI:单个后端尝试(新)
         "download_one",  # GUI:单个课节下载
         "fetch_video_info",  # GUI:单个课节信息获取
+        "hls_manifest_done",  # HLS:取播放清单(新)
+        "hls_keys_done",  # HLS:预取 AES key(新)
+        "hls_merge_done",  # HLS:合并分段(新)
     }
 )
 
@@ -85,6 +91,9 @@ AGGREGATE_STEPS = frozenset(
         "cli_resolve_done",  # CLI 解析阶段总计
         "cli_download_run",  # CLI 整次运行开始(marker,duration 恒 0)
         "cli_download_run_done",  # CLI 整次运行总计
+        "hls_segments_done",  # HLS:分段传输总计 —— **不是聚合,是天然就长**:
+        # 一门课的整体传输本来就可能 >30s(1.3GB 的课 26–130s),
+        # 把它算作 stall = 永久误报(每次下载都报「退化」)。
     }
 )
 

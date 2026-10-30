@@ -51,7 +51,7 @@ def make_session(
     total_ms_proxy: int = 5000,
     resolver_count: int = 2,
     stall_steps: tuple[tuple[str, int], ...] = (),
-    schema_version: str | None = "2",
+    schema_version: str | None = "3",
 ) -> list[dict]:
     """fixture 辅助:构造一个完整 session 的 NDJSON 事件列表
 
@@ -386,6 +386,83 @@ class TestNewStepStallEligibility(unittest.TestCase):
         self.assertIn("cli_resolve_attempt_done", STALL_ELIGIBLE_STEPS)
 
 
+class TestHlsLeafStepEligibility(unittest.TestCase):
+    """Case 9(2026-10-30):HLS 叶子阶段的 stall 资格。
+
+    `hls_manifest_done` / `hls_keys_done` / `hls_merge_done` 是**叶子**步骤
+    → 卡住时必须能计成 stall(不然「合并卡了 5 分钟」这种问题根本看不见)。
+
+    `hls_segments_done` **不**能计 —— 一门课的整体传输本来就可能 >30s
+    (1.3GB 的课 26–130s),计进去 = 每次下载都报「退化」= **永久误报**
+    (2026-10-22 踩过的那个坑的同款)。
+
+    变异点:
+      · 把 3 个 `hls_*_done` 从白名单删掉 → 前 3 条红
+      · 把 `hls_segments_done` 加进白名单 → 第 4 条红
+    """
+
+    def test_hls_manifest_done_stall_counted(self):
+        """取播放清单卡住 ≥30s → 必须计成 stall。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session("s1", status="ok", stall_steps=(("hls_manifest_done", 45_000),)),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 1)
+
+    def test_hls_keys_done_stall_counted(self):
+        """预取 AES key 卡住 ≥30s → 必须计成 stall。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session("s1", status="ok", stall_steps=(("hls_keys_done", 31_000),)),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 1)
+
+    def test_hls_merge_done_stall_counted(self):
+        """合并分段卡住 ≥30s → 必须计成 stall(合并是最容易「意外变慢」的一段)。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session("s1", status="ok", stall_steps=(("hls_merge_done", 120_000),)),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 1)
+
+    def test_hls_segments_done_not_counted_as_stall(self):
+        """分段传输总计**不算** stall —— 一门课的整体传输本来就 >30s。
+
+        算进去 ⇒ 每下载一次就报一次「退化」= 永久误报。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            write_ndjson(
+                tmp_path / "s1.ndjson",
+                make_session(
+                    "s1",
+                    status="ok",
+                    stall_steps=(
+                        ("hls_segments_done", 600_000),
+                        ("cli_download_run_done", 900_000),
+                    ),
+                ),
+            )
+            m = Metrics.from_dir(tmp_path)
+            self.assertEqual(m.stall_count, 0)
+
+    def test_hls_leaf_steps_registered(self):
+        """3 个 HLS 叶子 step 必须在白名单里,`hls_segments_done` 必须在聚合名单里。"""
+        for step in ("hls_manifest_done", "hls_keys_done", "hls_merge_done"):
+            self.assertIn(step, STALL_ELIGIBLE_STEPS, f"{step} 应能计成 stall")
+        self.assertIn("hls_segments_done", AGGREGATE_STEPS)
+        self.assertNotIn("hls_segments_done", STALL_ELIGIBLE_STEPS)
+
+
 class TestWhitelistSync(unittest.TestCase):
     """Case 8(2026-10-30):两个脚本的 stall 白名单必须一致。
 
@@ -456,17 +533,17 @@ class TestSchemaVersionGuard(unittest.TestCase):
 
     def test_same_version_is_compatible(self):
         with tempfile.TemporaryDirectory() as tmp:
-            b = self._write_dir(tmp, "b", "2")
-            c = self._write_dir(tmp, "c", "2")
+            b = self._write_dir(tmp, "b", "3")
+            c = self._write_dir(tmp, "c", "3")
             mb, mc = Metrics.from_dir(b), Metrics.from_dir(c)
             ok, why = check_version_compatible(mb, mc)
             self.assertTrue(ok, f"同版本应当可比,实得 {why}")
-            self.assertEqual(mb.schema_versions, {"2"})
-            self.assertEqual(mc.schema_versions, {"2"})
+            self.assertEqual(mb.schema_versions, {"3"})
+            self.assertEqual(mc.schema_versions, {"3"})
 
     def test_different_version_is_incompatible(self):
         with tempfile.TemporaryDirectory() as tmp:
-            b = self._write_dir(tmp, "b", "2")
+            b = self._write_dir(tmp, "b", "3")
             c = self._write_dir(tmp, "c", "1")
             ok, why = check_version_compatible(Metrics.from_dir(b), Metrics.from_dir(c))
             self.assertFalse(ok, "版本不一致必须判为不可比")
@@ -476,7 +553,7 @@ class TestSchemaVersionGuard(unittest.TestCase):
         """旧埋点(没有 schema_version)与任何一侧都不可比。"""
         with tempfile.TemporaryDirectory() as tmp:
             b = self._write_dir(tmp, "b", None)
-            c = self._write_dir(tmp, "c", "2")
+            c = self._write_dir(tmp, "c", "3")
             ok, why = check_version_compatible(Metrics.from_dir(b), Metrics.from_dir(c))
             self.assertFalse(ok, "版本未知必须判为不可比")
             self.assertIn("缺 schema_version", why)
@@ -488,15 +565,15 @@ class TestSchemaVersionGuard(unittest.TestCase):
         3 = 埋点换了(要重锁)。混在一起调用方就没法分别处置。
         """
         with tempfile.TemporaryDirectory() as tmp:
-            b = self._write_dir(tmp, "b", "2")
+            b = self._write_dir(tmp, "b", "3")
             c = self._write_dir(tmp, "c", "1")
             rc = main(["--baseline", str(b), "--current", str(c), "--quiet"])
             self.assertEqual(rc, 3, "版本不兼容必须 exit 3")
 
     def test_main_returns_0_when_versions_match(self):
         with tempfile.TemporaryDirectory() as tmp:
-            b = self._write_dir(tmp, "b", "2")
-            c = self._write_dir(tmp, "c", "2")
+            b = self._write_dir(tmp, "b", "3")
+            c = self._write_dir(tmp, "c", "3")
             rc = main(["--baseline", str(b), "--current", str(c), "--quiet"])
             self.assertEqual(rc, 0, "同版本应正常出判决")
 
@@ -514,7 +591,7 @@ class TestSchemaVersionGuard(unittest.TestCase):
         整段删掉 → 本 case 必红(rc 变成 2,报告里出现 ❌ 退化)。
         """
         with tempfile.TemporaryDirectory() as tmp:
-            b = self._write_dir(tmp, "b", "2")
+            b = self._write_dir(tmp, "b", "3")
             # current 目录只有一个没有生命周期事件的 fallback 文件
             c = Path(tmp) / "c"
             c.mkdir()

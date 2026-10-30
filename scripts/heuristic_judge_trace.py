@@ -52,6 +52,9 @@ STALL_ELIGIBLE_STEPS = frozenset(
         "cli_resolve_attempt_done",  # CLI:单个后端尝试
         "download_one",  # GUI:单个课节下载
         "fetch_video_info",  # GUI:单个课节信息获取
+        "hls_manifest_done",  # HLS:取播放清单
+        "hls_keys_done",  # HLS:预取 AES key
+        "hls_merge_done",  # HLS:合并分段
     }
 )
 

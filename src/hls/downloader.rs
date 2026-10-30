@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
+use serde_json::json;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
@@ -18,6 +19,7 @@ use tracing::{info, warn};
 
 use super::crypto::{fetch_key, parse_iv};
 use super::parser::{M3u8Parser, M3u8Segment};
+use crate::core::trace::TraceStage;
 use crate::types::{DownloadProgress, DownloadStatus};
 
 /// HLS 下载器配置
@@ -124,6 +126,11 @@ impl SegmentKeys {
     /// 取已缓存的 key；没有则返回 None（调用方回退到按需 fetch）。
     fn get(&self, key_url: &str) -> Option<[u8; 16]> {
         self.map.get(key_url).copied()
+    }
+
+    /// 已成功缓存的 key 个数（埋点用：区分「预取到 N 把」与「清单里引用了 M 把」）。
+    fn len(&self) -> usize {
+        self.map.len()
     }
 }
 
@@ -251,12 +258,23 @@ impl HlsDownloader {
             self.config.clone()
         };
 
+        // 埋点:清单阶段单独计时。CLI 侧此前只有 run 级聚合,
+        // 「下载慢」无法拆成 清单 / 取 key / 传输 / 合并 四段。
+        let manifest_stage = TraceStage::start(
+            "hls_manifest",
+            json!({"host": trace_url_host(url)}),
+            json!({}),
+        );
         let playlist = M3u8Parser::fetch_and_parse(&self.client, url)
             .await
             .context("failed to fetch m3u8")?;
 
         let total_segments = playlist.segments.len();
         let total_duration = playlist.total_duration;
+        manifest_stage.finish(json!({
+            "segments": total_segments,
+            "total_duration": total_duration,
+        }));
         info!(
             "解析完成: {} 分段, 总时长 {:.1}s",
             total_segments, total_duration
@@ -264,7 +282,9 @@ impl HlsDownloader {
 
         // 预取 AES 密钥:加密 HLS 的一把 key 覆盖整段 key block,
         // 旧实现每个分段都去取一次(每段多一次 HTTP RTT)。
+        let keys_stage = TraceStage::start("hls_keys", json!({}), json!({}));
         let segment_keys = Arc::new(SegmentKeys::prefetch(&self.client, &playlist.segments).await);
+        keys_stage.finish(json!({"cached_keys": segment_keys.len()}));
 
         // 2. 创建临时目录存储分段
         let temp_dir = output_path.with_extension("tmp");
@@ -292,6 +312,17 @@ impl HlsDownloader {
 
         // 使用 Semaphore 限制最大并发（修复：之前 max_concurrent 未实际生效）
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
+
+        // 埋点:分段传输阶段。**不**进 stall 白名单 —— 一门课的整体传输本来就
+        // 可能 >30s(1.3GB 的课 26–130s),把它算作 stall 就是永久误报。
+        let segments_stage = TraceStage::start(
+            "hls_segments",
+            json!({
+                "segments": total_segments,
+                "max_concurrent": self.config.max_concurrent,
+            }),
+            json!({}),
+        );
 
         let tasks: Vec<_> = segments
             .into_iter()
@@ -391,6 +422,12 @@ impl HlsDownloader {
             }
         }
 
+        // 传输阶段结束(成功或部分失败都算结束 —— 失败信息在 output 里)
+        segments_stage.finish(json!({
+            "failed": failed_segments.len(),
+            "bytes": progress_bytes.load(Ordering::Relaxed),
+        }));
+
         // 决定是否失败或继续
         if failed_segments.is_empty() {
             // 成功
@@ -407,6 +444,10 @@ impl HlsDownloader {
         // 4. 合并分段
         // 修复: 原实现并行读所有分段到 Vec<u8> → 4K 视频 1000+ 分段时 OOM
         // 改为顺序读取 + 立即写入，内存占用恒定为单个分段大小
+        // 埋点:合并阶段(全文件 2× 磁盘 IO)。此前只能靠估算(「占 1–5%」),
+        // 埋上之后这个占比是**实测**的。
+        let merge_stage =
+            TraceStage::start("hls_merge", json!({"segments": total_segments}), json!({}));
         info!("合并 {} 个分段（顺序读取）...", total_segments);
         let mut output_file = File::create(output_path).await?;
         let mut total_written = 0u64;
@@ -422,6 +463,8 @@ impl HlsDownloader {
             drop(data); // 显式释放（对大文件场景降低峰值内存）
             info!("合并进度: {}/{}", i + 1, total_segments);
         }
+
+        merge_stage.finish(json!({"bytes_written": total_written}));
 
         // 5. 清理临时文件
         tokio::fs::remove_dir_all(&temp_dir).await.ok();
@@ -726,6 +769,17 @@ impl HlsDownloader {
     }
 }
 
+/// 埋点用:只取 URL 的 host。
+///
+/// 完整 m3u8 URL 常带鉴权 token(小鹅通 CDN 的 `?auth=...`),
+/// NDJSON 是落盘文件,不该把 token 写进去 —— 只留 host 足够定位「哪个 CDN 慢」。
+fn trace_url_host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    // 去掉 userinfo(user:pass@host)
+    host.rsplit('@').next().unwrap_or(host)
+}
+
 /// 检测 URL host 是否属于需要 tulingpyton 防盗链头的 CDN。
 /// 小鹅通 CDN（xet.tech / xed.plus / xiaoe-materials.com）必须带 Referer + 登录 Cookie，
 /// 否则返回 HTTP 403（2026-08-29 实测）。
@@ -737,6 +791,7 @@ fn needs_xiaoe_cdn_headers(url: &str) -> bool {
 #[allow(unused_imports)] // bench 编译上下文看不到 super::* 调用方，test 实际使用
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     /// 验证默认配置的关键值
     #[test]
@@ -1152,5 +1207,162 @@ mod tests {
             HlsDownloader::extract_retry_after_from_err("HTTP 429 (retry-after: not_a_number)"),
             None
         );
+    }
+
+    /// 埋点回归:一次 HLS 下载必须产出 **4 个叶子阶段**的 done 事件。
+    ///
+    /// 缺了它们,「下载慢」就还是一坨黑盒 —— 管线分析只能给出「下载占 95%」这种
+    /// 没法行动的结论。拆成 清单 / 取 key / 分段传输 / 合并 之后,
+    /// 才能回答「合并阶段到底占几个百分点」(此前只是估算的 1–5%)。
+    ///
+    /// **这条用例必须能红**:删掉 `src/hls/downloader.rs` 里任一
+    /// `TraceStage::start("hls_*")`,对应的 `*_done` 事件就消失 → 必红。
+    // 属性顺序必须是 `#[serial]` 在外、`#[tokio::test]` 在内(与 src/core/trace.rs 一致)。
+    // 反过来写时 `#[tokio::test]` 先展开,`#[serial]` 落到生成函数的**内层**,
+    // 拿不到全局串行锁 ⇒ 本用例会与 `core::trace::tests::*` 并发跑,
+    // 两者都写全局 `X_VIDEOS_TRACE_DIR` ⇒ trace 文件互相污染
+    // (实测症状:`test_trace_step_raii` 读到 `hls_manifest` 而不是 `sleep_step`)。
+    #[serial]
+    #[tokio::test]
+    async fn test_hls_download_emits_four_leaf_stage_events() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        const SEGMENT_COUNT: usize = 2;
+        const SEGMENT_BODY: &[u8] = b"0123456789abcdef"; // 16 bytes,未加密
+
+        // mock HLS server:manifest + 2 个分段(明文,不用 key)
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = match socket.read(&mut buf).await {
+                        Ok(n) if n > 0 => n,
+                        _ => return,
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let response: Vec<u8> = if req.starts_with("GET /manifest") {
+                        let mut m3u8 =
+                            String::from("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n");
+                        for i in 0..SEGMENT_COUNT {
+                            m3u8.push_str(&format!("#EXTINF:5.0,\nsegment_{:04}.ts\n", i));
+                        }
+                        m3u8.push_str("#EXT-X-ENDLIST\n");
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            m3u8.len(), m3u8
+                        )
+                        .into_bytes()
+                    } else {
+                        let mut resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            SEGMENT_BODY.len()
+                        )
+                        .into_bytes();
+                        resp.extend_from_slice(SEGMENT_BODY);
+                        resp
+                    };
+                    let _ = socket.write_all(&response).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // 埋点落盘到独立 tmpdir(trace_root 每次读 env,不受其他测试影响)
+        let trace_dir = std::env::temp_dir().join(format!(
+            "hls-trace-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        std::env::set_var("X_VIDEOS_TRACE_DIR", &trace_dir);
+        let session_id = crate::core::trace::trace_session_open("hls-stage").await;
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let output_path = out_dir.path().join("output.ts");
+        let config = HlsDownloaderConfig {
+            max_concurrent: 4,
+            retry_count: 2,
+            timeout_secs: 5,
+            ..Default::default()
+        };
+        let downloader = HlsDownloader::with_config(config).await.unwrap();
+        let manifest_url = format!("http://127.0.0.1:{}/manifest.m3u8", port);
+
+        let result = downloader.download(&manifest_url, &output_path, None).await;
+        assert!(
+            result.is_ok(),
+            "download should succeed: {:?}",
+            result.err()
+        );
+
+        crate::core::trace::trace_session_close(json!({"status": "ok"})).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let path = trace_dir.join(format!("{session_id}.ndjson"));
+        let content = std::fs::read_to_string(&path).unwrap();
+        let events: Vec<serde_json::Value> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("每行必须是合法 JSON"))
+            .collect();
+
+        fn find<'a>(events: &'a [serde_json::Value], step: &str) -> &'a serde_json::Value {
+            events
+                .iter()
+                .find(|e| e["step"] == step)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "缺少埋点事件 {step}(实际有: {:?})",
+                        events
+                            .iter()
+                            .map(|e| e["step"].as_str().unwrap_or("?"))
+                            .collect::<Vec<_>>()
+                    )
+                })
+        }
+
+        // 4 个阶段各一对 marker + done(marker 立刻落盘 = 卡死现场的第一手证据)
+        for stage in ["hls_manifest", "hls_keys", "hls_segments", "hls_merge"] {
+            assert!(
+                find(&events, stage)["output"]["phase"] == "start",
+                "{stage} 缺少开始标记"
+            );
+            assert!(
+                find(&events, &format!("{stage}_done"))["duration_ms"].is_u64(),
+                "{stage}_done 必须带真实耗时"
+            );
+        }
+
+        let expected_bytes = (SEGMENT_BODY.len() * SEGMENT_COUNT) as u64;
+        assert_eq!(find(&events, "hls_manifest_done")["output"]["segments"], 2);
+        // 明文流没有 key —— 阶段仍必须出现(cached_keys=0),否则「无 key 的流」会缺一段计时
+        assert_eq!(find(&events, "hls_keys_done")["output"]["cached_keys"], 0);
+        assert_eq!(find(&events, "hls_segments_done")["output"]["failed"], 0);
+        assert_eq!(
+            find(&events, "hls_segments_done")["output"]["bytes"],
+            expected_bytes
+        );
+        assert_eq!(
+            find(&events, "hls_merge_done")["output"]["bytes_written"],
+            expected_bytes
+        );
+        // 埋点里不许出现完整 URL(可能带鉴权 token)—— 只留 host
+        assert_eq!(
+            find(&events, "hls_manifest_done")["input"]["host"],
+            format!("127.0.0.1:{port}")
+        );
+
+        let _ = std::fs::remove_dir_all(&trace_dir);
+        std::env::remove_var("X_VIDEOS_TRACE_DIR");
     }
 }
