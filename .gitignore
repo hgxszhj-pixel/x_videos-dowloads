@@ -50,3 +50,6 @@ exam-lookup/tools/
 # Local runtime state (SQLite cache + scratch dir, never tracked)
 questions.db
 tmp/
+
+# review-eval 诊断产物(失败运行的报告,不入库)
+scripts/review_eval_baseline.failed.json

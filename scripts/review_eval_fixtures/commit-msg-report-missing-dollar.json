@@ -1,0 +1,36 @@
+{
+  "id": "commit-msg-report-missing-dollar",
+  "name": "report() 传了字面量变量名,整段用例静默跳过却报 100% 绿",
+  "description": "重构冒烟测试里把 report \"$VAR\" 误写成 report \"VAR\",导致该段一个用例都没产出,脚本照样退出 0。",
+  "plan": "把冒烟测试里 report 的调用参数改成变量名(去掉引号内的 $)。",
+  "repo_context": [
+    "scripts/commit_gate_smoke.sh 用 report() 消费内嵌 python 打印的 `状态<TAB>名字<TAB>细节`",
+    "report() 用 heredoc 把参数当数据流读,函数体本身这次没改",
+    "仓库规矩:测试脚本报绿不等于它测了东西 —— 空的段落必须显式判红"
+  ],
+  "base_files": {
+    "scripts/report.sh": "#!/usr/bin/env bash\n# report() 消费内嵌 python 打印的 `状态<TAB>名字<TAB>细节`\nreport() {\n    local st name detail\n    while IFS=$'\\t' read -r st name detail; do\n        case \"$st\" in ok|FAIL) ;; *) continue ;; esac\n        if [ \"$st\" = \"ok\" ]; then ok \"$name\" \"$detail\"; else bad \"$name\" \"$detail\"; fi\n    done <<< \"$1\"\n}\n",
+    "scripts/caller.sh": "#!/usr/bin/env bash\nset -uo pipefail\nVAR=\"$1\"\nreport \"$VAR\"\n"
+  },
+  "head_files": {
+    "scripts/report.sh": "#!/usr/bin/env bash\n# report() 消费内嵌 python 打印的 `状态<TAB>名字<TAB>细节`\nreport() {\n    local st name detail\n    while IFS=$'\\t' read -r st name detail; do\n        case \"$st\" in ok|FAIL) ;; *) continue ;; esac\n        if [ \"$st\" = \"ok\" ]; then ok \"$name\" \"$detail\"; else bad \"$name\" \"$detail\"; fi\n    done <<< \"$1\"\n}\n",
+    "scripts/caller.sh": "#!/usr/bin/env bash\nset -uo pipefail\nVAR=\"$1\"\nreport \"VAR\"\n"
+  },
+  "expected": [
+    {
+      "id": "literal-not-expanded",
+      "any_of": [
+        "$var",
+        "literal",
+        "expand",
+        "by name"
+      ],
+      "why": "report \"VAR\" 传的是字面量字符串 VAR,不是 $VAR 的值 —— 整段结果流为空"
+    }
+  ],
+  "must_not_contain": [
+    "unused variable",
+    "shellcheck",
+    "race condition"
+  ]
+}

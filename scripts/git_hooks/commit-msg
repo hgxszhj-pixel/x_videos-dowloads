@@ -137,6 +137,27 @@ if _eval_gate_path.exists():
     except Exception as _e:  # never block commit on eval_gate failure
         print(f"[commit-msg] eval-gate check skipped: {_e}", file=sys.stderr)
 
+# === review-eval gate (eval_gate 之后 / Ref-trace 之前) ===
+# 「改审查 prompt 必须先跑分」—— Anthropic《How the Claude Code team does code review》
+# 里最硬的一条:reviewer 的 prompt / 工具 / 模型一改,必须先在评测集上证明不退化。
+# 本地化:baseline 记 prompt 哈希 + recall;prompt 变了但没重跑评测 → 拒绝 commit。
+# 逃生舱: commit message 含 [skip-review-eval]
+# 详见 scripts/review_eval.py + scripts/review_eval_smoke.sh
+_review_eval_path = (
+    Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+    / "scripts"
+    / "review_eval.py"
+)
+if _review_eval_path.exists():
+    sys.path.insert(0, str(_review_eval_path.parent))
+    from review_eval import check_review_eval  # noqa: E402
+
+    _re_ok, _re_msg = check_review_eval(original)
+    if _re_msg:
+        print(_re_msg, file=sys.stderr)
+    if not _re_ok:
+        sys.exit(1)
+
 # === Ref-trace 自动注入 (Intent Lock 之后 / DID/VC 之前) ===
 # 若今天 ~/.local/share/x_videos-dowloads-trace/YYYY-MM-DD/ 下有 NDJSON,
 # 自动追加 "Ref-trace: <绝对路径>" 到 commit message。

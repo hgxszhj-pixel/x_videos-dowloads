@@ -1,0 +1,45 @@
+{
+  "prompt_sha256": "304bb2fec5a6ae89babd9fcdd9865b9b4f951454055afe854954d7e088261f7c",
+  "prompt_path": "/Users/hgxszhj/.claude/skills/code-review-canonical/code-reviewer.md",
+  "model": "sonnet",
+  "generated_at": "2026-10-29T23:55:35Z",
+  "recall": 1.0,
+  "expected_total": 3,
+  "found_total": 3,
+  "false_positive_count": 0,
+  "results": [
+    {
+      "id": "anyhow-from-e-strips-type",
+      "name": "From<MyError> 用 anyhow! 拍平成字符串,downcast 永久失效",
+      "expected_total": 1,
+      "found": [
+        "type-stripped"
+      ],
+      "missed": [],
+      "recall": 1.0,
+      "false_positives": []
+    },
+    {
+      "id": "commit-msg-report-missing-dollar",
+      "name": "report() 传了字面量变量名,整段用例静默跳过却报 100% 绿",
+      "expected_total": 1,
+      "found": [
+        "literal-not-expanded"
+      ],
+      "missed": [],
+      "recall": 1.0,
+      "false_positives": []
+    },
+    {
+      "id": "eval-trace-resolver-stall-swallowed",
+      "name": "elif 链把 resolver_try 的 stall 判定吃掉,stall_count 恒少算",
+      "expected_total": 1,
+      "found": [
+        "elif-chain-eats-stall"
+      ],
+      "missed": [],
+      "recall": 1.0,
+      "false_positives": []
+    }
+  ]
+}

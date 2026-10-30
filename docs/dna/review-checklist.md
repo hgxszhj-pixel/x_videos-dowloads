@@ -22,6 +22,16 @@ bash scripts/track_quality.sh all
 - ✅ cargo clippy 0 warning
 - ✅ `agent_did.py reputation` 没有近 N 次 fail_event 累积
 
+📊 **非阻断 · 发版节奏指标**（Anthropic 的北极星：PR 翻倍但回滚率降 40%+）：
+
+```bash
+python3 scripts/revert_rate.py --days 30          # 看趋势
+python3 scripts/revert_rate.py --days 30 --max-rate 0.05   # 超阈值 rc=2（可当发布闸）
+```
+
+只认 git 自己写的机器信号 `This reverts commit <sha>.`；中文「回滚/回退/撤回」只进候选清单，
+不进分母（关键字口径首测 3/3 全是误报）。口径由 `scripts/revert_rate_smoke.sh` 钉死。
+
 **未通过**: 直接修复,不许绕过。
 
 ### Phase 2 · 三档合规 (查 DNA 档位)
@@ -81,11 +91,40 @@ Refs: docs/dna/<相关文档> | MEMORY.md:<条目名>
 
 ---
 
+## 合并队列语义 (Phase 1 的**时机**规则,不是第 6 个 Phase)
+
+> 来源: Anthropic《How the Claude Code team does code review》第 ⑥ 层「合并队列」——
+> 后面的 PR **基于更新后的主分支重新接受检查**,而不是直接叠上去。
+> 他们 6→9 月 PR 数翻倍以上、回滚率反而降 40%+,靠的就是这一层。
+
+**规则**: 若合入前 `main` 已经有新提交(即基线移动过),**Phase 1 / Phase 3 必须在更新后的 `main` 上重跑**——
+在旧基线上跑绿了就放行,不算通过。
+
+```bash
+git fetch origin
+git rebase origin/main          # 冲突就停下来重新评估,不许 --skip
+bash scripts/track_quality.sh all
+bash scripts/mutation_smoke.sh smoke
+```
+
+**本机是单人分支流,没有真正的队列**,用 rebase + 重跑等价替代:
+区别只在「谁触发重跑」——队列由系统保证,rebase 要自己记得。
+所以把这一步写进清单,而不是指望自己记得。
+
+**为什么必须重跑**: CI 在旧基线上绿 ≠ 在新基线上绿。
+main 上别人刚合的改动可能改了你依赖的接口、可能引入新的 clippy warning、
+可能让你的新测试变成 flaky。这一层挡住的是「合完才发现炸」,不是「代码写得对不对」。
+
+**未通过**: 基线移动过但 Phase 1 是在 rebase 之前跑的 → reviewer 卡住。
+
+---
+
 ## Reviewer 实际操作流程 (5 分钟)
 
 ```
 1. 看 PR diff
 2. 跑 Phase 1 (track_quality.sh) — 30 秒
+   ↑ 若 main 有新提交:先 rebase,再重跑这一步(合并队列语义)
 3. 读 dna 三档地盘 — 确认 Phase 2 通过 — 1 分钟
 4. 跑 Phase 3 (mutation_smoke.sh smoke) — 30 秒
 5. 读 HANDOFF.md Session 段 — 确认 Phase 4 通过 — 1 分钟

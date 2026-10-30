@@ -1,0 +1,35 @@
+{
+  "id": "eval-trace-resolver-stall-swallowed",
+  "name": "elif 链把 resolver_try 的 stall 判定吃掉,stall_count 恒少算",
+  "description": "给 count_stalls 加上 resolver_try 计数。",
+  "plan": "count_stalls 统计三类步骤里 duration 超阈值的 stall。",
+  "repo_context": [
+    "scripts/eval_trace.py 的 stall_count 指标依赖 count_stalls 同类逻辑",
+    "stall 判定必须独立于步骤分类,不能挂在同一条 elif 链上",
+    "仓库规矩:指标读不到埋点时必须如实披露不可测,不能静默少算"
+  ],
+  "base_files": {
+    "scripts/count_stalls.py": "STALL_THRESHOLD_MS = 30_000\n\n\ndef count_stalls(events):\n    \"\"\"统计 stall 事件数(duration >= 阈值的 resolver_try / download_one / fetch_video_info)。\"\"\"\n    stalls = 0\n    for ev in events:\n        if ev.step == \"resolver_try\":\n            pass\n        if ev.step in (\"resolver_try\", \"download_one\", \"fetch_video_info\"):\n            if ev.duration_ms >= STALL_THRESHOLD_MS:\n                stalls += 1\n    return stalls\n"
+  },
+  "head_files": {
+    "scripts/count_stalls.py": "STALL_THRESHOLD_MS = 30_000\n\n\ndef count_stalls(events):\n    \"\"\"统计 stall 事件数(duration >= 阈值的 resolver_try / download_one / fetch_video_info)。\"\"\"\n    stalls = 0\n    for ev in events:\n        if ev.step == \"resolver_try\":\n            stalls += 1\n        elif ev.step in (\"resolver_try\", \"download_one\", \"fetch_video_info\"):\n            if ev.duration_ms >= STALL_THRESHOLD_MS:\n                stalls += 1\n    return stalls\n"
+  },
+  "expected": [
+    {
+      "id": "elif-chain-eats-stall",
+      "any_of": [
+        "elif",
+        "unreachable",
+        "never",
+        "not counted",
+        "short-circuit"
+      ],
+      "why": "第一个 if 已经吃掉 resolver_try,后面的 elif 永远轮不到 → resolver_try 的 stall 一次都不会被计入"
+    }
+  ],
+  "must_not_contain": [
+    "import error",
+    "syntax error",
+    "type hint"
+  ]
+}
