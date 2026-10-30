@@ -130,6 +130,37 @@ grep 不到卡在哪个 idx。marker 立刻落盘 = 卡死现场的第一手证�
 - `session_close` **按 id 写回自己的文件**,再从栈里按 id 移除
   (close 顺序未必是栈序 —— 并发时更不是)
 
+### 2026-10-30 修订 2:埋点版本号 + session 墙钟总耗时
+
+> **触发**:上一条修订把「真实耗时」补上之后,发现**旧基线和新 trace 不能直接比**了
+> —— 换了埋点语义,`stall_count` 的口径就变了,delta 分不清是「性能变差」还是
+> 「测得更准」。而这条规则之前**只写在文档里,没有任何东西检查它**。
+
+#### 1. `extra.schema_version` —— 埋点 schema 版本
+
+`src/core/trace.rs` 的 `TRACE_SCHEMA_VERSION`(当前 = `2`),写进
+**每个 session** 的 `session_open` 与 `session_close` 的 `extra.schema_version`。
+
+- **什么时候 +1**:只有「同名字段的含义或口径变了」才 +1。
+  加新步骤、加可选字段**不用** +1(不影响已有指标的计算)。
+- **消费方**:`scripts/eval_trace.py` 的 `check_version_compatible()`。
+  baseline 与 current 版本不一致 ⇒ **拒绝出判决**(退出码 3),而不是照比不误。
+- **为什么必须机器强制**:旧 baseline 里 resolver 永远不可能被判成 stall
+  (阈值 30s 而 duration 恒 0),新 current 里会 ⇒ 同一个 delta 既可能是
+  「性能变差」也可能是「测得更准」。靠人记得重锁基线 = 迟早忘。
+
+#### 2. `session_close.output.total_ms_proxy` —— session 墙钟总耗时
+
+| 项 | 说明 |
+|----|------|
+| 口径 | **session_open → session_close 的真实经过时间**,含全部等待 |
+| 为什么不用「叶子步骤 duration 之和」 | 那会把**没埋点的等待**漏掉 —— 而「转圈但没有速度」恰恰就是那部分等待。叶子之和会系统性低报总耗时 |
+| 写不进去时 | session 已从栈里移除 ⇒ **不写这个 key**(宁可「⚪ 不可测」也不要假的 0,H2) |
+| 消费方 | `eval_trace.py` 的 `avg_total_ms`,分母 = **真测到该 key 的 session 数**(不是全部 session) |
+
+> **这个 key 此前从未被写过** —— `avg_total_ms` 因此是死指标(恒为 0 却显示
+> 「⚪ 不可测」)。2026-10-30 起真的埋上了。
+
 ### 已知边界(未解决,别当成已修)
 
 - **并发 item session 的归属**:session 栈是**全局**的,不是 task 局部的。
@@ -209,6 +240,11 @@ grep -c '"session_id":"01JB5K8Z9R3X7V4Y"' trace.ndjson
 | **2026-10-30** `TraceStage::finish` 的 duration 写死 0 | `src/core/trace.rs` `finish()` | `test_trace_stage_records_real_duration` 断言 done 事件 `duration_ms ≥ 40` |
 | **2026-10-30** session open **覆盖**栈而不是压栈(旧全局语义) | `src/core/trace.rs` `trace_session_open()` | `test_nested_sessions_keep_own_files`(外层文件只剩 `session_open`)+ `test_outer_session_close_goes_to_its_own_file_while_inner_open` |
 | **2026-10-30** close 只关最内层(不退化成按 id 关自己) | `src/core/trace.rs` `TraceSession::close()` | `test_outer_session_close_goes_to_its_own_file_while_inner_open`(外层 close 落进内层文件,`who` 变成 `"inner"`) |
+| **2026-10-30** `inject_total_ms` 直接 return(不写墙钟总耗时) | `src/core/trace.rs` `inject_total_ms()` | `test_session_close_carries_real_total_ms`(断言 `total_ms_proxy` 存在且 ≥ 50ms) |
+| **2026-10-30** `session_open` 的 `extra.schema_version` 改名 | `src/core/trace.rs` `trace_session_open()` | `test_session_open_carries_schema_version`(open/close 两行都断言) |
+| **2026-10-30** `check_version_compatible` 恒返回 True | `scripts/eval_trace.py` | `test_different_version_is_incompatible` + `test_main_returns_3_on_version_mismatch` |
+| **2026-10-30** `avg_total_ms` 分母用 `total_sessions` | `scripts/eval_trace.py` `from_dir()` | `test_denominator_counts_only_sessions_with_total_ms`(8000 vs 摊成 4000) |
+| **2026-10-30** 删掉「current 无 session ⇒ 豁免版本判定」 | `scripts/eval_trace.py` `check_version_compatible()` | `test_current_without_sessions_is_not_a_false_alarm`(防永久误报) |
 
 > 2026-10-30 的 3 个变异都是**实跑验证过会红**的,不是「看着像能抓」。
 > 复现方式见下(`mutation_smoke.sh manual` 只覆盖 Rust,本轮用手改 + 还原的方式跑)。

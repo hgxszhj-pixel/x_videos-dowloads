@@ -13,9 +13,13 @@
 | 指标 | 类型 | 计算 | 含义 |
 |------|------|------|------|
 | `success_rate` | float 0.0-1.0 | `ok_sessions / total_sessions` | session_close.output.status == "ok" 的占比 |
-| `avg_total_ms` | int | `Σ(session_close.total_ms_proxy) / N` | ⚠️ **死指标**:`total_ms_proxy` 在整个 `src/` 里一次都没被写过 ⇒ 恒为 0 ⇒ 报「⚪ 不可测」 |
+| `avg_total_ms` | int | `Σ(session_close.total_ms_proxy) / N'` ,其中 `N'` = **真测到该 key 的 session 数** | session 墙钟总耗时(session_open → session_close,**含全部等待**)。2026-10-30 起 `src/core/trace.rs` 真的写这个 key 了;旧基线仍没有 ⇒ 对旧基线显示「⚪ 不可测」 |
 | `resolver_chain_length` | float | `Σ(resolver_try events) / N` | 平均每个 session 串行 resolver 多少次(BUG-D 卡死点) |
 | `stall_count` | int | `Σ(events where step ∈ STALL_ELIGIBLE_STEPS and duration_ms ≥ 30000)` | stall ≥ 30s 的**叶子**事件总数(BUG-E / BUG-D 都触发) |
+
+> **分母为什么是 `N'` 而不是 `N`**:分子只累加了带 `total_ms_proxy` 的 session。
+> 拿全部 session 当分母会把「没测到」摊成「耗时 0」,系统性低报(H3:分母必须可复算)。
+> 变异测试:`test_denominator_counts_only_sessions_with_total_ms`(8000 被摊成 4000 → 必红)。
 
 ### `stall_count` 的 step 白名单(2026-10-30 起)
 
@@ -39,7 +43,7 @@ AGGREGATE_STEPS = frozenset({"cli_resolve_done", "cli_download_run_done"})  # �
 新埋点多了 `resolver_try_done` 事件,但它**不**进链长指标 ——
 否则同一个指标名会同时表示「课节数」和「尝试数」,已锁基线直接失效。
 
-### ⚠️ 换埋点后必须重新锁基线
+### ⚠️ 换埋点后必须重新锁基线 —— **现在由机器强制了**
 
 2026-10-30 之前,`resolver_try` 的 duration 是写死的 0 ⇒ resolver 阶段**永远**不可能
 被判成 stall。埋点修好后,同样的运行会**多出** `resolver_try_done` 带来的 stall。
@@ -47,11 +51,40 @@ AGGREGATE_STEPS = frozenset({"cli_resolve_done", "cli_download_run_done"})  # �
 ⇒ **基线与 current 必须来自同一套埋点版本**,否则 `stall_count` 的 delta 是
 「测得更准」而不是「性能变差」。重锁:`bash scripts/install_perf_baseline.sh`。
 
+**2026-10-30 起这条规则不再只靠人记**:`src/core/trace.rs` 的
+`TRACE_SCHEMA_VERSION`(当前 `2`)写进每个 session 的
+`session_open` / `session_close` 的 `extra.schema_version`;
+`eval_trace.py` 的 `check_version_compatible()` 发现两侧版本不一致
+(或任一侧有 session 缺版本)⇒ **拒绝出判决**,退出码 **3**:
+
+```
+⛔ [schema-mismatch] 拒绝出判决: 埋点版本不一致: baseline=['1'] vs current=['2']
+   修: 用**同一套埋点版本**的数据重锁基线 —— bash scripts/install_perf_baseline.sh <日期> <标签>
+```
+
+退出码语义(调用方据此分别处置):
+
+| 码 | 含义 | 该做什么 |
+|----|------|---------|
+| 0 | 无退化 | — |
+| 1 | 基线不可用(空/无 session) | 重锁基线 |
+| 2 | **真的**检测到退化 | 排查性能 |
+| 3 | 埋点版本不兼容 | 重锁基线(**不是**性能问题) |
+
+**一个必须记住的例外**:current 侧**没有** session 时**不做版本判定**。
+只用了 CLI(没开 GUI session)时,今天的 trace 只落在 `no-session/` fallback 里
+⇒ `current.total_sessions == 0` 是**常态**。照常比对会得到「版本不一致」
+⇒ **永久误报**(2026-10-22 把「静默漏报」换成「永久误报」的老错误)。
+这种情况改为如实披露「current 无可用 session,指标没有分母」。
+
 ### 指标来源(NDJSON 5 元组)
 
 ```json
-// 一次 session_close
-{"step":"session_close","output":{"status":"ok","total_steps":5}}
+// 一次 session_close —— total_ms_proxy = session 墙钟总耗时(2026-10-30 起真埋)
+{"step":"session_close","output":{"status":"ok","total_ms_proxy":43210},"extra":{"schema_version":2}}
+
+// 一次 session_open —— extra.schema_version = 埋点版本(eval 靠它拒绝跨版本比较)
+{"step":"session_open","output":{"file_path":"..."},"duration_ms":0,"extra":{"prefix":"gui-single","schema_version":2}}
 
 // 一次 resolver_try(在 resolve_items_serially 内)—— **开始标记**,duration 恒 0
 {"step":"resolver_try","input":{"idx":2,"title":"..."},"output":{"phase":"start"},"duration_ms":0}

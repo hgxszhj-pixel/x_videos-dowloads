@@ -178,23 +178,26 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 
 | 盲区 | 现状 |
 |------|------|
-| `avg_total_ms` 是死指标 | 读 `total_ms_proxy` 键，而该键在 `src/` 里从没被写过 → 恒为 0，报告里显示「⚪ 不可测」 |
+| ~~`avg_total_ms` 是死指标~~ | ✅ **已修**（2026-10-30 第二轮）：`src/core/trace.rs` 现在真的写 `session_close.output.total_ms_proxy`（口径 = session_open → session_close 的**墙钟经过时间**，含全部等待）。分母也从 `total_sessions` 改成「真测到该 key 的 session 数」，避免把「没测到」摊成「耗时 0」 |
+| **旧基线与新 trace 不可比** | ✅ **已修**（机器强制）：`TRACE_SCHEMA_VERSION` 写进每个 session 的 `extra.schema_version`；`eval_trace.py` 版本对不上就**拒绝出判决**（退出码 3）。此前这条规则只写在文档里，靠人记得重锁基线 |
 | CLI 的叶子阶段没埋点 | manifest / segments / merge 在 `src/commands/download/**`，本轮未埋点 ⇒ CLI 侧只有 run 级聚合 |
 | 课节池流程本身没有 session | 事件落进 `no-session/<date>.ndjson` fallback，不计入 success_rate 分母 |
-| 机器上没有真实 trace 数据 | `~/.local/share/x_videos-dowloads-trace/` 是空的 |
+| 机器上没有真实 trace 数据 | `~/.local/share/x_videos-dowloads-trace/` 有历史数据(到 2026-10-16)，但**全部是旧埋点** ⇒ 版本对不上，需用新埋点重跑后重锁基线 |
 
 **这意味着**：本次的解析阶段提速是**基于代码路径推导 + 单测**，
 **没有**用真实课程跑出来的端到端数字支撑。下载阶段的两个改动有 bench 数字（2.2）和变异测试（2.1）。
 但 2.6 的埋点落地后，**下一次跑真实课程就能拿到解析阶段的真实耗时** —— 这正是把
 「估算」变成「实测」的入口。
 
-`eval_trace.py` 里 `total_ms_proxy` 那个死指标是已知 open loop，本次**故意没动** ——
-修它要先定义「一次下载的总耗时」到底怎么算（session 级 sum？单个 download_one？），那是另一个设计决策。
+`total_ms_proxy` 那个死指标已在**第二轮**修掉（口径：session_open → session_close 的
+**墙钟经过时间**，含全部等待；不用叶子步骤 duration 之和 —— 那会把没埋点的等待漏掉，
+而「转圈但没有速度」恰恰就是那部分等待）。详见 §4 表格与 `docs/dna/trace-schema.md`。
 
 > **换埋点后必须重新锁基线**：改之前 resolver 阶段永远不可能被判成 stall，
 > 改之后同样的运行会多出 `resolver_try_done` 带来的 stall。
 > 基线与 current 必须来自同一套埋点版本，否则 `stall_count` 的 delta 是「测得更准」而不是「性能变差」。
-> 重锁：`bash scripts/install_perf_baseline.sh`。
+> **这条现在由机器强制**（`TRACE_SCHEMA_VERSION` + `eval_trace.py` 退出码 3），
+> 不再只靠人记得。重锁：`bash scripts/install_perf_baseline.sh`。
 
 ---
 
@@ -214,14 +217,18 @@ API fast-path 是纯 HTTP，彼此无共享状态。
 
 ## 6. 验证清单
 
-- [x] `cargo test --bin x-video-downloader` —— 406 passed / 0 failed / 12 ignored
-- [x] `pytest tests/test_eval_trace.py` —— 18 passed
+- [x] `cargo test --bin x-video-downloader` —— **409 passed** / 0 failed / 12 ignored
+- [x] `pytest tests/test_eval_trace.py` —— **25 passed**
 - [x] `cargo clippy --all-targets -- -D warnings` —— 干净
 - [x] `cargo fmt --check` —— 干净
+- [x] `bash scripts/commit_gate_smoke.sh` —— 45/45；`bash scripts/hook_smoke.sh` —— 18/18
 - [x] 变异测试：key 缓存测试改坏后**确认红**（`left: 7, right: 1`）
 - [x] 变异测试：cookie 缓存 3 条断言（命中不重算 / 过期重算 / 失败不缓存）
 - [x] 变异测试：stall 白名单退回旧三元组 → 4 条红
 - [x] 变异测试：`TraceStage::finish` 的 duration 写死 0 → trace stage 测试红
+- [x] 变异测试：`inject_total_ms` 直接 return → `total_ms_proxy` 测试红；`schema_version` 改名 → 版本测试红
+- [x] 变异测试：`check_version_compatible` 恒 True → 3 条红；`avg_total_ms` 分母改回 `total_sessions` → 1 条红；删掉「current 无 session 豁免」→ 1 条红（防永久误报）
+- [x] 端到端：用**真实的旧基线** `baseline-2026-10-12` 对比新埋点 → 正确拒绝出判决（rc=3）；同版本对比 → 正常出判决且 `avg_total_ms` 显示真值
 - [ ] **真实课程端到端复测** —— 需要已登录的 ego-lite profile + 一门真实课程（未做）
 
 ---
