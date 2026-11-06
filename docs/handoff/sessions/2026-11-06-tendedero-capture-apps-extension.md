@@ -71,14 +71,40 @@ Desktop 的默认规则从「只认 xattr」变成「认 xattr **或** 启用的
 - 仓库 `~/Projects/tendedero`,分支 `feat/capture-apps`:
   - `d28b0be` 初版(16 文件,+455/−12)
   - `d5c6ef3` 改成通用规则 + 修 watcher 漏洞(4 文件,+198/−87)
+  - `fd8dafb` 抽出跨平台内核包 `TendederoCore`(11 文件,+238/−93)
   - 工作树干净,**未推 upstream**。
 - 新增 `docs/extensions.md`:写清「加一个新截图 app = 表里加一行」「新一类图片来源 = `Acceptance` 加一个 case + `startWatcher()` 加一个 watcher」,并给出两条自检命令。
 - 安装版已覆盖 `/Applications/Tendedero.app`;旧版 1.8.1 备份在 `build/Tendedero-1.8.1-original.app`(`build/` 被 .gitignore,不会进 git)。
 - 记忆:`~/memory/projects/tendedero.md`(Obsidian 项目档案)+ auto-memory `tendedero-capture-apps-extension-2026-11-06.md`。
 
-## 六、遗留
+## 六、跨平台:内核包 `TendederoCore`(第二轮)
+
+用户追问「源码不支持跨平台的吗?」⇒ 查清事实:**上游是 macOS-only**(`Package.swift` 写死 `platforms: [.macOS(.v14)]`、`Sources/` 零 `#if os()`、14 处 AppKit + Carbon + CFPreferences + xattr;20 文件 4680 行)。移植 ≠ 加开关,是重写 UI 与 watcher 层。
+
+用户选定范围 = **抽出跨平台内核包**(不做 UI 移植)。落法:
+
+- `TendederoCore/` 独立 Swift Package:`Package.swift` **不写 platforms**、只 `import Foundation`;内容 = `CaptureApp` / `CaptureApps`(规则)/ `CapturePlatform`(平台差异的缝)。
+- **平台差异由宿主注入**:原来写死的两处 —— `/Applications` 找 app、`~/Desktop`/`~/Pictures`/`~/Downloads` —— 改成 `CapturePlatform { isInstalled, standardFolders }`;macOS 的答案留在 app target 的 `Sources/Tendedero/CapturePlatform.swift`。核心因此不含任何 macOS API。
+- 根包走 path dependency:`.package(path: "TendederoCore")`;app target 加 `import TendederoCore`,3 个调用点改成 `CaptureApps.enabledPrefixes(in: .macOS)` / `watchPlan(in: .macOS)` / `installed(in: .macOS)`。
+- **自检跟着进包**:从 `scripts/check-capture-apps.swift`(裸 swiftc)改成包内 executable target `CaptureAppsCheck` ⇒ `swift run --package-path TendederoCore CaptureAppsCheck`;断言改成不依赖本机(临时目录当"标准图片目录"、`isInstalled` 注入假机器),否则在本机(装了 Snipaste)会假红。
+- **新增可移植性门禁** `TendederoCore/scripts/check-portable.sh`:核心里出现 macOS-only import/API(或包清单写 platforms)⇒ 非零退出。
+
+验证:
+
+- `swift build --package-path TendederoCore` ✓;`swift run --package-path TendederoCore CaptureAppsCheck` ⇒ `capture apps: ok`;根包 `swift build` ✓;release universal 构建 ✓(27.65s)。
+- `bash TendederoCore/scripts/check-portable.sh` ⇒ `portable: the core uses no macOS-only things`(rc=0)。
+- **变异测试重跑(抽包后)**:变异体改的是包内源文件,整套复制一份再 `swift build` + `swift run` ⇒ **10 个变异全 KILLED,0 存活**。其中两个专打新的缝:「宿主给的目录被忽略」(→ 目录断言红)与「宿主没被问装没装」(→ 装没装变成 7 个 app 全中,红)。
+- **端到端回归**:装新构建后投放 5 个文件 ⇒ `pegged` 恰好是桌面 / `~/Pictures` / `~/Downloads` 三个 `Snipaste_smoke.jpg`,`ordinary_photo.jpg` 与 `Kaplan.jpg` 都没挂 ⇒ 抽包没有改行为。
+
+坑:
+
+- **SwiftPM path dependency 的身份**:目录名即身份(小写),`.product(name:package:)` 里写 `package: "TendederoCore"` 可用(大小写被规范化),不用猜。
+- **别把本机状态写进自检**:第一版断言 `standardFolders` 是本机 home 下的三个目录 ⇒ 换机器/换平台就假红;改成宿主注入 + 临时目录。
+- **本机没有 docker / Linux 工具链** ⇒ 「Linux 可编译」只能由「核心无 macOS API + 包清单不限定平台 + 门禁机器守着」来证明,**没有真的跑过一次 Linux 编译**(诚实标注)。
+
+## 七、遗留
 
 - 分支未推;若要长期保存,需在 GitHub 上开 fork 并把 origin 指过去。
-- **跨平台**:上游是 macOS-only(`platforms: [.macOS(.v14)]`、零 `#if os()`、AppKit + CFPreferences + xattr),移植 = 重写 UI 与 watcher 层,不是加开关。本次新增的 `CaptureApps.swift` 是纯 Foundation,是这里唯一可搬的部分。
+- **跨平台只做到内核层**:UI + watcher(菜单栏那条线 + FSEvents 监视)在别的系统上仍需重写;本次没有做,也没有假称做了。
 - CleanShot X / Shottr / PixPin / Kap / Monosnap / Lightshot 本机没装,只验证了**规则**通用(目录 + 名字),没验证它们各自的默认目录和命名;真装上后若目录不在 `~/Desktop`/`~/Pictures`/`~/Downloads`,用菜单里的「Also watch folders」补,或给该 app 加一条 `settings` 闭包读它的配置。
 - `README.md` / `docs/i18n` 的手势表没动(该表记的是「做了什么」,本次没有新手势)。
