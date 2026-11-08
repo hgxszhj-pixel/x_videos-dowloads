@@ -5,7 +5,9 @@
 >         多数从来没被 Skill tool 唤起过。每条新 session 第一件事是来这查一下,挑该用的。
 > **维护**: 每次用了 / 决定不用的 skill,在状态栏更新。`Date` 列为最近一次有效触发。
 
-**统计**: ~/.claude/skills/ = 111 项 + plugin marketplaces ~30 项 = 约 140 个 skill。
+**统计**: ~/.claude/skills/ = **32 项**（2026-10-27 trim 后，含新增 `criteria`）+ plugin marketplaces ~30 项。
+**口径**：只数**含 `SKILL.md` 的目录**。`~/.claude/skills/` 下另有 4 个非技能目录（`hookify/` 插件源码仓、`learned/` 空目录、`skill-manager/` 工具仓、`workflow` → `~/.claude/intelligence` 符号链接），**不计入技能数**。
+**88 个 30 天零触达技能已归档**到 `~/.claude/_archive/skills-2026-10-27/`（不在扫描路径内，回滚见该目录 `restore.sh`）。
 **本文档只列我直接相关的,非相关 skill 永远不进表(避免噪音)。**
 
 ---
@@ -39,24 +41,34 @@
 
 ## ⚪ 未触达 (装在本机但 30+ 天没 trigger)
 
+> 2026-10-27 trim 后：下表只列**仍在 `~/.claude/skills/`** 的未触达技能。
+> 其余未触达技能已归档（见下方 📦 段）。
+
 | Skill | 何时该用 | 为何没触达 |
 |-------|---------|----------|
-| `antfu` / `antfu-design` | Vue 生态风格 / antfu 个人风格 | 不用 Vue |
-| `draw-io` / `slidev` / `remotion-best-practices` | 画图 / 幻灯片 / 视频 | 几乎不做演示 |
 | `firecrawl-scraper` | 通用 web 抓取 | 走 camoufox / ego-lite 更准 |
-| `page-agent` | UI 自动化 | 当前项目无 UI agent 需求 |
-| `proactive-self-improving-agent` | 自我反思循环 | 类似 ultragoal 已在用 |
-| `shannon` | 黑客松式 brainstorm | 非黑客松场景 |
 | `shanhu-analyzer` | 珊瑚 SaaS 课程解析 | 只在下载小鹅通课用 |
 | `douyin-video-download` | 抖音下载 | 当前项目不接抖音 |
-| `learn` / `teach` / `read` | 学习循环 | 当前工作流未嵌入 |
-| `health` / `hunt` | 自我优化 / bug hunt | ultragoal 已替代 |
-| `skills-updater` | 自动更新 skills | 手动更可控 |
-| `ralph-tui-*` (4 个) | TUI 任务管理 | ultragoal state 已替代 |
-| `nitro` / `nuxt` / `pinia` / `slidev` | Nuxt 全家桶 | 项目不用 |
-| `graphify` / `darwin-skill` / `check` | 数据图 / Darwin OS / 检查工具 | 没找到契合场景 |
-| `skill-evolve` / `skill-manager` | skill 自我进化 | 与 writing-skills 部分重叠 |
-| `gitnexus-*` (6 个) | 代码图分析 — ⚠️ **本 session 至少应触发 `gitnexus-exploring`** | 把 codegraph 顶替了 |
+| `slidev` / `remotion-best-practices` | 幻灯片 / 视频 | 几乎不做演示 |
+| `darwin-skill` | Darwin OS | 没找到契合场景 |
+| `gitnexus-*` (项目本地 6 个) | 代码图分析 — ⚠️ **至少应触发 `gitnexus-exploring`** | 把 codegraph 顶替了 |
+
+## 📦 已归档 (2026-10-27 trim,30 天零触达 → 移出扫描路径)
+
+归档区 `~/.claude/_archive/skills-2026-10-27/`（**不在** Claude Code 扫描路径内），一键回滚 `bash ~/.claude/_archive/skills-2026-10-27/restore.sh`。
+
+| 族 | 数量 | 归档理由 |
+|----|------|---------|
+| hyperframes 动效族 | 9 | 不做动效 |
+| Vue/前端族 (vue/pinia/vite/nuxt/unocss/pnpm…) | 15 | 项目不用 Vue 生态 |
+| gitnexus 族 (全局副本) | 7 | 项目 `.claude/skills/gitnexus/` 有同名本地副本 |
+| ralph-tui 族 | 4 | ultragoal state 已替代 |
+| 前端工具零散 (vueuse/tsdown/vercel-react…) | 若干 | 未触达 |
+| 工具托管 (understand/ego-browser/cua-driver/task-observer/media-use/page-agent) | 6 | 未触达 |
+| 观察期 (distilly/hunt/skill-evolve/agent-memory-*/knowledge-distill/claudemd-rules-to-skills/skill-selection-3-criteria) | 9 | 未触达，等真实场景 |
+| 其余零散 | 38 | 未触达 |
+
+**刻意保留**：`code-review-canonical` / `plan-canonical` / `debug-canonical` —— 它们在 🟡 偶用段（"该用没用"），归档等于删掉待用能力。
 
 ## 🔴 永久 watch (装而不删,仅重评触发)
 
