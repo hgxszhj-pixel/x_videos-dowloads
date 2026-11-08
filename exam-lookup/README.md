@@ -12,6 +12,8 @@
 | **双击**（推荐） | Finder 里双击 `查题.command` | 不敲命令；开一个终端窗口 + 自动开浏览器 |
 | 命令行 | `cd exam-lookup && python3 webui.py` | 想看日志 / 指定端口 |
 | 指定端口 | `python3 webui.py --port 9000` | 默认端口段被占 |
+| 局域网共用 | `python3 webui.py --lan` | 同事在同一内网访问 `http://<本机IP>:8765/`；启动时会打印地址 |
+| 复习怎么来题 | 复习页「装载本库错题 / 装载本库 50 题」 | 复习只显示**被装载过**的题（FSRS 排期卡）；下拉标「排期 N / 到期 M」，标「未装载」的库点按钮装进去 |
 
 - 打开地址：`http://127.0.0.1:8765/`（被占自动顺延 **8765→8769**，不会有报错弹窗）
 - **停**：关掉那个终端窗口，或在该窗口按 `Ctrl+C`（`查题.command` 的窗口一关，服务就停）
@@ -34,6 +36,13 @@
 - 上块：题库答案（大字号 + 题型·题号·命中率·来源·选项·解析）
 - 下块：**官方原文依据**（材料类型 + 文件名 + 出处路径 + `[高亮]` 摘录）
 - `联网兜底` 默认**关**：勾了才走联网检索（慢，且会写 `pending.jsonl`）
+- 题型支持 `single` / `multiple` / `judge` / `blank`，其中**排序题是 multiple 的变体**：
+  - 排序：`type: "multiple"` + `"ordered": true`，`answerKeys` 就是正确**顺序**，如 `["C","B","D","A","F","E"]`；
+    选项要全选、顺序也算答案。刷题页按空位依次点选、位次角标实时显示。
+    （老数据写 `type: "ordering"` 也认，等同于 multiple+ordered；新数据请用后者）
+  - `blank`（填空）：没有选项，`options` / `answerKeys` 留空数组，答案按空位顺序写在 `answerText` 里，如 `["绝密","机密","秘密"]`；
+    题干里的空位数必须与 `answerText` 条数一致（校验会报红）。刷题页逐空输入、逐空判对错，同义写法用 `/` 分隔
+- `深度兜底` 默认**关**：四级链一次跑完（题库 → 原文直证 → 多引擎一致 → Claude Code 读原件），排序/填空题靠第②级秒答
 
 **刷题 tab**
 - 选库 / 题型（单选·多选·判断）/ 题量（10/20/50/全部）→ `开始 / 重开`
@@ -146,7 +155,7 @@ make_collection.py  合并题库成「长期备考」合集（默认 安全两�
 parse_textbook_quiz.py  抽教材「小节测试」→ banks/教材原题-线路安全.json（答案由正文推导，带页码）
 parse_baomi_records.py  中国保密在线本人历史考试记录 → 按年份分库 banks/baomi-<年>.json（2024 / 2026）+ banks/baomi-我的错题.json
 make_drill.py       从数字考点生成「自测题」（挖空单选 + 对/错判断，答案有原文背书）
-sync_banks.py       把 banks/*.json 同步到 shiroha 刷题端 + 重建 banks-index.json（现 14 库 / 1689 题）
+sync_banks.py       把 banks/*.json 同步到 shiroha 刷题端 + 重建 banks-index.json（现 17 库 / 2153 题；含 --check）
 learned.jsonl / pending.jsonl  自动学习记录 / 待确认队列（联网兜底会写）
 tools/shiroha-quiz-web-*/data  shiroha 刷题端的数据目录（sync_banks.py 的输出）
 ```
@@ -182,17 +191,68 @@ python3 baomi_study_plan.py selftest   # 41 个资源 / 5.40 学时 / 我已学 
 python3 baomi_study_plan.py            # → crawl/保密培训-学时清单.md（还差多少学时、按顺序看哪几个）
 python3 kb_coverage.py 4         # 降到 4 字窗对照（会出假依据，只用来对比）
 python3 solve.py build           # 从 banks/*.json 重建 qb.sqlite3（索引可随时删掉重建）
+python3 solve.py search-selftest # 联网检索链自检：解析 / 考试宝优先标记 / 站内双票 / 引擎冷却（不联网）
+
+# 四级兜底链（题库 → 原文直证 → 多引擎 → Claude Code），单题命令行版
+python3 answer_chain.py "题目原文（含选项）"              # 只走 ①②③（不花模型额度）
+python3 answer_chain.py "题目原文" --web --llm           # 加上 ④ Claude Code（30–90s）
+python3 answer_chain.py --selftest                      # 分级短路/降级自检（不联网）
+
+# 证据包（给 Claude Code / 任何 LLM 读的原文材料，不判定答案）
+python3 ask_ctx.py "题目原文"        # 人读/模型读
+python3 ask_ctx.py -f 题目.txt       # 批量
+python3 ask_ctx.py --json "题目"     # 机器读
+python3 ask_ctx.py --selftest        # 排序题空位映射自检（CBDAFE）
+python3 llm_claude.py --selftest     # Claude 输出解析自检
 python3 solve.py stats           # 题库总量 + 按库分布
 python3 sync_banks.py            # 同步到刷题端网页（会打印「库数 / 合计题数」）
+python3 sync_banks.py --check    # 校验：网页端 data/ 与 banks/ 是否一致；正常无输出、异常 exit 1
+python3 kb_db.py validate-banks  # 题库格式契约：schema_version / 必填字段 / 答案是否在选项里，坏数据指名到题
+python3 kb_db.py import-banks    # 题库落库：banks/*.json → docs.sqlite 的 questions 表（幂等，校验不过拒写）
+python3 kb_db.py check-banks     # 校验：questions 表与 banks/*.json 是否一致；正常无输出、异常 exit 1
+bash ~/.hermes/scripts/sync_banks_daily.sh   # 定时任务用的包装：只在题库/数据库有变化或异常时输出
 ```
+
+`--lan` 只绑全网卡、不改权限：服务端**只放行本机与私有网段**（10./172.16–31./192.168./
+169.254./fe80::），公网地址一律 403 —— 路由器做了端口映射也不会把带答案的题库挂到互联网上。
+判据在 `webui.peer_allowed()`，`webui.py selftest` 里有 12 条放行/拒绝断言。
+
+**已挂定时任务**（Hermes cron，`题库同步到网页端（本地）`，每天 07:20，纯脚本无 LLM）：
+它跑的就是上面那个包装脚本，一次做两件事——① 拷贝到刷题端并重建 `banks-index.json`；
+② `kb_db.py validate-banks` 过格式契约 → `import-banks` 灌进 `docs.sqlite` 的 `questions` 表 → `check-banks` 复验。
+核对清单（`kb_review_queue.py`）现在直接从 `questions` 表取题，`banks/*.json` 只是导入格式，不再是取数来源。
+题库没变时完全静默（no_agent 任务空输出=不打扰），变了只打「哪些库动了 + 汇总」几行。
+两个哨兵（`sync_banks.py --check`、`kb_db.py check-banks`）分别盯网页端副本和数据库副本，
+sha1 不一致、少题、多题、改过没导入都会被抓出来。改完题库想立刻生效，手动跑一次包装脚本即可。
+
+## 插件（含热加载）
+
+新功能一律做成插件，主程序只做加载与隔离；细节见 `PLUGIN.md`。
+
+    python3 -m plugins list            # 谁在线、有没有报错
+    python3 -m plugins selftest        # 插件 + 加载器自检（含热加载/回滚演练）
+    python3 -m plugins due --limit 10  # 今天该复习哪些
+    python3 -m plugins enroll --limit 50   # 把答错过的题装进复习队列
+
+    已装插件   srs —— 错题复习调度（FSRS-6 算法移植自 open-spaced-repetition/py-fsrs，MIT）
+               数据在 jr/out/srs.json（删掉=清空复习历史，不影响查题）
+               HTTP: /api/srs/due、/api/srs/review、/api/srs/stats、/api/plugins
+               harvest —— 联网收编：人工确认后把「联网找到的题」写进 banks/web-learned.json
+               并同步 questions 表 / 查题索引 / 刷题端；页面上是第 5 个 tab「收编」
+               HTTP: /api/harvest/list、/api/harvest/commit、/api/harvest/ignore
+
+改插件文件不用重启 webui（每次请求 stat 一次，变了就重载）；新代码写坏会回滚到上一版，
+插件路由抛异常只毁那一次请求，主程序不受影响。
 
 ## 新增一套题库（走通的 5 步）
 
 1. 把试卷原文整份存成 `exam-lookup/<卷名>.txt`（**留档**，日后每个数字都能回原文复算）
 2. 写/复用 `parse_<卷名>.py`（试卷原件）或 `parse_textbook_quiz.py`（教材小节测试，答案得从正文推）：切出「题号 / 选项 / 答案」→ 输出 `banks/<库名>.json`；
-   末尾用断言把底线（题数、题型分布、题号连续、每题都有答案、单选选项数），对不上就 `exit 1`
+   末尾用断言把底线（题数、题型分布、题号连续、每题都有答案、单选选项数），对不上就 `exit 1`；
+   文件头必须写 `"schema_version": 1`（契约见 `schema/bank.schema.json`），生成完跑 `kb_db.py validate-banks`
 3. `python3 solve.py build` —— 查题端立刻能搜到
-4. `python3 sync_banks.py` —— 刷题端下拉里出现新库
+4. `python3 sync_banks.py` + `python3 kb_db.py import-banks` —— 刷题端下拉里出现新库，同时落进 `questions` 表
+   （两条都是幂等的，重跑不会产生重复题；`kb_db.py check-banks` 复验）
 5. `python3 webui.py selftest` —— 回归自检
 
 参考实现：`parse_comm_safety.py`（通信安全生产 50 题：单选 20 + 判断 30）。

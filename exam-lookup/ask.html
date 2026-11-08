@@ -194,6 +194,9 @@
     <button class="tab on" id="tab-ask" role="tab" aria-selected="true" aria-controls="pane-ask">查题</button>
     <button class="tab" id="tab-quiz" role="tab" aria-selected="false" aria-controls="pane-quiz">刷题</button>
     <button class="tab" id="tab-card" role="tab" aria-selected="false" aria-controls="pane-card">背题</button>
+    <button class="tab" id="tab-review" role="tab" aria-selected="false" aria-controls="pane-review">复习</button>
+    <button class="tab" id="tab-harvest" role="tab" aria-selected="false" aria-controls="pane-harvest">收编</button>
+    <button class="tab" id="tab-ffd" role="tab" aria-selected="false" aria-controls="pane-ffd">免费资源</button>
   </div>
   <button class="fsbtn" id="fsdown" title="缩小字号" aria-label="缩小字号">A−</button>
   <span class="fsval" id="fsval" aria-live="polite">17</span>
@@ -214,6 +217,7 @@
              stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>
         清除</button>
       <label for="web"><input type="checkbox" id="web" name="web"> 联网兜底（慢，会写 pending.jsonl）</label>
+      <label for="deep"><input type="checkbox" id="deep" name="deep"> 深度兜底（四级链，最后会让 Claude Code 读原件作答）</label>
       <span class="status" id="st"></span>
     </div>
     <!-- 导入「有题干、没答案」的文件：逐题先查本地题库，没命中的再给官方原文依据 -->
@@ -245,6 +249,9 @@
         <option value="single">单选</option>
         <option value="multiple">多选</option>
         <option value="judge">判断</option>
+        <option value="ordering">排序</option>
+        <!-- 填空（blank）暂缓启用：把 banks/_parked/自测-填空题.json 移回 banks/ 后取消注释 -->
+        <!-- <option value="blank">填空</option> -->
       </select>
       <select id="num" aria-label="选本次题量">
         <option value="10">10 题</option>
@@ -285,8 +292,8 @@
   <!-- ================= 背题（问答体材料，如《应知应会手册》） ================= -->
   <section id="pane-card" class="hide" role="tabpanel" aria-labelledby="tab-card">
     <h1>背题</h1>
-    <div class="sub">官方问答体材料逐条过：先自己想，再点「看答案」；记住了跳过，没记住的进待背清单，下次只背这些。
-      问答题没有选项，所以单列一页，不混进刷题页的判分流程。</div>
+    <div class="sub">先自己想，再点「看答案」；记住了跳过，没记住的进待背清单，下次只背这些。
+      下拉里两类材料：<b>问答体</b>（官方问答手册原文）和<b>题库 · 看题看答案</b>（把刷题题库连选项带答案一起过，只背不判分——要判分去「刷题」）。</div>
     <div class="badges" id="cardstat" aria-live="polite"></div>
     <div class="bar">
       <select id="cbook" aria-label="选背题材料"></select>
@@ -319,13 +326,70 @@
       <kbd>→</kbd> 跳过　｜　待背清单跟错题本一样存在本机浏览器里，换机器用上面的 json 搬</div>
     <div id="cardbody"></div>
   </section>
+
+  <section id="pane-review" class="hide" role="tabpanel" aria-labelledby="tab-review">
+    <h1>复习</h1>
+    <div class="sub">按 FSRS（Anki 那套算法）排期：今天该复习的题先过一遍，按你答得怎么样决定下次什么时候再见。
+      数据在本机 <code>jr/out/srs.json</code>，与刷新无关，换机器搬这个文件就行。</div>
+    <div class="badges" id="rvstat" aria-live="polite"></div>
+    <div class="bar">
+      <button id="rvstart">开始 / 重开</button>
+      <select id="rvnum" aria-label="本次复习题量">
+        <option value="10">10 道</option>
+        <option value="20" selected>20 道</option>
+        <option value="50">50 道</option>
+      </select>
+      <select id="rvbank" aria-label="只复习某个题库"><option value="">全部题库</option></select>
+      <button id="rvseed" class="ghost" title="把当前选中题库里「答错过」的题装进复习队列">装载本库错题</button>
+      <button id="rvseedall" class="ghost" title="把当前选中题库的前 50 题装进复习队列（没有错题记录时用这个）">装载本库 50 题</button>
+      <span class="status" id="rvmsg"></span>
+    </div>
+    <div class="bar" style="margin-bottom:.4rem">
+      <span class="prog" id="rvprog">未开始</span>
+    </div>
+    <div id="rvbody"></div>
+    <div class="hint">键盘：<kbd>空格</kbd> 看答案 · <kbd>1</kbd> 不会 · <kbd>2</kbd> 勉强 · <kbd>3</kbd> 会 · <kbd>4</kbd> 秒答</div>
+  </section>
+
+  <section id="pane-ffd" class="hide" role="tabpanel" aria-labelledby="tab-ffd">
+    <h2 style="margin:.2rem 0 .1rem">免费资源清单</h2>
+    <div class="hint" style="margin:0 0 .5rem">来自 GitHub 的 free-for-dev（1 365 条 / 57 分类），每周一 08:00 自动刷新。搜关键词或点左侧分类。</div>
+    <iframe id="ffdframe" title="免费资源清单" style="width:100%;height:78vh;border:1px solid #2a2f3a;border-radius:10px;background:#12141a"></iframe>
+  </section>
+
+  <section id="pane-harvest" class="hide" role="tabpanel" aria-labelledby="tab-harvest">
+    <h1>收编</h1>
+    <div class="sub">联网兜底找到、但你还没定论的题都在这儿。<b>只有你点了某个选项才会进题库</b>——
+      写进 <code>banks/web-learned.json</code>，同时更新查题索引和刷题端，下次查题就能秒回。</div>
+    <div class="badges" id="hvstat" aria-live="polite"></div>
+    <div class="bar">
+      <button id="hvload">刷新清单</button>
+      <select id="hvlimit" aria-label="一次看多少条">
+        <option value="10">10 条</option>
+        <option value="20" selected>20 条</option>
+        <option value="50">50 条</option>
+      </select>
+      <span class="status" id="hvmsg"></span>
+    </div>
+    <div id="hvbody"></div>
+  </section>
 </main>
 
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 const hl  = s => esc(s).replace(/\[([^\]]{1,60})\]/g, "<mark>$1</mark>");
-const TYPE = {single:"单选题", multiple:"多选题", judge:"判断题"};
+function ansStr(q){
+  if(!q) return "";
+  if(q.type === "blank"){
+    const a = Array.isArray(q.answerText) ? q.answerText : [q.answerText];
+    return a.filter(x => String(x || "").trim()).join("；");
+  }
+  return (q.answerKeys || []).join("");
+}
+const TYPE = {single:"单选题", multiple:"多选题", judge:"判断题", ordering:"排序题", blank:"填空题"};
+/* 排序题 = 多选题的变体：type=multiple 且 ordered=true；老数据 type=ordering 也认 */
+function isOrd(q){ return !!q && (q.ordered === true || q.type === "ordering"); }
 /* 图标用内联 SVG，不用 emoji（ui-ux-pro-max 交付清单明确要求；emoji 在不同系统上字形/宽度都不可控） */
 const ICO = {
   ok:  '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -361,7 +425,7 @@ document.addEventListener("keydown", e => {                 // ⌘/Ctrl + = / - 
 
 /* ---------------- tab 切换 ---------------- */
 function tab(which){
-  for (const k of ["ask", "quiz", "card"]){
+  for (const k of ["ask", "quiz", "card", "review", "harvest", "ffd"]){
     $("#pane-" + k).classList.toggle("hide", k !== which);
     const t = $("#tab-" + k);
     t.classList.toggle("on", k === which);
@@ -369,26 +433,82 @@ function tab(which){
   }
   if(which === "quiz"){ if(!S.banks.length) loadBanks(); }
   else if(which === "card"){ if(!C.books.length) loadCardBooks(); }
+  else if(which === "review"){ rvInit(); }
+  else if(which === "harvest"){ hvInit(); }
+  else if(which === "ffd"){ const fr = $("#ffdframe"); if(fr && !fr.src) fr.src = "/ffd.html"; }
   else { $("#q").focus(); }
 }
 $("#tab-ask").onclick = () => tab("ask");
 $("#tab-quiz").onclick = () => tab("quiz");
 $("#tab-card").onclick = () => tab("card");
+$("#tab-review").onclick = () => tab("review");
+$("#tab-harvest").onclick = () => tab("harvest");
+$("#tab-ffd").onclick = () => tab("ffd");
 
 /* ==================== 查题 ==================== */
+async function r0(url){ const r = await fetch(url); return await r.json(); }
 async function run(){
   const q = $("#q").value.trim();
   if(!q) return;
   $("#go").disabled = true; $("#st").textContent = "查询中…"; $("#out").innerHTML = "";
   try{
-    const r = await fetch("/api/ask?web=" + ($("#web").checked ? 1 : 0) + "&q=" + encodeURIComponent(q));
-    renderAsk(await r.json());
+    const deep = $("#deep") && $("#deep").checked;
+    const url = deep
+      ? "/api/ask?deep=1&llm=1&q=" + encodeURIComponent(q)
+      : "/api/ask?web=" + ($("#web").checked ? 1 : 0) + "&q=" + encodeURIComponent(q);
+    if (deep) $("#st").textContent = "四级兜底中…（最后一级 Claude Code 可能要 30–90 秒）";
+    const j = await r0(url);
+    renderAsk(j);
     $("#st").textContent = "完成";
-  }catch(e){ $("#st").textContent = "查询失败：" + e; }
+  }catch(e){
+    // 「Load failed / Failed to fetch」= 根本没连上服务：多半是本地服务停了或换了端口，
+    // 不是题目查不到。给一句能照着做的话，别让人以为是题库没答案。
+    const msg = String(e);
+    $("#st").textContent = /Load failed|Failed to fetch|network/i.test(msg)
+      ? "连不上本地服务：在项目目录跑 python3 webui.py，然后刷新本页（答案本身是有的）"
+      : "查询失败：" + msg;
+  }
   $("#go").disabled = false;
 }
 
+
+function searchMeta(w){
+  const s = (w && w.search) || {};
+  if (!s || !Object.keys(s).length) return "";
+  const bits = [];
+  if (s.mode) bits.push(s.mode === "process" ? "多进程" : (s.mode === "thread" ? "线程" : "串行"));
+  if (typeof s.snippets === "number") bits.push(`${s.snippets} 条摘要`);
+  if (typeof s.ksb_engines === "number") bits.push(`考试宝站内 ${s.ksb_engines} 个来源`);
+  if (s.seconds) bits.push(`${s.seconds}s`);
+  if (s.all_resting) bits.push("三个引擎都在冷却，本轮未检索");
+  else if ((s.engines_resting || []).length) bits.push(`冷却中：${s.engines_resting.join("/")}`);
+  return bits.length ? `<div class="meta" style="margin-top:.3rem">检索：${esc(bits.join(" · "))}</div>` : "";
+}
+const TIER_LABEL = {bank:"① 本地题库", verbatim:"② 原文直证", web:"③ 多引擎一致", llm:"④ Claude Code", none:"未答出", error:"链路异常"};
+function renderChain(d){
+  const c = d.chain || {}, out = [];
+  const badge = TIER_LABEL[c.tier] || c.tier || "未答出";
+  if (c.answer) {
+    out.push(`<div class="card">
+      <div class="ansrow"><div class="ans">${esc(c.answer)}</div>
+        <div class="meta">${esc(badge)} · 来源 ${esc(c.source||"")} · 可信度 ${esc(c.confidence||"")} · ${esc(String(c.seconds||0))}s</div></div>
+      ${c.evidence ? `<div class="analysis"><b>依据：</b>${esc(c.evidence)}</div>` : ""}
+      <div class="hint">${c.tier === "llm" ? "这是 Claude Code 读证据包得出的判断，<b>未经验证</b>；用之前自己对一眼题干，或去「收编」页拍板入库。" : "答案带原文/题库依据。"}</div>
+    </div>`);
+  } else {
+    out.push(`<div class="card empty">四级兜底都没答出来${c.note ? "：" + esc(c.note) : "。"}
+      <div class="sub" style="margin-top:.4rem">可以看看下面每一级为什么没过，或去「收编」页手工填答。</div></div>`);
+  }
+  const rows = (c.tiers || []).map(t => `<div class="lbl">${t.ok ? "✔" : "×"} ${esc(TIER_LABEL[t.tier] || t.tier)}：${esc(t.detail || "")}</div>`).join("");
+  if (rows) out.push(`<div class="card"><div class="meta">四级兜底过程</div>${rows}</div>`);
+  if (c.single && c.single.answer) {
+    out.push(`<div class="card"><div class="meta">单源线索（未采纳）</div>
+      <div class="hint">只有 ${esc((c.single.sources||[]).join("/"))} 给出 ${esc(c.single.answer)}，按「多源一致才算」没有采纳。</div></div>`);
+  }
+  $("#out").innerHTML = out.join("");
+}
 function renderAsk(d){
+  if (d && d.chain) return renderChain(d);
   const out = [];
   for(const a of d.answers){
     out.push(`<div class="card">
@@ -403,12 +523,42 @@ function renderAsk(d){
     </div>`);
   }
   if(!d.answers.length && !d.web)
-    out.push(`<div class="card empty">本地题库没命中（相似度不够）。勾上「联网兜底」再查一次，或把题干里的数字改写成原文写法。</div>`);
-  if(d.web && d.web.answer)
-    out.push(`<div class="card"><div class="ansrow"><div class="ans">${esc(d.web.answer)}</div>
-      <div class="meta">联网检索 · 置信度 ${esc(d.web.confidence||"")} · ${esc(d.web.source||"")}</div></div></div>`);
-  if(d.web && !d.web.answer)
-    out.push(`<div class="card"><div class="warn">联网也没定论（已进待办队列）：${esc(d.web.source||"")}</div></div>`);
+    out.push(`<div class="card empty">本地题库没命中（相似度不够）。勾上「深度兜底」再查一次（会走原文直证 → 多引擎 → Claude Code 读原件），或把题干里的数字改写成原文写法。</div>`);
+  if(d.web && d.web.answer){
+    const v = d.web.votes || 0;
+    const bg = d.web.best_guess;
+    const conflict = bg && bg.key !== d.web.answer;
+    out.push(`<div class="card">
+      <div class="ansrow"><div class="ans">${esc(d.web.answer)}</div>
+        <div class="meta">联网检索 · 置信度 ${esc(d.web.confidence||"")} · ${esc(d.web.source||"")}
+          · 票数 ${v}${(d.web.sources || []).length ? ` · ${d.web.sources.join("/")} ${d.web.sources.length} 个引擎一致` : ""}
+          ${d.web.snippets ? ` · 取了 ${d.web.snippets} 条摘要` : ""}</div></div>
+      <div class="hint">这个答案来自搜索摘要里显式的「答案：X」标记，<b>不是题库原题</b>；
+        ${v < 2 ? `只有 ${v} 票、未自动入库，` : ""}用之前自己对一眼题干。</div>
+      ${searchMeta(d.web)}
+      ${conflict ? `<div class="warn" style="margin-top:.4rem">注意：摘要原文里出现的是
+        选项 <b>${esc(bg.key)}. ${esc(bg.text)}</b>，与上面这个字母不一致 —— 两边都别全信，回题干核一遍。</div>` : ""}
+    </div>`);
+  }
+  if(d.web && !d.web.answer){
+    const cand = (d.web.candidates || []).filter(c => c.score > 0);
+    const rows = cand.map(c => `<div class="opt"><b>${esc(c.key)}</b><span>${esc(c.text)}
+      <span class="meta">摘要重合 ${(c.score*100).toFixed(0)}%</span></span></div>`).join("");
+    out.push(`<div class="card">
+      <div class="warn">联网没给出答案：${esc(d.web.note || d.web.source || "")}</div>
+      ${searchMeta(d.web)}
+      ${d.web.single ? `<div class="hint" style="margin-top:.4rem">只有 1 个来源（${esc((d.web.single.sources || []).join("/"))}）
+        给出 <b>${esc(d.web.single.answer)}</b>，按「多源一致才算」的规则没采纳；已写进待审队列，等你拍板。</div>` : ""}
+      ${d.web.best_guess ? `<div class="hint" style="margin-top:.5rem">
+        摘要原文里出现了这个选项：<b>${esc(d.web.best_guess.key)}. ${esc(d.web.best_guess.text)}</b>
+        —— 只是文字命中，<b>不是</b>权威答案，仍需你确认。</div>` : ""}
+      ${rows ? `<div class="hint" style="margin-top:.5rem">按摘要字面最像的选项（<b>不是</b>答案，仅作提示）：</div>
+        <div style="margin-top:.35rem">${rows}</div>` : ""}
+      ${(d.web.evidence || []).length ? `<div class="hint" style="margin-top:.5rem">摘要片段：</div>
+        ${(d.web.evidence || []).map(t => `<div class="analysis">…${esc(t)}</div>`).join("")}` : ""}
+      <div class="hint" style="margin-top:.5rem">这道题已写入 pending.jsonl 待人工确认；题在本地题库里没有，靠搜索摘要不下定论。</div>
+    </div>`);
+  }
   out.push(docsHtml(d.docs, d.probe));
   $("#out").innerHTML = out.join("");
 }
@@ -444,7 +594,12 @@ let IMP = null;
 function impRow(x, i){
   const head = `<div class="lbl">${x.num ? "第 " + esc(x.num) + " 题" : "第 " + (i + 1) + " 题"}
     <span class="pill">${x.status === "bank" ? "题库命中" : x.status === "doc" ? "仅有依据" : "未命中"}</span></div>`;
-  const body = `<div class="qstem" style="font-size:1rem">${esc(x.q.slice(0, 160))}</div>`;
+  const sa = x.self_answer
+    ? `<span class="badge">自带答案 ${esc(x.self_answer)}`
+      + (x.verdict === "一致" ? " · 与题库一致" : x.verdict === "不一致" ? " · 与题库不一致" : " · 题库无此题")
+      + `</span>`
+    : "";
+  const body = sa + `<div class="qstem" style="font-size:1rem">${esc(x.q.slice(0, 160))}</div>`;
   let tail;
   if(x.status === "bank")
     tail = `<div class="lbl" style="margin-top:.3rem">答案：<b>${esc(x.answer)}</b> ${esc((x.answerText || "").slice(0, 70))}</div>
@@ -453,7 +608,7 @@ function impRow(x, i){
     tail = `<div class="lbl" style="margin-top:.3rem">题库没有这题 · 依据：${esc(x.ev.title || "")}${x.ev.page ? " 第 " + x.ev.page + " 页" : ""}</div>
       <div class="snip">${esc((x.ev.snippet || "").slice(0, 120))}</div>`;
   else
-    tail = `<div class="lbl" style="margin-top:.3rem">题库与依据库都没有 —— 可以试试下面的「交给模型兜底」</div>`;
+    tail = `<div class="lbl" style="margin-top:.3rem">题库与依据库都没有 —— 可以试试下面的「再联网兜底一遍」</div>`;
   return `<div class="wrongitem">${head}${body}${tail}</div>`;
 }
 
@@ -468,21 +623,55 @@ function renderImp(){
       <span class="badge">共 <b>${d.total}</b> 题</span>
       <span class="badge">题库命中 <b>${d.hit}</b></span>
       <span class="badge">仅有依据 <b>${d.doc}</b></span>
-      <span class="badge">未命中 <b>${d.miss}</b></span>
+      <span class="badge">完全没线索 <b>${d.miss}</b></span>
+      ${d.self_answer ? `<span class="badge">自带答案 <b>${d.self_answer}</b></span>` : ""}
+      ${d.addable ? `<span class="badge">可直接入库 <b>${d.addable}</b></span>` : ""}
       ${d.truncated ? `<span class="badge">超出上限截掉 <b>${d.truncated}</b> 题</span>` : ""}
     </div>
+    ${d.addable ? `<div class="card" style="margin:.6rem 0">
+      <div class="meta">这些题自带答案，题库里没有（或与题库答案不一致）</div>
+      <div class="hint">共 <b>${d.addable}</b> 题。加入后写进 <code>banks/web-learned.json</code>，
+        并同步 questions 表 → 查题索引 → 刷题端。答案标「未经二次核对」，你可以之后在刷题里再核一遍。</div>
+      <div class="bar" style="margin-top:.5rem"><button id="impadd">把这几题加入题库</button>
+        <span class="status" id="impaddst"></span></div>
+    </div>` : ""}
     <div class="bar" style="margin:.5rem 0 .2rem">
       <button id="imptxt" class="ghost">导出结果 txt</button>
       <button id="impcsv" class="ghost">导出结果 csv（丢进 Excel）</button>
-      ${miss.length ? `<button id="impmodel" class="ghost">把没命中的 ${Math.min(miss.length, 20)} 题交给模型兜底（慢）</button>` : ""}
+      ${miss.length ? `<button id="impmodel" class="ghost">把题库没答出来的 ${Math.min(miss.length, 20)} 题再兜底一遍（原文直证 + 多引擎，不调 Claude）</button>` : ""}
     </div>
-    <div class="hint">「交给模型兜底」= 逐题联网检索 + 模型判一遍，走的是和查题页「联网兜底」同一条链路，结果会写进待审队列（pending.jsonl）。</div>
+    ${miss.length ? `<div class="hint">这个按钮兜的是「题库没答出来的题」= 仅有依据 ${d.doc} 题 + 完全没线索 ${d.miss} 题
+（所以「完全没线索 0」时按钮也会出现，因为那 ${d.doc} 题只找到了原文、没有现成答案）。<br>
+它逐题去 360/搜狗 检索摘要，只认摘要里显式的「答案：X」（票数够才写库）；不猜、不喂模型，
+没把握的进待审队列（pending.jsonl），你在「收编」页拍板后才会进题库。</div>` : ""}
     <div id="impfill"></div>
     <div class="card" style="padding:0 1rem;margin-top:.6rem">${d.items.map(impRow).join("")}</div>`;
   $("#imptxt").onclick = () => saveTxt(`导入结果-${d.name.replace(/\.[^.]+$/, "")}.txt`, impText());
   $("#impcsv").onclick = () => saveTxt(`导入结果-${d.name.replace(/\.[^.]+$/, "")}.csv`, impCsv(),
                                        "text/csv;charset=utf-8"),
   $("#impmodel") && ($("#impmodel").onclick = runImpModel);
+  $("#impadd") && ($("#impadd").onclick = addFromImport);
+}
+
+async function addFromImport(){
+  const d = IMP; if(!d) return;
+  const items = d.items.filter(x => x.self_answer && (x.verdict === "题库无此题" || x.verdict === "不一致"))
+                       .map(x => ({q: x.q, self_answer: x.self_answer}));
+  if(!items.length) return;
+  const st = $("#impaddst"), btn = $("#impadd");
+  btn.disabled = true; st.textContent = "写入中…";
+  try{
+    const r = await fetch("/api/bank/append", {method:"POST", headers:{"content-type":"application/json"},
+                                               body: JSON.stringify({name: d.name, items})});
+    const j = await r.json();
+    if(j.error) throw new Error(j.error);
+    st.textContent = `已加入 ${j.added} 题${j.skipped ? `（跳过 ${j.skipped}）` : ""}`
+                   + (j.steps && Object.keys(j.steps).length ? "：" + Object.entries(j.steps).map(([k,v]) => k + " " + v).join(" · ") : "");
+    btn.classList.add("hide");
+  }catch(e){
+    st.textContent = "加入失败：" + e.message;
+    btn.disabled = false;
+  }
 }
 
 function impText(){
@@ -533,13 +722,14 @@ async function runImpModel(){
   btn.disabled = false;
   btn.textContent = "再兜底一遍";
   const hit = out.filter(x => x.r && x.r.answer).length;
-  $("#impfill").innerHTML = `<div class="sub" style="margin:1rem 0 .4rem">模型兜底结果 · 答出 ${hit}/${out.length}</div>` +
+  $("#impfill").innerHTML = `<div class="sub" style="margin:1rem 0 .4rem">联网兜底结果 · 给出答案 ${hit}/${out.length}</div>` +
     `<div class="card" style="padding:0 1rem">` + out.map(x => `
       <div class="wrongitem">
         <div class="qstem" style="font-size:1rem">${esc(x.q.slice(0, 140))}</div>
         <div class="lbl" style="margin-top:.3rem">${x.r && x.r.answer
-          ? `模型答案：<b>${esc(x.r.answer)}</b> · 来源 ${esc(x.r.source || "")} · 置信 ${esc(x.r.confidence || "")}`
-          : `没答出来（${esc((x.r && (x.r.source || x.r.error)) || "未知")}）`}</div>
+          ? `联网答案：<b>${esc(x.r.answer)}</b> · 来源 ${esc(x.r.source || "")} · 置信 ${esc(x.r.confidence || "")}`
+            + ((x.r.sources || []).length ? ` · ${esc(x.r.sources.join("/"))} 引擎一致` : "")
+          : `没答出来：${esc((x.r && (x.r.note || x.r.error || x.r.source)) || "未知原因")}`}</div>
       </div>`).join("") + `</div>`;
 }
 
@@ -555,12 +745,26 @@ $("#impq").onchange = async e => {
     rd.readAsDataURL(f);
   });
   let d;
-  try{
-    const r = await fetch("/api/import", {method: "POST", headers: {"content-type": "application/json"},
-      body: JSON.stringify({name: f.name, data: b64})});
-    d = await r.json();
-  }catch(err){
-    d = {error: "上传失败：" + err};
+  const body = JSON.stringify({name: f.name, data: b64});
+  // WebKit 上大学第一次 POST 偶发 "Load failed"（连接在响应前半路断掉），重试一次通常就好了；
+  // 两次都失败再报错，并把「怎么办」写清楚，别只丢一句 TypeError。
+  for(let attempt = 0; attempt < 2; attempt++){
+    try{
+      const r = await fetch("/api/import", {method: "POST", headers: {"content-type": "application/json"},
+        body});
+      const j = await r.json();
+      if(!r.ok && !j.error) j.error = `服务返回 HTTP ${r.status}`;
+      d = j;
+      break;
+    }catch(err){
+      const netish = /Load failed|Failed to fetch|network/i.test(String(err));
+      d = {error: netish
+        ? `上传中断（连不上本地服务或连接被断开）。文件 ${(f.size/1048576).toFixed(1)} MB；`
+          + `先确认 python3 webui.py 还在跑，再点一次「导入题目文件」重试。大文件建议先另存为 txt。`
+        : "上传失败：" + err};
+      if(!netish) break;
+      await new Promise(r2 => setTimeout(r2, 600));
+    }
   }
   e.target.value = "";
   if(d.error){
@@ -622,15 +826,19 @@ function showAllStat(){
   const t = S.banks.reduce((a, b) => {
     const y = b.types || {};
     a.n += b.count; a.s += y.single || 0; a.m += y.multiple || 0; a.j += y.judge || 0;
+    a.o += y.ordering || 0;            // 后端已把 multiple+ordered 算进 ordering 一档
+    a.b += y.blank || 0;
     a.w += wrongBook(b.file).length;
     return a;
-  }, {n:0, s:0, m:0, j:0, w:0});
+  }, {n:0, s:0, m:0, j:0, o:0, b:0, w:0});
   // 拆成徽标：一串「全库合计 12 套 / 629 题　｜　单选 321…」在深色下会连成一句话，扫不动
   $("#allstat").innerHTML =
       `<span class="badge">全库 <b>${S.banks.length}</b> 套 / <b>${t.n}</b> 题</span>`
     + `<span class="badge">单选 <b>${t.s}</b></span>`
     + `<span class="badge">多选 <b>${t.m}</b></span>`
     + `<span class="badge">判断 <b>${t.j}</b></span>`
+    + (t.o ? `<span class="badge">排序 <b>${t.o}</b></span>` : "")
+    + (t.b ? `<span class="badge">填空 <b>${t.b}</b></span>` : "")
     + `<span class="badge">错题本 <b>${t.w}</b> 道</span>`;
 }
 
@@ -694,9 +902,9 @@ function paintClock(){
   el.classList.toggle("bad", S.left <= 300);
 }
 function submitMock(q){
-  const want = new Set(q.answerKeys || []);
-  if(want.size === S.sel.size && [...want].every(k => S.sel.has(k))) S.right++;
-  else S.wrong.push({q, mine:[...S.sel].sort().join(""), want:[...want].sort().join("")});
+  const v = judge(q);
+  if(v.ok) S.right++;
+  else S.wrong.push({q, mine: v.mine, want: v.want});
   S.answered++;
   S.done = true; updateProg();
   if(S.i + 1 < S.qs.length){ S.i++; renderQ(); } else { finishMock("答完了"); }
@@ -704,7 +912,7 @@ function submitMock(q){
 function skip(){
   if(!S.mock) return next();
   const q = S.qs[S.i];
-  S.wrong.push({q, mine:"", want:[...(q.answerKeys || [])].sort().join("")});
+  S.wrong.push({q, mine:"", want: q.type === "blank" ? ansStr(q) : [...(q.answerKeys || [])].sort().join("")});
   S.answered++;
   if(S.i + 1 < S.qs.length){ S.i++; renderQ(); } else { finishMock("答完了"); }
 }
@@ -776,17 +984,31 @@ function exportBatch(){
 function renderQ(){
   const q = S.qs[S.i];
   if(!q) return finish();
-  S.sel = new Set(); S.done = false;
-  const opts = (q.options || []).map(o =>
-    `<button type="button" class="opt" data-k="${esc(o.key)}"><span class="k">${esc(o.key)}</span><span>${esc(o.text)}</span></button>`).join("");
+  S.sel = new Set(); S.order = []; S.done = false;
+  const isBlank = q.type === "blank";
+  const blanks = isBlank ? (Array.isArray(q.answerText) ? q.answerText : [q.answerText]).map(String) : [];
+  const opts = isBlank
+    ? `<div class="hint">填空题：共 ${blanks.length} 个空，按顺序填。同义写法用 <b>/</b> 分隔也算对。</div>`
+      + blanks.map((_, i) => `<div class="bar" style="margin:.35rem 0">
+           <label for="bk${i}" style="min-width:3.6rem">第 ${i + 1} 空</label>
+           <input id="bk${i}" class="blankin" data-i="${i}" autocomplete="off"
+                  aria-label="第 ${i + 1} 空答案" style="flex:1;min-width:12rem;padding:.5rem .6rem">
+         </div>`).join("")
+    : (q.options || []).map(o =>
+    `<button type="button" class="opt" data-k="${esc(o.key)}"><span class="k">${esc(o.key)}</span><span>${esc(o.text)}</span>`
+    + (isOrd(q) ? `<span class="ord" style="margin-left:auto;font-weight:700;color:var(--accent,#2b6)"></span>` : "")
+    + `</button>`).join("");
   $("#quizbody").innerHTML = `
     <div class="card">
-      <div class="meta">${esc(TYPE[q.type] || q.typeLabel || "")} · 第 ${q.number} 题
+      <div class="meta">${esc(isOrd(q) ? "排序题（多选变体）" : (TYPE[q.type] || q.typeLabel || ""))} · 第 ${q.number} 题
         ${q.srcBank ? " · " + esc(q.srcBank) : ""}
         ${q.warn ? ` · ${ICO.warn} ` + esc(q.warn) : (q.generated ? ` · ${ICO.warn} 生成题（依据见下，非真题）` : "")}
-        ${q.score ? " · " + q.score + "分" : ""}${q.type === "multiple" ? " · 多选，全对才算对" : ""}${
+        ${q.score ? " · " + q.score + "分" : ""}${isOrd(q) ? " · 排序：选项全选 + 顺序也要对" : (q.type === "multiple" ? " · 多选，全对才算对" : "")}${
           S.mock ? " · 模拟考（交卷后才给答案）" : (S.mode === "wrong" ? " · 错题重练" : "")}</div>
       <div class="qstem">${esc(q.question)}</div>
+      ${isOrd(q)
+        ? `<div class="hint">排序/填空题：<b>按空位的先后顺序依次点选</b>（点错再点一次取消）。你的顺序：<b id="ordseq">—</b></div>`
+        : ""}
       ${opts}
       <div id="verdict"></div>
       <div class="bar" style="margin:.7rem 0 0">
@@ -823,21 +1045,67 @@ function updateProg(){
 function pick(k){
   if(S.done) return;
   const q = S.qs[S.i];
-  if(q.type === "multiple"){ S.sel.has(k) ? S.sel.delete(k) : S.sel.add(k); }
+  if(isOrd(q)){
+    const i = S.order.indexOf(k);
+    if(i >= 0) S.order.splice(i, 1); else S.order.push(k);
+    S.sel = new Set(S.order);
+  }
+  else if(q.type === "multiple"){ S.sel.has(k) ? S.sel.delete(k) : S.sel.add(k); }
   else { S.sel = new Set([k]); }
-  $("#quizbody").querySelectorAll(".opt").forEach(el =>
-    el.classList.toggle("sel", S.sel.has(el.dataset.k)));
+  paintSel(q);
+}
+function paintSel(q){
+  $("#quizbody").querySelectorAll(".opt").forEach(el => {
+    const k = el.dataset.k, on = S.sel.has(el.dataset.k);
+    el.classList.toggle("sel", on);
+    if(q && isOrd(q)){                       // 排序题：键位右上角标出第几位
+      const pos = S.order.indexOf(k);
+      const badge = el.querySelector(".ord");
+      if(badge) badge.textContent = pos >= 0 ? String(pos + 1) : "";
+    }
+  });
+  const seq = $("#ordseq");
+  if(seq) seq.textContent = S.order.length ? S.order.join(" → ") : "—";
+}
+
+function normBlank(x){
+  return String(x || "").toLowerCase().replace(/[\s，,。．.、；;：:（）()【】\[\]"'“”‘’]/g, "");
+}
+function judgeBlank(q){
+  const want = (Array.isArray(q.answerText) ? q.answerText : [q.answerText]).map(String);
+  const mine = want.map((_, i) => {
+    const el = document.querySelector(`.blankin[data-i="${i}"]`);
+    return el ? el.value.trim() : "";
+  });
+  const okOne = (w, m) => w.split(/[\/｜|或]/).map(normBlank).filter(Boolean).includes(normBlank(m));
+  const ok = want.every((w, i) => okOne(w, mine[i]));
+  return {ok, mine: mine.join("；"), want: want.join("；"),
+          detail: want.map((w, i) => ({i, ok: okOne(w, mine[i]), mine: mine[i], want: w}))};
+}
+function judge(q){
+  const keys = (q.answerKeys || []).map(String);
+  if(q.type === "blank") return judgeBlank(q);
+  if(isOrd(q))
+    return {ok: S.order.join("") === keys.join(""), mine: S.order.join(""), want: keys.join("")};
+  const want = new Set(keys);
+  return {ok: want.size === S.sel.size && [...want].every(k => S.sel.has(k)),
+          mine: [...S.sel].sort().join(""), want: [...want].sort().join("")};
 }
 
 function submit(){
-  if(S.done || !S.sel.size) return;
+  if(S.done) return;
   const q = S.qs[S.i];
+  if(q.type === "blank"){
+    const ins = [...document.querySelectorAll(".blankin")];
+    if(!ins.length || ins.some(el => !el.value.trim())) return;   // 有空没填就先别判
+  }
+  else if(isOrd(q) ? !S.order.length : !S.sel.size) return;
   if(S.mock){ S.done = false; return submitMock(q); }        // 模拟考：只记答案，不判分
-  const want = new Set(q.answerKeys || []);
-  const ok = want.size === S.sel.size && [...want].every(k => S.sel.has(k));
+  const verdict = judge(q), ok = verdict.ok;
+  const want = new Set((q.answerKeys || []).map(String));
   S.done = true;
   if(ok) S.right++;
-  else S.wrong.push({q, mine:[...S.sel].sort().join(""), want:[...want].sort().join("")});
+  else S.wrong.push({q, mine: verdict.mine, want: verdict.want});
   const wbank = q.bankFile || S.cur;   // 模拟考错题重做是跨库混抽：按每题自己的库落，别全塞进第一个库
   const wb = wrongBook(wbank);
   saveWrong(wbank, ok ? wb.filter(x => x !== q.id) : [...wb, q.id]);
@@ -847,10 +1115,26 @@ function submit(){
     if(want.has(k)) el.classList.add("right");
     else if(S.sel.has(k)) el.classList.add("wrong");
   });
+  if(q.type === "blank"){                                     // 填空题：逐空标对错，并补上正确答案
+    (verdict.detail || []).forEach(d => {
+      const el = document.querySelector(`.blankin[data-i="${d.i}"]`);
+      if(!el) return;
+      el.style.border = d.ok ? "2px solid #2b6" : "2px solid #c33";
+      el.readOnly = true;                                     // 判完就锁住，免得改了分数对不上
+      if(!d.ok) el.title = "正确答案：" + d.want;
+    });
+  }
   const missed = [...want].filter(k => !S.sel.has(k)).sort();
   const extra = [...S.sel].filter(k => !want.has(k)).sort();
+  const ordLine = q.type === "blank"
+    ? `<div class="lbl">${(verdict.detail || []).map(d =>
+        `第 ${d.i + 1} 空：${d.ok ? "✔" : "✘"} 你填「${esc(d.mine) || "空"}」${d.ok ? "" : ` → 正确「${esc(d.want)}」`}`).join("　")}</div>`
+    : isOrd(q)
+    ? `<div class="lbl">你排的：<b>${esc(verdict.mine) || "—"}</b>　正确：<b>${esc(verdict.want)}</b></div>` : "";
   $("#verdict").innerHTML = `<div class="verdict ${ok ? "ok" : "no"}">${ok ? ICO.ok + " 答对" : ICO.no + " 答错"}
-      正确答案 ${esc([...want].sort().join(""))}</div>
+      正确答案 ${esc(q.type === "blank" ? (Array.isArray(q.answerText) ? q.answerText : [q.answerText]).join("；")
+                     : (isOrd(q) ? (q.answerKeys || []).join("") : [...want].sort().join("")))}</div>
+    ${ordLine}
     ${ok ? "" : `<div class="lbl">${missed.length ? "漏选 " + esc(missed.join("")) + "　" : ""}${extra.length ? "错选 " + esc(extra.join("")) : ""}</div>`}
     ${(q.answerText || []).length ? `<div class="analysis"><b>正确选项：</b>${esc((q.answerText||[]).join(" ｜ "))}</div>` : ""}
     ${q.analysis ? `<div class="analysis"><b>解析：</b>${esc(q.analysis)}</div>` : ""}`;
@@ -914,7 +1198,7 @@ function fmtQ(q, i){
   return [
     `${i + 1}. （${TYPE[q.type] || q.type}·第${q.number}题）${q.question}`,
     ...(q.options || []).map(o => `   ${o.key}. ${o.text}`),
-    `   答案：${(q.answerKeys || []).join("")}`,
+    `   答案：${ansStr(q)}`,
     note ? `   解析：${note}` : "",
     ""
   ].filter(Boolean).join("\n");
@@ -948,7 +1232,9 @@ async function bankData(file){
   const qs = d.questions || [];
   if(!qs.length){ alert(d.error || "这个库没取到题，先刷新页面。"); return null; }
   const bank = (S.banks.find(b => b.file === file) || {title:file}).title;
-  const cnt = ["single", "multiple", "judge"]
+  const cnt = ["single", "multiple", "judge", "ordering", "blank"]
+    .filter(t => (t !== "ordering" && t !== "blank")
+              || (t === "ordering" ? qs.some(q => isOrd(q)) : qs.some(q => q.type === t)))
     .map(t => `${TYPE[t] || t} ${qs.filter(q => q.type === t).length}`).join(" · ");
   return { qs, bank, cnt };
 }
@@ -968,7 +1254,7 @@ function fmtQmd(q, i){
   const note = cleanAnalysis(q.analysis);
   const lines = [`### ${i + 1}. （${TYPE[q.type] || q.type}·第${q.number}题）${q.question}`, ""];
   (q.options || []).forEach(o => lines.push(`- **${o.key}.** ${o.text}`));
-  lines.push("", `**答案：** ${(q.answerKeys || []).join("")}`);
+  lines.push("", `**答案：** ${ansStr(q)}`);
   if(note) lines.push("", `> ${note}`);
   lines.push("");
   return lines.join("\n");
@@ -1107,7 +1393,7 @@ function renderCard(){
     <div class="card">
       <div class="meta">${esc(it.chapter || "")} 第 ${it.num || "?"} 条${it.page ? ` · 手册第 ${it.page} 页` : ""}
         ${C.mode === "wrong" ? " · 只背没记住的" : ""}</div>
-      <div class="qstem">${esc(it.q)}</div>
+      <div class="qstem" style="white-space:pre-wrap">${esc(it.q)}</div>
       <div id="canswer"></div>
       <div class="bar" style="margin:.7rem 0 0">
         <button id="creveal">看答案</button>
@@ -1271,5 +1557,354 @@ document.addEventListener("keydown", e => {
     S.done ? next() : submit();
   }
 });
+
+/* ==================== 复习（FSRS 排期，接口来自 plugins/srs.py） ==================== */
+const R = {queue: [], i: 0, shown: false, bank: "", inited: false};
+
+async function rvApi(path, params){
+  const qs = new URLSearchParams(params || {}).toString();
+  const r = await fetch(path + (qs ? "?" + qs : ""));
+  let j;
+  try { j = await r.json(); } catch(e){ throw new Error("接口返回不是 JSON（HTTP " + r.status + "）"); }
+  if (j.error) throw new Error(j.error);
+  return j;
+}
+
+function rvStats(s){
+  R.stats = s || null;
+  if (!s) { $("#rvstat").innerHTML = ""; return; }
+  $("#rvstat").innerHTML =
+    `<span class="badge">队列 <b>${s.total}</b> 道</span>` +
+    `<span class="badge">今天到期 <b>${s.due}</b> 道</span>` +
+    `<span class="badge">最长间隔 <b>${s.interval_max}</b> 天</span>` +
+    (s.orphans ? `<span class="badge" title="题库里查不到原题的卡" style="color:#c33">失效卡 <b>${s.orphans}</b></span>` : "") +
+    (s.recovered ? `<span class="badge">状态文件曾损坏，已重置</span>` : "");
+}
+
+async function rvInit(){
+  if (!R.inited){
+    R.inited = true;
+    try {
+      const d = await rvApi("/api/banks");
+      let byBank = {};
+      try { const st = await rvApi("/api/srs/stats"); byBank = st.by_bank || {}; R.stats = st; } catch(e){}
+      const banks = (d.banks || []).slice().sort((a, b) => {
+        const ka = (byBank[a.file] || {}).cards || 0, kb = (byBank[b.file] || {}).cards || 0;
+        return kb - ka;                       // 有排期的库排前面，空库垫底但仍可选
+      });
+      for (const b of banks){
+        const k = byBank[b.file] || {cards: 0, due: 0};
+        const tag = k.cards ? `（${b.count} 题 · 排期 ${k.cards} / 到期 ${k.due}）` : `（${b.count} 题 · 未装载）`;
+        $("#rvbank").insertAdjacentHTML("beforeend",
+          `<option value="${esc(b.file)}">${esc(b.title)}${esc(tag)}</option>`);
+      }
+    } catch(e){ /* 题库清单拿不到也不影响复习 */ }
+    $("#rvstart").onclick = () => rvLoad(true);
+    $("#rvbank").onchange = () => { R.bank = $("#rvbank").value; rvLoad(true); };
+    $("#rvnum").onchange = () => rvLoad(true);
+    $("#rvseed").onclick = () => rvSeed(false);
+    $("#rvseedall").onclick = () => rvSeed(true);
+  }
+  if (!R.queue.length) await rvLoad(false);
+}
+
+async function rvLoad(restart){
+  if (restart){ R.queue = []; R.i = 0; R.shown = false; }
+  $("#rvmsg").textContent = "加载中…";
+  try {
+    const d = await rvApi("/api/srs/due", {limit: $("#rvnum").value, bank: R.bank});
+    rvStats(d.stats);
+    R.queue = d.due || []; R.i = 0; R.shown = false;
+    $("#rvmsg").textContent = R.queue.length ? "" : "今天没有到期题";
+  } catch(e){
+    $("#rvmsg").textContent = "复习插件不可用：" + e.message;
+    R.queue = [];
+  }
+  rvRender();
+}
+
+function rvOptionLine(o, keys, isOrder){
+  const ks = (keys || []).map(String);
+  const pos = ks.indexOf(String(o.key));            // 排序题：这里是第几位，不是「有没有」
+  const hit = pos >= 0;
+  return `<div class="opt" ${hit ? 'style="font-weight:700"' : ""}>` +
+         `<b>${esc(o.key)}</b><span>${esc(o.text)}</span>` +
+         (isOrder && hit ? `<span style="margin-left:auto;font-weight:700">第 ${pos + 1} 位</span>` : "") +
+         `</div>`;
+}
+
+function rvRender(){
+  const box = $("#rvbody");
+  const c = R.queue[R.i];
+  if (!c){
+    $("#rvprog").textContent = R.queue.length ? "这一轮完成" : "未开始";
+    box.innerHTML = R.queue.length
+      ? `<div class="hint">这一轮 ${R.queue.length} 道都过完了。想再来一轮就点「开始 / 重开」；新到期的题明天会自动进来。</div>`
+      : `<div class="hint">没有到期题。当前选择是「${esc(R.bank || "全部题库")}」——
+          上一个库没有排期卡就永远不会有到期题：点「装载本库错题」或「装载本库 50 题」把它装进来。</div>`;
+    return;
+  }
+  $("#rvprog").textContent = `第 ${R.i + 1} / ${R.queue.length} 道`;
+  if (c.missing){                       // 排期还在、题库里查不到原题：说清原因并给出口，不留一个空壳
+    box.innerHTML = `<div class="card warn">
+        <div><b>这张排期卡在题库里找不到原题</b>：${esc(c.bank || "?")} · <code>${esc(c.qid || "?")}</code></div>
+        <div class="hint" style="margin:.3rem 0">常见原因：题库重建后这道题的 qid 变了，或那个库被挪走/删了。排期本身没坏，只是接不回题目。</div>
+        <div class="bar" style="margin-top:.4rem">
+          <button id="rvskip">跳过这条</button>
+          <button id="rvprune" class="ghost">清掉全部失效卡（${esc(String((R.stats && R.stats.orphans) || "?"))} 张）</button>
+        </div></div>`;
+    $("#rvskip").onclick = () => { R.i++; R.shown = false; rvRender(); };
+    $("#rvprune").onclick = rvPrune;
+    return;
+  }
+  const opts = (c.options || []).map(o => rvOptionLine(o, R.shown ? c.answerKeys : [], isOrd(c))).join("");
+  box.innerHTML = `
+    <div class="q">${esc(c.question || "(题干缺失)")}</div>
+    <div style="margin:.6rem 0 1rem">${opts}</div>
+    ${R.shown
+      ? `<div class="badges"><span class="badge">答案 <b>${esc(ansStr(c))}</b></span>
+           <span class="badge">${esc(c.answerText || "")}</span>
+           <span class="badge">上次间隔 <b>${c.interval || 0}</b> 天</span>
+           <span class="badge">练过 <b>${c.reps || 0}</b> 次 / 忘 <b>${c.lapses || 0}</b> 次</span></div>
+         <div class="bar" style="margin-top:.6rem">
+           <button data-r="again">不会 <kbd>1</kbd></button>
+           <button data-r="hard" class="ghost">勉强 <kbd>2</kbd></button>
+           <button data-r="good">会 <kbd>3</kbd></button>
+           <button data-r="easy" class="ghost">秒答 <kbd>4</kbd></button>
+         </div>`
+      : `<div class="bar"><button id="rvshow">显示答案 <kbd>空格</kbd></button>
+           <span class="status">${esc(c.bank || "")} · 到期 ${esc(c.due || "")}</span></div>`}`;
+  if (!R.shown) $("#rvshow").onclick = () => { R.shown = true; rvRender(); };
+  box.querySelectorAll("button[data-r]").forEach(b => b.onclick = () => rvRate(b.dataset.r));
+}
+
+async function rvPrune(){
+  $("#rvmsg").textContent = "清理中…";
+  try {
+    const d = await rvApi("/api/srs/prune");
+    $("#rvmsg").textContent = `清掉 ${d.removed} 张失效卡`;
+    await rvLoad(true);
+  } catch(e){ $("#rvmsg").textContent = "清理失败：" + e.message; }
+}
+
+async function rvRate(rating){
+  const c = R.queue[R.i];
+  if (!c) return;
+  try {
+    const d = await rvApi("/api/srs/review", {bank: c.bank, qid: c.qid, rating});
+    rvStats(d.stats);
+    $("#rvmsg").textContent = `已排期：${d.card.interval} 天后（${d.card.due}）`;
+  } catch(e){
+    $("#rvmsg").textContent = "记录失败：" + e.message;
+  }
+  R.i++; R.shown = false;
+  rvRender();
+}
+
+async function rvSeed(all){
+  const bank = R.bank || "";
+  $("#rvmsg").textContent = "装载中…";
+  try {
+    const qs = new URLSearchParams({limit: "50"});
+    if (bank) qs.set("bank", bank);
+    if (all) qs.set("all", "1");
+    const r = await fetch("/api/srs/enroll?" + qs.toString());
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    $("#rvmsg").textContent = j.added
+      ? `新装 ${j.added} 道${bank ? "（" + bank + "）" : ""}，队列共 ${j.total} 道`
+      : `没有可装的题${all ? "" : "（本库没有「答错过」的记录，试试「装载本库 50 题」）"}`;
+    await rvLoad(true);
+  } catch(e){
+    $("#rvmsg").textContent = "装载失败：" + e.message;
+  }
+}
+
+document.addEventListener("keydown", e => {
+  if ($("#pane-review").classList.contains("hide")) return;
+  if (["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName)) return;
+  if (e.key === " "){ e.preventDefault(); if (!R.shown && R.queue[R.i]) { R.shown = true; rvRender(); } return; }
+  const map = {"1": "again", "2": "hard", "3": "good", "4": "easy"};
+  if (map[e.key] && R.shown && R.queue[R.i]){ e.preventDefault(); rvRate(map[e.key]); }
+});
+
+/* ==================== 收编（联网找到的题 → 人工确认 → 进题库） ==================== */
+const H = {items: [], inited: false};
+
+async function hvInit(){
+  if (!H.inited){
+    H.inited = true;
+    $("#hvload").onclick = () => hvLoad();
+    $("#hvlimit").onchange = () => hvLoad();
+  }
+  await hvLoad();
+}
+
+async function hvLoad(){
+  $("#hvmsg").textContent = "加载中…";
+  try{
+    const r = await fetch("/api/harvest/list?limit=" + $("#hvlimit").value);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    H.items = d.items || [];
+    hvStats(d.stats);
+    $("#hvmsg").textContent = H.items.length ? "" : "没有待收编的题";
+  }catch(e){
+    $("#hvmsg").textContent = "收编插件不可用：" + e.message;
+    H.items = [];
+  }
+  hvRender();
+}
+
+function hvStats(s){
+  if(!s){ $("#hvstat").innerHTML = ""; return; }
+  $("#hvstat").innerHTML =
+    `<span class="badge">待处理 <b>${s.left != null ? s.left : s.pending_unique}</b> 题</span>` +
+    `<span class="badge">已入库 <b>${s.done}</b></span>` +
+    `<span class="badge">已忽略 <b>${s.ignored}</b></span>` +
+    `<span class="badge">web-learned <b>${s.bank_count}</b> 题</span>`;
+}
+
+function hvRender(){
+  const box = $("#hvbody");
+  const nBank = H.items.filter(x => x.in_bank).length;
+  const bulk = nBank ? `<div class="card" style="margin:.5rem 0">
+      <div class="meta">这 ${nBank} 条只有题干，但题库里本来就有答案</div>
+      <div class="hint">不用补题面、也不会重复入库——批量划掉即可。剩下 ${H.items.length - nBank} 条才需要你补题面。</div>
+      <div class="bar" style="margin-top:.4rem"><button id="hvbulk">一次划掉这 ${nBank} 条</button>
+        <span class="status" id="hvbulkst"></span></div>
+    </div>` : "";
+  if(!H.items.length){ box.innerHTML = bulk + `<div class="hint">清单是空的。</div>`; return; }
+  box.innerHTML = bulk + H.items.map((it, i) => {
+    const cand = new Set((it.candidates || []).filter(c => c.score >= 0.6).map(c => c.key));
+    const opts = (it.options || []).map(o =>
+      `<button class="opt" data-h="${it.h}" data-k="${o.key}" ${cand.has(o.key) ? 'style="font-weight:700"' : ""}>
+         <b>${esc(o.key)}</b><span>${esc(o.text)}</span>
+         ${cand.has(o.key) ? '<span class="meta">摘要最像</span>' : ""}</button>`).join("");
+    const ev = (it.evidence || []).map(t => `<div class="analysis">…${esc(t)}</div>`).join("");
+    const pasteForm = it.in_bank ? "" : `<textarea data-paste="${it.h}" rows="4"
+        placeholder="把带选项的完整题目粘进来，例如：&#10;题干……&#10;A. …&#10;B. …&#10;C. …&#10;D. …"
+        style="width:100%;margin:.3rem 0"></textarea>
+      <div class="bar" style="margin:.1rem 0 .3rem">
+        <input data-ans="${it.h}" placeholder="答案字母，如 D / ABD" style="width:9rem">
+        <button data-complete="${it.h}">补题面并收编</button>
+      </div>`;
+    const optionBlock = opts
+      ? `<div style="margin:.5rem 0">${opts}</div>`
+      : (it.in_bank ? `<div class="hint">以下是检索到的摘要，仅供核对：</div>`
+                    : `<div class="warn">这道题只有题干、没有选项（早期记录），先补题面才能收编：</div>${pasteForm}`);
+    return `<div class="card">
+      <div class="q"><span class="meta">#${i+1} · ${esc(it.ts || "")}</span><br>${esc(it.stem || it.question)}</div>
+      ${it.in_bank ? `<div class="badges" style="margin:.4rem 0">
+          <span class="badge">题库已有答案 <b>${esc(it.bank_answer)}</b></span>
+          <span class="badge">${esc(it.bank_id)}</span>
+          <span class="badge">相似度 ${Math.round((it.bank_score||0)*100)}%</span>
+          <span class="badge">${esc(it.bank_src || "")}</span>
+        </div>
+        <div class="bar" style="margin:.2rem 0 .4rem">
+          <button data-exists="${it.h}">已有，从待收编里划掉</button>
+          <span class="status">不必补题面——库里已经有这题和答案了</span>
+        </div>
+        ${it.bank_answer_text ? `<div class="analysis"><b>题库答案原文：</b>${esc(it.bank_answer_text)}</div>` : ""}` : ""}
+      ${optionBlock}
+      ${(it.local || []).length ? "" : `<div class="warn" style="margin-top:.4rem">本地语料里查不到这题的原文依据——只有搜索摘要，别凭印象拍答案。</div>`}
+      ${(it.local || []).length ? `<div class="hint" style="margin-top:.4rem">本地原文依据（按这个拍答案）：</div>`
+        + it.local.map(x => `<div class="analysis">${esc(x.title)}${x.section ? " · " + esc(x.section) : ""}`
+            + `${x.page ? "（第 " + esc(x.page) + " 页）" : ""}：…${esc(x.text)}…</div>`).join("") : ""}
+      ${ev ? `<div class="hint" style="margin-top:.4rem">检索到的摘要：</div>${ev}` : ""}
+      <div class="bar" style="margin-top:.5rem">
+        <button class="ghost" data-ignore="${it.h}">不收这条</button>
+        <span class="status">点上面的选项 = 确认答案并入库</span>
+      </div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => hvCommit(b.dataset.h, b.dataset.k, b));
+  box.querySelectorAll("button[data-ignore]").forEach(b => b.onclick = () => hvIgnore(b.dataset.ignore, b));
+  box.querySelectorAll("button[data-complete]").forEach(b => b.onclick = () => hvComplete(b.dataset.complete, b));
+  box.querySelectorAll("button[data-exists]").forEach(b => b.onclick = () => hvExists(b.dataset.exists, b));
+  const bulkBtn = $("#hvbulk");
+  if(bulkBtn) bulkBtn.onclick = async () => {
+    bulkBtn.disabled = true; $("#hvbulkst").textContent = "划掉中…";
+    try{
+      const d = await (await fetch("/api/harvest/exists_all?limit=500")).json();
+      if(d.error) throw new Error(d.error);
+      $("#hvbulkst").textContent = `已划掉 ${d.done} 条`;
+      await hvLoad();                       // 统一走一遍加载，别在这儿手搓刷新
+    }catch(e){ $("#hvbulkst").textContent = "失败：" + e.message; bulkBtn.disabled = false; }
+  };
+}
+
+async function hvCommit(h, key, btn){
+  btn.disabled = true;
+  $("#hvmsg").textContent = `正在写入 ${key} …`;
+  try{
+    const r = await fetch(`/api/harvest/commit?h=${encodeURIComponent(h)}&key=${encodeURIComponent(key)}`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    const st = d.steps || {};
+    $("#hvmsg").textContent = `已入库 ${d.id}（答案 ${d.answer}）：` +
+      `格式 ${st.validate || "-"} · questions ${st.questions || "-"} · 索引 ${st.qb || "-"} · 刷题端 ${st.web || "-"}`;
+    H.items = H.items.filter(x => x.h !== h);
+    hvRender();
+    const rr = await fetch("/api/harvest/list?limit=" + $("#hvlimit").value).then(x => x.json()).catch(() => null);
+    if (rr && rr.stats) hvStats(rr.stats);
+  }catch(e){
+    $("#hvmsg").textContent = "入库失败：" + e.message;
+    btn.disabled = false;
+  }
+}
+
+async function hvExists(h, btn){
+  btn.disabled = true;
+  $("#hvmsg").textContent = "标记中…";
+  try{
+    const d = await (await fetch("/api/harvest/exists?h=" + encodeURIComponent(h))).json();
+    if(d.error) throw new Error(d.error);
+    $("#hvmsg").textContent = "已划掉（题库本来就有这题）";
+    H.items = H.items.filter(x => x.h !== h);
+    hvRender();
+    if(d.stats) hvStats(d.stats);
+  }catch(e){
+    $("#hvmsg").textContent = "标记失败：" + e.message;
+    btn.disabled = false;
+  }
+}
+
+async function hvComplete(h, btn){
+  const ta = document.querySelector(`textarea[data-paste="${h}"]`);
+  const ai = document.querySelector(`input[data-ans="${h}"]`);
+  const question = ta ? ta.value.trim() : "";
+  const answer = ai ? ai.value.trim() : "";
+  if(!question || !answer){ $("#hvmsg").textContent = "题面和答案都要填。"; return; }
+  btn.disabled = true;
+  $("#hvmsg").textContent = "正在补题面并入库…";
+  try{
+    const r = await fetch("/api/harvest/complete?h=" + encodeURIComponent(h)
+      + "&answer=" + encodeURIComponent(answer)
+      + "&question=" + encodeURIComponent(question));
+    const d = await r.json();
+    if(d.error) throw new Error(d.error);
+    const st = d.steps || {};
+    $("#hvmsg").textContent = `已入库 ${d.id}（答案 ${d.answer}）：格式 ${st.validate || "-"} · questions ${st.questions || "-"} · 索引 ${st.qb || "-"} · 刷题端 ${st.web || "-"}`;
+    H.items = H.items.filter(x => x.h !== h);
+    hvRender();
+    const rr = await fetch("/api/harvest/list?limit=" + $("#hvlimit").value).then(x => x.json()).catch(() => null);
+    if(rr && rr.stats) hvStats(rr.stats);
+  }catch(e){
+    $("#hvmsg").textContent = "补题面失败：" + e.message;
+    btn.disabled = false;
+  }
+}
+
+async function hvIgnore(h, btn){
+  btn.disabled = true;
+  try{
+    const d = await (await fetch("/api/harvest/ignore?h=" + encodeURIComponent(h))).json();
+    if (d.error) throw new Error(d.error);
+    H.items = H.items.filter(x => x.h !== h);
+    $("#hvmsg").textContent = "已忽略：" + (d.question || "");
+    hvRender();
+  }catch(e){ $("#hvmsg").textContent = "忽略失败：" + e.message; btn.disabled = false; }
+}
 </script>
 </html>
