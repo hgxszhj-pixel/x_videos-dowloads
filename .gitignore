@@ -53,3 +53,6 @@ tmp/
 
 # review-eval 诊断产物(失败运行的报告,不入库)
 scripts/review_eval_baseline.failed.json
+
+# EGM artifact 目录（全局 CLAUDE.md 指定）
+.dev/
