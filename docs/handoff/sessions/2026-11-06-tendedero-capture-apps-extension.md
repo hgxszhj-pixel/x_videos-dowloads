@@ -72,7 +72,7 @@ Desktop 的默认规则从「只认 xattr」变成「认 xattr **或** 启用的
   - `d28b0be` 初版(16 文件,+455/−12)
   - `d5c6ef3` 改成通用规则 + 修 watcher 漏洞(4 文件,+198/−87)
   - `fd8dafb` 抽出跨平台内核包 `TendederoCore`(11 文件,+238/−93)
-  - 工作树干净,**未推 upstream**。
+  - 工作树干净;**2026-11-08 已推 fork**:`hgxszhj-pixel/tendedero`(upstream 的 fork),remote 名 `fork`(https),`feat/capture-apps` = `fd8dafb`;`origin` 仍指 upstream(不动)。
 - 新增 `docs/extensions.md`:写清「加一个新截图 app = 表里加一行」「新一类图片来源 = `Acceptance` 加一个 case + `startWatcher()` 加一个 watcher」,并给出两条自检命令。
 - 安装版已覆盖 `/Applications/Tendedero.app`;旧版 1.8.1 备份在 `build/Tendedero-1.8.1-original.app`(`build/` 被 .gitignore,不会进 git)。
 - 记忆:`~/memory/projects/tendedero.md`(Obsidian 项目档案)+ auto-memory `tendedero-capture-apps-extension-2026-11-06.md`。
@@ -104,7 +104,7 @@ Desktop 的默认规则从「只认 xattr」变成「认 xattr **或** 启用的
 
 ## 七、遗留
 
-- 分支未推;若要长期保存,需在 GitHub 上开 fork 并把 origin 指过去。
+- ~~分支未推~~ **已解决(2026-11-08)**:开了 GitHub fork `hgxszhj-pixel/tendedero`,加 remote `fork`(https),`feat/capture-apps`(`fd8dafb`)已推上去;`origin` 保持指 upstream 不动。推的时候全局 pre-push hook 报「Can't find lefthook in PATH」—— 但本仓**没有 lefthook.yml**,该 hook 本就是空转,没有检查被绕过。
 - **跨平台只做到内核层**:UI + watcher(菜单栏那条线 + FSEvents 监视)在别的系统上仍需重写;本次没有做,也没有假称做了。
 - CleanShot X / Shottr / PixPin / Kap / Monosnap / Lightshot 本机没装,只验证了**规则**通用(目录 + 名字),没验证它们各自的默认目录和命名;真装上后若目录不在 `~/Desktop`/`~/Pictures`/`~/Downloads`,用菜单里的「Also watch folders」补,或给该 app 加一条 `settings` 闭包读它的配置。
 - `README.md` / `docs/i18n` 的手势表没动(该表记的是「做了什么」,本次没有新手势)。
