@@ -48,13 +48,54 @@ LAWS = [
         "min_articles": 60,
         "anchors": ["国务院令", "786", "中国共产党", "保密法"],   # 条例用阿拉伯数字写「第786号」
     },
+    {
+        "file": "中华人民共和国反间谍法(2023修订).txt",
+        "dest": DEST_BAOMI,
+        "title": "中华人民共和国反间谍法",
+        "urls": [
+            "https://www.gov.cn/yaowen/2023-04/27/content_5753385.htm",
+            "https://wsb.guizhou.gov.cn/ztzl/qwpf/202504/t20250414_87518884.html",
+            "http://www.mod.gov.cn/gfbw/fgwx/flfg/16220341.html",
+        ],
+        "min_articles": 60,                       # 2023 修订版 6 章 68 条
+        "anchors": ["间谍行为", "国家安全机关是反间谍工作的主管机关", "总体国家安全观"],
+    },
+    {
+        "file": "中华人民共和国国家安全法(2015).txt",
+        "dest": DEST_BAOMI,
+        "title": "中华人民共和国国家安全法",
+        "urls": [
+            "http://npc.people.com.cn/n/2015/0710/c14576-27285049.html",
+            "http://www.locpg.gov.cn/jsdt/2015-07/01/c_128030911_7.htm",
+        ],
+        "min_articles": 70,                       # 2015 版 7 章 84 条
+        "anchors": ["总体国家安全观", "全民国家安全教育日", "第八十四条"],
+    },
 ]
 ART = re.compile(r"第([一二三四五六七八九十百零]+)条")
 
 
+def decode(raw):
+    """按页面自己声明的 charset 解码。
+
+    踩过的坑：人民网/人大网这类老页面是 GB2312，一律当 UTF-8 解码会得到满屏乱码，
+    「条数」直接数成 0，脚本却只报「没有一个源拿到完整原文」——看起来像源坏了，其实是编码。
+    """
+    m = re.search(rb'charset=["\']?([\w-]+)', raw[:4000], re.I)
+    enc = (m.group(1).decode("ascii", "ignore").lower() if m else "utf-8")
+    order = ["gb18030"] if enc in ("gb2312", "gbk", "gb18030") else [enc, "utf-8", "gb18030"]
+    for e in order + ["utf-8", "gb18030"]:
+        try:
+            return raw.decode(e)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "ignore")
+
+
 def fetch(url):
-    p = subprocess.run(["curl", "-sSL", "-m", "30", "-A", UA, url], capture_output=True)
-    raw = p.stdout.decode("utf-8", "ignore")
+    p = subprocess.run(["curl", "-sSL", "-m", "30", "-A", UA, "--compressed", url],
+                       capture_output=True)
+    raw = decode(p.stdout)
     raw = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
     t = re.sub(r"(?s)<[^>]+>", "\n", raw)
     t = html.unescape(html.unescape(t))

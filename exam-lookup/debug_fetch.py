@@ -21,6 +21,6 @@ for label, q in tests:
         print(f"  [{eng}] {t[:300]}")
     if not sn:
         print("  ⚠️ 一条都没抓到 —— 抓取或解析坏了")
-    a, v, samp = S.vote(sn, is_judge=False)
+    a, v, samp, srcs = S.vote(sn, is_judge=False)
     print(f"  → 投票结果: 答案={a} 票数={v}")
     print()
