@@ -1,0 +1,330 @@
+[
+ {
+  "seq": [
+   [
+    "good",
+    0
+   ]
+  ],
+  "expect": [
+   {
+    "rating": "good",
+    "gap": 0,
+    "stability": 2.3065,
+    "difficulty": 2.118104,
+    "interval": 2
+   }
+  ]
+ },
+ {
+  "seq": [
+   [
+    "again",
+    0
+   ],
+   [
+    "good",
+    1
+   ]
+  ],
+  "expect": [
+   {
+    "rating": "again",
+    "gap": 0,
+    "stability": 0.212,
+    "difficulty": 6.4133,
+    "interval": 1
+   },
+   {
+    "rating": "good",
+    "gap": 1,
+    "stability": 1.886788,
+    "difficulty": 6.402115,
+    "interval": 2
+   }
+  ]
+ },
+ {
+  "seq": [
+   [
+    "good",
+    0
+   ],
+   [
+    "good",
+    3
+   ],
+   [
+    "good",
+    10
+   ],
+   [
+    "good",
+    30
+   ]
+  ],
+  "expect": [
+   {
+    "rating": "good",
+    "gap": 0,
+    "stability": 2.3065,
+    "difficulty": 2.118104,
+    "interval": 2
+   },
+   {
+    "rating": "good",
+    "gap": 3,
+    "stability": 13.826904,
+    "difficulty": 2.111214,
+    "interval": 14
+   },
+   {
+    "rating": "good",
+    "gap": 10,
+    "stability": 47.452034,
+    "difficulty": 2.104331,
+    "interval": 47
+   },
+   {
+    "rating": "good",
+    "gap": 30,
+    "stability": 132.168213,
+    "difficulty": 2.097455,
+    "interval": 132
+   }
+  ]
+ },
+ {
+  "seq": [
+   [
+    "easy",
+    0
+   ],
+   [
+    "easy",
+    4
+   ],
+   [
+    "easy",
+    20
+   ]
+  ],
+  "expect": [
+   {
+    "rating": "easy",
+    "gap": 0,
+    "stability": 8.2956,
+    "difficulty": 1.0,
+    "interval": 8
+   },
+   {
+    "rating": "easy",
+    "gap": 4,
+    "stability": 41.819013,
+    "difficulty": 1.0,
+    "interval": 42
+   },
+   {
+    "rating": "easy",
+    "gap": 20,
+    "stability": 170.023606,
+    "difficulty": 1.0,
+    "interval": 170
+   }
+  ]
+ },
+ {
+  "seq": [
+   [
+    "hard",
+    0
+   ],
+   [
+    "hard",
+    1
+   ],
+   [
+    "good",
+    2
+   ],
+   [
+    "again",
+    5
+   ]
+  ],
+  "expect": [
+   {
+    "rating": "hard",
+    "gap": 0,
+    "stability": 1.2931,
+    "difficulty": 5.112171,
+    "interval": 1
+   },
+   {
+    "rating": "hard",
+    "gap": 1,
+    "stability": 3.249412,
+    "difficulty": 6.74046,
+    "interval": 3
+   },
+   {
+    "rating": "good",
+    "gap": 2,
+    "stability": 7.50072,
+    "difficulty": 6.728947,
+    "interval": 8
+   },
+   {
+    "rating": "again",
+    "gap": 5,
+    "stability": 1.127173,
+    "difficulty": 8.910056,
+    "interval": 1
+   }
+  ]
+ },
+ {
+  "seq": [
+   [
+    "good",
+    0
+   ],
+   [
+    "again",
+    2
+   ],
+   [
+    "good",
+    2
+   ],
+   [
+    "good",
+    10
+   ],
+   [
+    "good",
+    40
+   ],
+   [
+    "again",
+    50
+   ]
+  ],
+  "expect": [
+   {
+    "rating": "good",
+    "gap": 0,
+    "stability": 2.3065,
+    "difficulty": 2.118104,
+    "interval": 2
+   },
+   {
+    "rating": "again",
+    "gap": 2,
+    "stability": 0.60758,
+    "difficulty": 7.394503,
+    "interval": 1
+   },
+   {
+    "rating": "good",
+    "gap": 2,
+    "stability": 3.268624,
+    "difficulty": 7.382337,
+    "interval": 3
+   },
+   {
+    "rating": "good",
+    "gap": 10,
+    "stability": 13.717814,
+    "difficulty": 7.370183,
+    "interval": 14
+   },
+   {
+    "rating": "good",
+    "gap": 40,
+    "stability": 47.499384,
+    "difficulty": 7.358041,
+    "interval": 47
+   },
+   {
+    "rating": "again",
+    "gap": 50,
+    "stability": 2.762312,
+    "difficulty": 9.116834,
+    "interval": 3
+   }
+  ]
+ },
+ {
+  "seq": [
+   [
+    "hard",
+    0
+   ],
+   [
+    "hard",
+    0
+   ],
+   [
+    "again",
+    2
+   ],
+   [
+    "again",
+    7
+   ],
+   [
+    "again",
+    7
+   ],
+   [
+    "hard",
+    7
+   ]
+  ],
+  "expect": [
+   {
+    "rating": "hard",
+    "gap": 0,
+    "stability": 1.2931,
+    "difficulty": 5.112171,
+    "interval": 1
+   },
+   {
+    "rating": "hard",
+    "gap": 0,
+    "stability": 1.2931,
+    "difficulty": 6.74046,
+    "interval": 1
+   },
+   {
+    "rating": "again",
+    "gap": 2,
+    "stability": 0.400321,
+    "difficulty": 8.91384,
+    "interval": 1
+   },
+   {
+    "rating": "again",
+    "gap": 7,
+    "stability": 0.217442,
+    "difficulty": 9.628215,
+    "interval": 1
+   },
+   {
+    "rating": "again",
+    "gap": 7,
+    "stability": 0.135944,
+    "difficulty": 9.863025,
+    "interval": 1
+   },
+   {
+    "rating": "hard",
+    "gap": 7,
+    "stability": 0.504206,
+    "difficulty": 9.894298,
+    "interval": 1
+   }
+  ]
+ }
+]
