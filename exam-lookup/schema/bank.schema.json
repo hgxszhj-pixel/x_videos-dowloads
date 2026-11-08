@@ -1,0 +1,72 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://exam-lookup.local/schema/bank.schema.json",
+ "title": "exam-lookup 题库文件（banks/*.json）",
+ "description": "kb_db.py validate-banks 的契约来源之一：字段清单必须与 kb_db.REQUIRED_Q / REQUIRED_OPT 一致（selftest 里有断言守着，改一边必须改另一边）。",
+ "type": "object",
+ "required": ["schema_version", "meta", "questions"],
+ "additionalProperties": true,
+ "properties": {
+  "schema_version": {"type": "integer", "const": 1},
+  "meta": {
+   "type": "object",
+   "required": ["title"],
+   "additionalProperties": true,
+   "properties": {
+    "title": {"type": "string", "minLength": 1},
+    "sourceNote": {"type": "string"},
+    "year": {"type": ["integer", "string"]},
+    "volumes": {"type": ["array", "object"]},
+    "public": {"type": "boolean"},
+    "external": {"type": "boolean"},
+    "derived": {"type": "boolean"},
+    "generated": {"type": "boolean"},
+    "mergeOf": {"type": ["array", "string"]},
+    "questionCount": {"type": "integer"}
+   }
+  },
+  "questions": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": ["id", "question", "options", "answerKeys", "answerText"],
+    "additionalProperties": true,
+    "properties": {
+     "id": {"type": "string", "minLength": 1, "description": "题库内唯一；跨库可重复（主键是 bank+qid）"},
+     "number": {"type": ["integer", "string"], "description": "卷内题号，可缺"},
+     "type": {"enum": ["single", "multiple", "judge", "ordering", "blank"], "description": "single=单选1答案 / multiple=多选≥2 / judge=判断1 / blank=填空（答案在 answerText，按空位顺序，options 与 answerKeys 可为空）/ ordering=老数据兼容写法，等同 multiple+ordered=true"},
+     "typeLabel": {"type": "string"},
+     "question": {"type": "string", "minLength": 1},
+     "options": {
+      "type": "array",
+      "minItems": 0,
+      "description": "type=blank 时可为空数组（填空题没有选项）",
+      "items": {
+       "type": "object",
+       "required": ["key", "text"],
+       "additionalProperties": false,
+       "properties": {"key": {"type": "string", "minLength": 1}, "text": {"type": "string"}}
+      }
+     },
+     "answerKeys": {
+      "type": "array",
+      "minItems": 0,
+      "description": "type=blank 时可为空数组；其他题型必须非空",
+      "items": {"type": "string", "minLength": 1},
+      "description": "必须全部出现在 options[].key 里；数量随 type 校验"
+     },
+     "answerText": {"type": ["string", "array"], "description": "答案原文；字符串或字符串数组，不能为空"},
+     "ordered": {"type": "boolean", "description": "multiple 的变体：answerKeys 的顺序就是答案（排序/填空式多选），元素不重复、≥2"},
+     "analysis": {"type": "string"},
+     "topic": {"type": "string"},
+     "category": {"type": "string"},
+     "volume": {"type": ["integer", "string"]},
+     "page": {"type": ["integer", "string"]},
+     "myWrong": {"type": "boolean", "description": "考场答错过"},
+     "examWhen": {"type": ["integer", "string"], "description": "考试时间：毫秒时间戳或日期串"}
+    }
+   }
+  }
+ }
+}
